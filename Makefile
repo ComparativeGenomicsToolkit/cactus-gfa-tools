@@ -30,7 +30,7 @@ ifeq ($(shell uname -s),Darwin)
     endif
 endif
 
-CXXFLAGS := -O3 -Werror=return-type -std=c++14 -ggdb -g -MMD -MP $(PARALLEL_FLAGS) $(CXXFLAGS)
+CXXFLAGS := -O0 -Werror=return-type -std=c++14 -ggdb -g -MMD -MP $(PARALLEL_FLAGS) $(CXXFLAGS)
 
 LIB_FLAGS = $(LIBS)
 INC_FLAGS = -I$(CWD)
@@ -45,6 +45,9 @@ main.o:$(LIB_DEPS) main.cpp mzgaf2paf.hpp mzgaf.hpp gafkluge.hpp
 
 mzgaf2paf.o:$(LIB_DEPS) mzgaf2paf.cpp mzgaf2paf.hpp mzgaf.hpp gafkluge.hpp
 	$(CXX) $(INCLUDE_FLAGS) $(CXXFLAGS) $(CPPFLAGS) -c mzgaf2paf.cpp $(INC_FLAGS)
+
+test : mzgaf2paf
+	cd test && prove -v hla.t
 
 clean:
 	rm -rf mzgaf2paf main.o mzgaf2paf.o

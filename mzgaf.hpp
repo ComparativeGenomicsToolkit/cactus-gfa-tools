@@ -43,19 +43,21 @@ inline double string_to_float(const std::string& s) {
  * Parse comma-separated string of minimizer offsets into a vector of numbers
  * returning their total to be used as sanity check
  */
-inline int64_t parse_minimizers(const std::string& buffer, vector<int32_t> offsets) {
+inline int64_t parse_minimizers(const std::string& buffer, vector<int32_t>& offsets) {
     int64_t span = 0;
     int64_t i = 0;
     for (int64_t j = 0; j < buffer.size(); ++j) {
         if (buffer[j] == ',') {
             assert(j > i);
-            offsets.push_back(std::stoi(buffer.substr(i, j-1)));
+            offsets.push_back(std::stoi(buffer.substr(i, j-i)));
             span += offsets.back();
+            cerr << "adding " << offsets.back() << endl;
             i = j + 1;
         }
     }
     assert(i <= buffer.length() - 1);
     offsets.push_back(std::stoi(buffer.substr(i)));
+    cerr << "adding " << offsets.back() << endl;
     span += offsets.back();
     return span;
 }
@@ -87,30 +89,34 @@ inline void parse_mzgaf_record(const std::string& gaf_line, MzGafRecord& gaf_rec
     gaf_record.is_reverse = buffer[0] == '<';
 
     scan_column();
-    gaf_record.target_length = string_to_int(buffer);
+    gaf_record.target_length = std::stol(buffer);
 
     scan_column();
-    gaf_record.num_minimizers = string_to_int(buffer);
+    gaf_record.num_minimizers = std::stol(buffer);
 
     scan_column();
     gaf_record.seq_div = string_to_float(buffer);
     
     scan_column();
-    gaf_record.target_start = string_to_int(buffer);
-    gaf_record.target_end = string_to_int(buffer);
+    gaf_record.target_start = std::stol(buffer);
+    scan_column();
+    gaf_record.target_end = std::stol(buffer);
 
     scan_column();
-    gaf_record.query_start = string_to_int(buffer);
-    gaf_record.query_end = string_to_int(buffer);
+    gaf_record.query_start = std::stol(buffer);
+    scan_column();
+    gaf_record.query_end = std::stol(buffer);
 
+    scan_column();
+    gaf_record.kmer_size = std::stol(buffer);
     scan_column();
     gaf_record.target_mz_offsets.clear();
     if (gaf_record.num_minimizers > 0) {
         gaf_record.target_mz_offsets.reserve(gaf_record.num_minimizers);
     }
     int64_t span = parse_minimizers(buffer, gaf_record.target_mz_offsets);
-    assert(gaf_record.target_mz_offsets.size() == gaf_record.num_minimizers);
-    assert(span + gaf_record.kmer_size == gaf_record.target_length);
+    assert(gaf_record.target_mz_offsets.size() + 1 == gaf_record.num_minimizers);
+    assert(span + gaf_record.kmer_size == gaf_record.target_end - gaf_record.target_start);
 
     scan_column();
     gaf_record.query_mz_offsets.clear();
@@ -118,12 +124,12 @@ inline void parse_mzgaf_record(const std::string& gaf_line, MzGafRecord& gaf_rec
         gaf_record.query_mz_offsets.reserve(gaf_record.num_minimizers);
     }
     span = parse_minimizers(buffer, gaf_record.query_mz_offsets);
-    assert(gaf_record.query_mz_offsets.size() == gaf_record.num_minimizers);
-    assert(span + gaf_record.kmer_size == gaf_record.query_length);
+    assert(gaf_record.query_mz_offsets.size() + 1 == gaf_record.num_minimizers);
+    assert(span + gaf_record.kmer_size == gaf_record.query_end - gaf_record.query_start);
 }
 
 /**
- *  Visit every mz GAF record in a file, and do a callback.  The regulare GAF records 
+ *  Visit every mz GAF record in a file, and do a callback.  The regular GAF records 
  *  are ignored except for the query name (though they are parsed, and could maybe get 
  *  used for filtering or validation)
  */
