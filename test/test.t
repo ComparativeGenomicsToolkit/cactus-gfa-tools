@@ -16,7 +16,7 @@ gfatools gfa2fa hpp-20-2M.gfa > hpp-20-2M.gfa.fa
 minigraph -xasm -t $(nproc) -K4g --inv=no -S --write-mz hpp-20-2M.gfa hpp-20-2M/CHM13.fa.gz > CHM13.gaf
 mzgaf2paf CHM13.gaf > CHM13.paf
 gzip -dc  hpp-20-2M/CHM13.fa.gz > CHM13.fa
-./verify_matches.py CHM13.paf CHM13.fa hpp-20-2M.gfa.fa
+python ./verify_matches.py CHM13.paf CHM13.fa hpp-20-2M.gfa.fa
 is $? 0 "paf checks out for very simple forward alignment"
 
 rm -f  CHM13.gaf CHM13.paf CHM13.fa
@@ -25,7 +25,7 @@ rm -f  CHM13.gaf CHM13.paf CHM13.fa
 minigraph -xasm -t $(nproc) -K4g --inv=no -S --write-mz hpp-20-2M.gfa hpp-20-2M/hg38.fa.gz > hg38.gaf
 mzgaf2paf hg38.gaf > hg38.paf
 gzip -dc  hpp-20-2M/hg38.fa.gz > hg38.fa
-./verify_matches.py hg38.paf hg38.fa hpp-20-2M.gfa.fa
+python ./verify_matches.py hg38.paf hg38.fa hpp-20-2M.gfa.fa
 is $? 0 "paf checks out for hg38 alignment"
 
 rm -f  hg38.gaf hg38.paf hg38.fa
