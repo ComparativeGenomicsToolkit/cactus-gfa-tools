@@ -45,3 +45,11 @@ Will be converted to the following PAF
 hg38.chr20  2833756  709771   709857   -  s43   97 6  92 86 86 255   cg:Z:86M
 ```
 
+## Unique prefix
+
+To add a prefix to all contig sequences in order to avoid conflicts or make it easier to remove them later, use `mzgaf2paf -p` and pipe the gfa2fa output through `faprefix.sh`, ex:
+```
+mzgaf2paf hg38.gaf -p PREFIX > hg38.paf
+gfatools gfa2fa  hpp-20-2M.gfa | faprefix.sh PREFIX > hpp-20-2M.gfa.fa
+
+```
