@@ -86,7 +86,9 @@ int main(int argc, char** argv) {
 
     scan_mzgaf(*in_stream, [&](MzGafRecord& gaf_record) {
             // todo: buffer and parallelize?
-            mzgaf2paf(gaf_record, out_stream, target_prefix);
+            if (gaf_record.num_minimizers > 0) {
+                mzgaf2paf(gaf_record, out_stream, target_prefix);
+            }
         });
 
     return 0;

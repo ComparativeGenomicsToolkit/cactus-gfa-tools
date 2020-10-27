@@ -17,7 +17,7 @@ void mzgaf2paf(const MzGafRecord& gaf_record, ostream& paf_stream, const string&
                << gaf_record.query_length << "\t"
                << gaf_record.query_start << "\t"
                << gaf_record.query_end << "\t"
-               << (gaf_record.is_reverse ? "+" : "-") << "\t"
+               << (gaf_record.is_reverse ? "-" : "+") << "\t"
                << target_prefix << gaf_record.target_name << "\t"
                << gaf_record.target_length << "\t"
                << gaf_record.target_start << "\t"
@@ -53,27 +53,25 @@ void mzgaf2paf(const MzGafRecord& gaf_record, ostream& paf_stream, const string&
         int64_t query_delta = query_pos - query_end;
         int64_t target_delta = target_pos - target_end;
 
-        if (query_delta <= 0 || target_delta <= 0) {
-            // there is an overlap
-            int64_t min_delta = std::max(query_delta, target_delta);
-            // and we can extend in both query and target
-            if (min_delta <= 0) {
-                query_end += gaf_record.kmer_size + min_delta;
-                target_end += gaf_record.kmer_size + min_delta;
-#ifdef debug
-                cerr << "  overlap found, extending by delta " << (gaf_record.kmer_size + min_delta - 1) << " gives query_end = " << query_end << " target_end = " << target_end << endl;
-#endif
-            } else {
-                // i'm not sure if this can happen?
-                cerr << "Warning [mzgaf2paf] : inconsistent overlap at position " << i << " of line with query " << gaf_record.query_name << ":" << gaf_record.query_start << endl;
-                // figure this out if it does
-                exit(1);
-            }
+        if (query_delta == target_delta && query_delta <= 0) {
+            // if the deltas are the same and both negative, we can just extend the current block
+            query_end += gaf_record.kmer_size + query_delta;
+            target_end += gaf_record.kmer_size + target_delta;
         } else {
-            // there is no overlap, let's output the previous hit into the cigar
+            int64_t min_delta = min((int64_t)0, min(query_delta, target_delta));
+            if (min_delta < 0) {
+                // there is an inconsisten overlap, which implies conflicting alignment.  we cut the blocks
+                // to leave the conflicting bits unaligned
+                query_end += min_delta;
+                target_end += min_delta;
+            }
+                
+            // we are going to make a new block, let's output the previous hit into the cigar
             assert(query_end - query_start == target_end - target_start);
             int64_t match_size = query_end - query_start;
-            cigar_stream << match_size << "M";
+            if (match_size > 0) {
+                cigar_stream << match_size << "M";
+            }
             total_matches += match_size;
 
 #ifdef debug
@@ -82,17 +80,17 @@ void mzgaf2paf(const MzGafRecord& gaf_record, ostream& paf_stream, const string&
 
             // output the deltas as indels
             if (query_delta > 0) {
-                cigar_stream << "I" << query_delta;
+                cigar_stream  << query_delta << "I";
             }
             if (target_delta > 0) {
-                cigar_stream << "D" << target_delta;
+                cigar_stream << target_delta << "D";
             }
 
-            // start new block
-            query_start = query_pos;
-            query_end = query_start + gaf_record.kmer_size;
-            target_start = target_pos;
-            target_end = target_start + gaf_record.kmer_size;
+            // start new block (cutting the overlap off the front with min_delta)
+            query_start = query_pos - min_delta;
+            query_end = query_pos + gaf_record.kmer_size;
+            target_start = target_pos - min_delta;
+            target_end = target_pos + gaf_record.kmer_size;
 #ifdef debug
             cerr << "  starting new block query_start = " << query_start << " query_end = " << query_end << endl;
 #endif

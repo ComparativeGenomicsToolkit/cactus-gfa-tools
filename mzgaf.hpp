@@ -51,13 +51,11 @@ inline int64_t parse_minimizers(const std::string& buffer, vector<int32_t>& offs
             assert(j > i);
             offsets.push_back(std::stoi(buffer.substr(i, j-i)));
             span += offsets.back();
-            cerr << "adding " << offsets.back() << endl;
             i = j + 1;
         }
     }
     assert(i <= buffer.length() - 1);
     offsets.push_back(std::stoi(buffer.substr(i)));
-    cerr << "adding " << offsets.back() << endl;
     span += offsets.back();
     return span;
 }
@@ -94,6 +92,16 @@ inline void parse_mzgaf_record(const std::string& gaf_line, MzGafRecord& gaf_rec
     scan_column();
     gaf_record.num_minimizers = std::stol(buffer);
 
+    if (gaf_record.num_minimizers == 0) {
+        // it turns out the remaining columns are optional
+        gaf_record.target_start = missing_int;
+        gaf_record.target_end = missing_int;
+        gaf_record.query_start = missing_int;
+        gaf_record.query_end = missing_int;
+        gaf_record.kmer_size = missing_int;
+        return;
+    }
+        
     scan_column();
     gaf_record.seq_div = string_to_float(buffer);
     
