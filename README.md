@@ -47,6 +47,3 @@ Will be converted to the following PAF
 hg38.chr20  2833756  709771   709857   -  s43   97 6  92 86 86 255   cg:Z:86M
 ```
 
-minigraph -xasm -t $(nproc) -K4g --inv=no -S --write-mz hpp-20-2M.gfa hpp-20-2M/hg38.fa.gz > hg38.gaf
-mzgaf2paf hg38.gaf > hg38.paf
-```
