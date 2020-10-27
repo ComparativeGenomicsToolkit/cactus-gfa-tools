@@ -4,8 +4,6 @@ Converts [minigraph](https://github.com/lh3/minigraph) output from GAF to PAF, w
 
 The use case is that a set of such alignments can be used as anchors by [Cactus](https://github.com/ComparativeGenomicsToolkit/cactus) to form its initial graph. 
 
-## Example
-
 ## Build
 
 ```
