@@ -45,7 +45,7 @@ Will be converted to the following PAF
 hg38.chr20  2833756  709771   709857   -  s43   97 6  92 86 86 255   cg:Z:86M
 ```
 
-## Unique prefix
+## Prefix graph sequence ids 
 
 To add a prefix to all contig sequences in order to avoid conflicts or make it easier to remove them later, use `mzgaf2paf -p` and pipe the gfa2fa output through `faprefix.sh`, ex:
 ```

@@ -13,7 +13,7 @@ void help(char** argv) {
        << "Convert minigraph --write-mz output to PAF" << endl
        << endl
        << "options: " << endl
-       << "    -p, --target-prefix PREFIX          Prepend all query contig names with this prefix" << endl;
+       << "    -p, --target-prefix PREFIX          Prepend all target (graph) contig names with this prefix" << endl;
 }    
 
 int main(int argc, char** argv) {
