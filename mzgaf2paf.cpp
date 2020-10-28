@@ -5,6 +5,7 @@
 
 #include "mzgaf2paf.hpp"
 #include "mzgaf.hpp"
+#include <limits>
 
 //#define debug
 
@@ -35,9 +36,10 @@ void mzgaf2paf(const MzGafRecord& gaf_record, ostream& paf_stream, const string&
     // positions of our current match block (relative as above
     int64_t query_start = 0;
     int64_t query_end = gaf_record.kmer_size;
+    int64_t prev_query_end = numeric_limits<int64_t>::max();
     int64_t target_start = 0;
     int64_t target_end = gaf_record.kmer_size;
-
+    int64_t prev_target_end = numeric_limits<int64_t>::max();
     // need for output
     int64_t total_matches = 0;
     // used for sanity checks
@@ -76,33 +78,32 @@ void mzgaf2paf(const MzGafRecord& gaf_record, ostream& paf_stream, const string&
             assert(query_end - query_start == target_end - target_start);
             int64_t match_size = query_end - query_start;
             if (match_size > 0) {
+                // catch up on query
+                if (query_start > prev_query_end) {
+                    cigar_stream << (query_start - prev_query_end) << "I";
+                    total_insertions += (query_start - prev_query_end);
+                }
+                // catch up on target
+                if (target_start > prev_target_end) {
+                    cigar_stream << (target_start - prev_target_end) << "D";
+                    total_deletions += (target_start - prev_target_end);
+                }
                 cigar_stream << match_size << "M";
+                total_matches += match_size;
+                // store end of block to compute indels needed before next
+                prev_query_end = query_end;
+                prev_target_end = target_end;
             }
-            total_matches += match_size;
 
 #ifdef debug
             cerr << "  print previous block as " << (query_end - query_start) << "M" << endl;
 #endif
-
-            // remember the end of our last block
-            int64_t prev_query_end = query_end;
-            int64_t prev_target_end = target_end;
 
             // start new block (cutting the overlap off the front with min_delta)
             query_start = query_pos - min_delta;
             query_end = query_pos + gaf_record.kmer_size;
             target_start = target_pos - min_delta;
             target_end = target_pos + gaf_record.kmer_size;
-
-            // fill in the gaps
-            if (query_start > prev_query_end) {
-                cigar_stream << (query_start - prev_query_end) << "I";
-                total_insertions += (query_start - prev_query_end);
-            }
-            if (target_start > prev_target_end) {
-                cigar_stream << (target_start - prev_target_end) << "D";
-                total_deletions += (target_start - prev_target_end);
-            }
         }
 
         // advance our position
@@ -119,9 +120,19 @@ void mzgaf2paf(const MzGafRecord& gaf_record, ostream& paf_stream, const string&
     assert(query_end - query_start == target_end - target_start);
     int64_t match_size = query_end - query_start;
     if (match_size > 0) {
+        // catch up on query
+        if (query_start > prev_query_end) {
+            cigar_stream << (query_start - prev_query_end) << "I";
+            total_insertions += (query_start - prev_query_end);
+        }
+        // catch up on target
+        if (target_start > prev_target_end) {
+            cigar_stream << (target_start - prev_target_end) << "D";
+            total_deletions += (target_start - prev_target_end);
+        }
         cigar_stream << match_size << "M";
+        total_matches += match_size;
     }
-    total_matches += match_size;
 
     assert(total_insertions + total_matches == gaf_record.query_end - gaf_record.query_start);
     assert(total_deletions + total_matches == gaf_record.target_end - gaf_record.target_start);
