@@ -16,6 +16,7 @@ cd mzgaf2paf && make
 Requires:
 * [minigraph](https://github.com/lh3/minigraph)
 * [gfatools](https://github.com/lh3/gfatools)
+* [minimap2](https://github.com/lh3/minimap2)
 
 ```
 export PATH=$(pwd):$PATH
@@ -42,7 +43,7 @@ hg38.chr20  2833756  60006 2352627  +  <CHM13.CHM13_Super-Scaffold_117:2060700-2
 ```
 Will be converted to the following PAF
 ```
-hg38.chr20  2833756  709771   709857   -  s43   97 6  92 86 86 255   cg:Z:86M
+hg38.chr20  2833756  709771   709857   -  s43   97 5  91 86 86 255   cg:Z:86M                       
 ```
 
 ## Prefix graph sequence ids 

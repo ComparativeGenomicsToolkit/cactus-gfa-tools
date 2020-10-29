@@ -21,12 +21,23 @@ def parse_args(args):
                         help="fasta2")
     parser.add_argument("--gaf", action="store_true",
                         help="expect gaf instead of paf")
+    parser.add_argument("--min-identity", type=float, default=1.0,
+                        help="minimum identity for matches (len > 100) for cigar comparison (for validation on minimap2 output only)")
     args = args[1:]
 
     return parser.parse_args(args)
 
+# compute pct identity
+def pct_identity(s1, s2):
+    assert len(s1) == len(s2)
+    same = 0
+    for a,b in zip(s1, s2):
+        if a == b or a == 'N' or b == 'N':
+            same += 1
+    return float(same) / float(len(s1))
+    
 # make sure that our cigar matches are exact matches (as we'd expect from the minimizer input)
-def check_cigar(paf_line, fa_dict):
+def check_cigar(paf_line, fa_dict, min_identity):
     toks = paf_line.rstrip().split("\t")
     cigar = toks[-1]
     assert cigar[:4] == "cg:Z"
@@ -56,6 +67,8 @@ def check_cigar(paf_line, fa_dict):
     target_pos = 0
 
     cigar_toks = re.findall('([0-9]+)(M|D|I)', cigar[4:])
+    if toks[4] == '-':
+        cigar_toks = reversed(cigar_toks)
 
     for cig_len, cig_type in cigar_toks:
         if cig_type == "M":
@@ -63,11 +76,12 @@ def check_cigar(paf_line, fa_dict):
             query_frag = query_seq[query_pos:query_e]
             target_e = target_pos + int(cig_len)
             target_frag = target_seq[target_pos:target_e]
-            if query_frag.upper() != target_frag.upper():
-                sys.stderr.write("Validation Error\n\t{}\n".format(paf_line))
+            iden = pct_identity(query_frag.upper(), target_frag.upper())
+            if min_identity == 1 and iden < 1 or (len(query_frag) > 100 and iden < min_identity):
+                sys.stderr.write("Validation Error iden={} < min={}\n\t{}\n".format(iden, min_identity, paf_line))
                 sys.stderr.write("\tCigar : {}{} :\n\tquery[{}:{}] = \"{}\"\n\ttarget[{}:{}] = \"{}\"\n".format(
-                    cig_len, cig_type, query_pos, query_e, query_frag, target_pos, target_e, target_frag)) 
-            assert query_frag.upper() == target_frag.upper()
+                    cig_len, cig_type, query_pos, query_e, query_frag, target_pos, target_e, target_frag))
+                sys.exit(1)
         if cig_type != "I":
             target_pos += int(cig_len)
         if cig_type != "D":
@@ -143,7 +157,7 @@ def main(args):
         else:
             # check the PAF output from the coverted GAM to make sure the matches in the cigar strings are exact
             for line in aln_file:
-                check_cigar(line, fa_dict)
+                check_cigar(line, fa_dict, options.min_identity)
 
     print("OK!")
                                     

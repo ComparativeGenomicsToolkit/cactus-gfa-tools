@@ -36,8 +36,7 @@ void mzgaf2paf(const MzGafRecord& gaf_record, ostream& paf_stream, const string&
     // do the cigar string
     assert(gaf_record.target_mz_offsets.size() == gaf_record.query_mz_offsets.size());
 
-    stringstream cigar_stream;
-    cigar_stream << "cg:Z:";
+    vector<string> cigar;
 
     // positions as we move along (relative to gaf_record.query/target_starts)
     int64_t query_pos = 0;
@@ -89,15 +88,15 @@ void mzgaf2paf(const MzGafRecord& gaf_record, ostream& paf_stream, const string&
             if (match_size > 0) {
                 // catch up on query
                 if (query_start > prev_query_end) {
-                    cigar_stream << (query_start - prev_query_end) << "I";
+                    cigar.push_back(std::to_string(query_start - prev_query_end) + "I");
                     total_insertions += (query_start - prev_query_end);
                 }
                 // catch up on target
                 if (target_start > prev_target_end) {
-                    cigar_stream << (target_start - prev_target_end) << "D";
+                    cigar.push_back(std::to_string(target_start - prev_target_end) + "D");
                     total_deletions += (target_start - prev_target_end);
                 }
-                cigar_stream << match_size << "M";
+                cigar.push_back(std::to_string(match_size) + "M");
                 total_matches += match_size;
                 // store end of block to compute indels needed before next
                 prev_query_end = query_end;
@@ -131,26 +130,38 @@ void mzgaf2paf(const MzGafRecord& gaf_record, ostream& paf_stream, const string&
     if (match_size > 0) {
         // catch up on query
         if (query_start > prev_query_end) {
-            cigar_stream << (query_start - prev_query_end) << "I";
+            cigar.push_back(std::to_string(query_start - prev_query_end) + "I");
             total_insertions += (query_start - prev_query_end);
         }
         // catch up on target
         if (target_start > prev_target_end) {
-            cigar_stream << (target_start - prev_target_end) << "D";
+            cigar.push_back(std::to_string(target_start - prev_target_end) + "D");
             total_deletions += (target_start - prev_target_end);
         }
-        cigar_stream << match_size << "M";
+        cigar.push_back(std::to_string(match_size) + "M");
         total_matches += match_size;
     }
 
     assert(total_insertions + total_matches == gaf_record.query_end - gaf_record.query_start);
     assert(total_deletions + total_matches == gaf_record.target_end - gaf_record.target_start);
 
-    // do the last 3 columns the cigar
+
+    // do the last 3 columns
     paf_stream << total_matches << "\t"
                << (gaf_record.target_end - gaf_record.target_start) << "\t" // fudged
-               << 255 << "\t"
-               << cigar_stream.str()
-               << "\n";
+               << 255 << "\t" << "cg:Z:";
+
+    // and the cigar
+    if (gaf_record.is_reverse) {
+        for (vector<string>::reverse_iterator ci = cigar.rbegin(); ci != cigar.rend(); ++ci) {
+            paf_stream << *ci;
+        }
+    } else {
+        for (vector<string>::iterator ci = cigar.begin(); ci != cigar.end(); ++ci) {
+            paf_stream << *ci;
+        }
+    }
+
+    paf_stream << "\n";
 }
 
