@@ -28,11 +28,11 @@ def parse_args(args):
     return parser.parse_args(args)
 
 # compute pct identity
-def pct_identity(s1, s2):
+def pct_identity(s1, s2, ignore_n=False):
     assert len(s1) == len(s2)
     same = 0
     for a,b in zip(s1, s2):
-        if a == b or a == 'N' or b == 'N':
+        if a == b or (ignore_n and (a == 'N' or b == 'N')):
             same += 1
     return float(same) / float(len(s1))
     
@@ -76,7 +76,7 @@ def check_cigar(paf_line, fa_dict, min_identity):
             query_frag = query_seq[query_pos:query_e]
             target_e = target_pos + int(cig_len)
             target_frag = target_seq[target_pos:target_e]
-            iden = pct_identity(query_frag.upper(), target_frag.upper())
+            iden = pct_identity(query_frag.upper(), target_frag.upper(), ignore_n = min_identity < 1)
             if min_identity == 1 and iden < 1 or (len(query_frag) > 100 and iden < min_identity):
                 sys.stderr.write("Validation Error iden={} < min={}\n\t{}\n".format(iden, min_identity, paf_line))
                 sys.stderr.write("\tCigar : {}{} :\n\tquery[{}:{}] = \"{}\"\n\ttarget[{}:{}] = \"{}\"\n".format(
