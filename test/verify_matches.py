@@ -31,22 +31,29 @@ def check_cigar(paf_line, fa_dict):
     cigar = toks[-1]
     assert cigar[:4] == "cg:Z"
 
+    query_start = int(toks[2])
+    query_end = int(toks[3])
+    target_start = int(toks[7])
+    target_end = int(toks[8])
+    
     query_name = toks[0]
     assert query_name in fa_dict
-    query_seq = fa_dict[query_name]
-    assert len(query_seq) == int(toks[1])
+    query_seq = fa_dict[query_name][query_start:query_end]
+    assert len(query_seq) == query_end-query_start
+    assert len(fa_dict[query_name]) == int(toks[1])
     
     target_name = toks[5]
     assert target_name in fa_dict
-    target_seq = fa_dict[target_name]
-    assert len(target_seq) == int(toks[6])
+    target_seq = fa_dict[target_name][target_start:target_end]
+    assert len(target_seq) == target_end - target_start
+    assert len(fa_dict[target_name]) == int(toks[6])
 
     assert toks[4] in ('-', '+')
     if toks[4] == '-':
         target_seq = target_seq.reverse_complement()
 
-    query_pos = int(toks[2])
-    target_pos = int(toks[7])
+    query_pos = 0
+    target_pos = 0
 
     cigar_toks = re.findall('([0-9]+)(M|D|I)', cigar[4:])
 
@@ -66,8 +73,8 @@ def check_cigar(paf_line, fa_dict):
         if cig_type != "D":
             query_pos += int(cig_len)
 
-    assert query_pos == int(toks[3])
-    assert target_pos == int(toks[8])
+    assert query_pos == query_end - query_start
+    assert target_pos == target_end - target_start
 
 def check_mz_offsets(gaf_toks, query_name, fa_dict):
 

@@ -14,6 +14,15 @@ using namespace std;
 
 void mzgaf2paf(const MzGafRecord& gaf_record, ostream& paf_stream, const string& target_prefix) {
 
+    // paf coordinates are always on forward strand. but the mz output coordinates for the target
+    // can apparently be on the reverse strand, so we flip them as needed
+    int64_t paf_target_start = gaf_record.target_start;
+    int64_t paf_target_end = gaf_record.target_end;
+    if (gaf_record.is_reverse) {
+        paf_target_start = gaf_record.target_length - gaf_record.target_end;
+        paf_target_end = gaf_record.target_length - gaf_record.target_start;
+    }
+  
     paf_stream << gaf_record.query_name << "\t"
                << gaf_record.query_length << "\t"
                << gaf_record.query_start << "\t"
@@ -21,8 +30,8 @@ void mzgaf2paf(const MzGafRecord& gaf_record, ostream& paf_stream, const string&
                << (gaf_record.is_reverse ? "-" : "+") << "\t"
                << target_prefix << gaf_record.target_name << "\t"
                << gaf_record.target_length << "\t"
-               << gaf_record.target_start << "\t"
-               << gaf_record.target_end << "\t";
+               << paf_target_start << "\t"
+               << paf_target_end << "\t";
 
     // do the cigar string
     assert(gaf_record.target_mz_offsets.size() == gaf_record.query_mz_offsets.size());
