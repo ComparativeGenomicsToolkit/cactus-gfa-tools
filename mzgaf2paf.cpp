@@ -80,6 +80,7 @@ void mzgaf2paf(const MzGafRecord& gaf_record,
 
     // turn our matches into cigar (todo: go straight to string!)
     vector<string> cigar;
+    cigar.reserve(matches.size() * 3 + 2);
 
     // need for output
     int64_t total_matches = 0;
