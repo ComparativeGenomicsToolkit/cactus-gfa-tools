@@ -11,4 +11,8 @@
 /**
  * Convert mzgaf to paf
  */
-void mzgaf2paf(const gafkluge::MzGafRecord& gaf_record, ostream& paf_stream, const string& target_prefix = "");
+void mzgaf2paf(const gafkluge::MzGafRecord& gaf_record,
+               const gafkluge::GafRecord& parent_record,
+               ostream& paf_stream,
+               size_t min_gap,
+               const string& target_prefix = "");

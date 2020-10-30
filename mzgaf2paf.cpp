@@ -12,7 +12,11 @@
 using namespace gafkluge;
 using namespace std;
 
-void mzgaf2paf(const MzGafRecord& gaf_record, ostream& paf_stream, const string& target_prefix) {
+void mzgaf2paf(const MzGafRecord& gaf_record,
+               const GafRecord& parent_record,
+               ostream& paf_stream,
+               size_t min_gap,
+               const string& target_prefix) {
 
     // paf coordinates are always on forward strand. but the mz output coordinates for the target
     // can apparently be on the reverse strand, so we flip them as needed
@@ -23,8 +27,8 @@ void mzgaf2paf(const MzGafRecord& gaf_record, ostream& paf_stream, const string&
         paf_target_end = gaf_record.target_length - gaf_record.target_start;
     }
   
-    paf_stream << gaf_record.query_name << "\t"
-               << gaf_record.query_length << "\t"
+    paf_stream << parent_record.query_name << "\t"
+               << parent_record.query_length << "\t"
                << gaf_record.query_start << "\t"
                << gaf_record.query_end << "\t"
                << (gaf_record.is_reverse ? "-" : "+") << "\t"

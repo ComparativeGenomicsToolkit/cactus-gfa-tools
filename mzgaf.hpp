@@ -19,8 +19,6 @@ namespace gafkluge {
  *	>s79	124	15	0.0096	7	 118	193184	193299	19	8,9,3,8,9,11,9,4,2,7,2,9,3,8	8,9,3,8,9,15,9,4,2,7,2,9,3,8
  */
 struct MzGafRecord {
-    string query_name;  // parsed from parent gaf record
-    int64_t query_length; // parsed from parent gaf record
     string target_name;
     bool is_reverse;
     int64_t target_length;
@@ -141,19 +139,17 @@ inline void parse_mzgaf_record(const std::string& gaf_line, MzGafRecord& gaf_rec
  *  are ignored except for the query name (though they are parsed, and could maybe get 
  *  used for filtering or validation)
  */
-inline void scan_mzgaf(istream& in_stream, function<void(MzGafRecord& gaf_record)> visit_fn) {
+inline void scan_mzgaf(istream& in_stream, function<void(MzGafRecord& gaf_record, GafRecord& parent_record)> visit_fn) {
     string line_buffer;
     GafRecord gaf_record;
     MzGafRecord mz_record;
     while (getline(in_stream, line_buffer)) {
         if (line_buffer[0] == '*') {
-            assert(!mz_record.query_name.empty());
+            assert(!gaf_record.query_name.empty());
             parse_mzgaf_record(line_buffer, mz_record);
-            visit_fn(mz_record);
+            visit_fn(mz_record, gaf_record);
         } else {
             parse_gaf_record(line_buffer, gaf_record);
-            mz_record.query_name = gaf_record.query_name;
-            mz_record.query_length = gaf_record.query_length;
         }
     }
 }
