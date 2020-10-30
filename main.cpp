@@ -16,7 +16,7 @@ void help(char** argv) {
        << "    -p, --target-prefix PREFIX          Prepend all target (graph) contig names with this prefix" << endl
        << "    -b, --min-block-length N            Ignore records with block length (GAF col 11) < N [100000]" << endl      
        << "    -q, --min-mapq N                    Ignore records with MAPQ (GAF col 12) < N [5]" << endl
-       << "    -g, --min-gap N                     Filter so that reported minimizer matches have >=N bases between them [500]" << endl;
+       << "    -g, --min-gap N                     Filter so that reported minimizer matches have >=N bases between them [1000]" << endl;
 }    
 
 int main(int argc, char** argv) {
@@ -24,7 +24,7 @@ int main(int argc, char** argv) {
     string target_prefix;
     int64_t min_block_len = 100000;
     int64_t min_mapq = 5;
-    int64_t min_gap = 500;
+    int64_t min_gap = 1000;
     
     int c;
     optind = 1; 
