@@ -12,6 +12,13 @@
 using namespace gafkluge;
 using namespace std;
 
+struct MatchBlock {
+    int64_t query_start;
+    int64_t query_end;
+    int64_t target_start;
+    int64_t target_end; // could just store length instead of ends, but use to sanity check
+};
+
 void mzgaf2paf(const MzGafRecord& gaf_record,
                const GafRecord& parent_record,
                ostream& paf_stream,
@@ -27,95 +34,41 @@ void mzgaf2paf(const MzGafRecord& gaf_record,
         paf_target_end = gaf_record.target_length - gaf_record.target_start;
     }
   
-    paf_stream << parent_record.query_name << "\t"
-               << parent_record.query_length << "\t"
-               << gaf_record.query_start << "\t"
-               << gaf_record.query_end << "\t"
-               << (gaf_record.is_reverse ? "-" : "+") << "\t"
-               << target_prefix << gaf_record.target_name << "\t"
-               << gaf_record.target_length << "\t"
-               << paf_target_start << "\t"
-               << paf_target_end << "\t";
-
-    // do the cigar string
     assert(gaf_record.target_mz_offsets.size() == gaf_record.query_mz_offsets.size());
 
-    vector<string> cigar;
-
+    // turn the offsets vectors into match blocks, applying gap and inconsistency filters
+    
     // positions as we move along (relative to gaf_record.query/target_starts)
     int64_t query_pos = 0;
     int64_t target_pos = 0;
-    // positions of our current match block (relative as above
-    int64_t query_start = 0;
-    int64_t query_end = gaf_record.kmer_size;
-    int64_t prev_query_end = numeric_limits<int64_t>::max();
-    int64_t target_start = 0;
-    int64_t target_end = gaf_record.kmer_size;
-    int64_t prev_target_end = numeric_limits<int64_t>::max();
-    // need for output
-    int64_t total_matches = 0;
-    // used for sanity checks
-    int64_t total_deletions = 0;
-    int64_t total_insertions = 0;
 
-    // every minimzer will either be a new cigar match record, or will extend the current one
+    // cigar matches
+    vector<MatchBlock> matches;
+
     for (size_t i = 0; i < gaf_record.num_minimizers; ++i) {
 
-#ifdef debug
-        cerr << "[" << i << "]: query_pos = " << query_pos << " target_pos = " << target_pos << " (query_start = " << query_start
-             << " query_end = " << query_end << ") (target_start = " << target_start << " target_end = " << target_end << ")" << endl;
-#endif
+        MatchBlock match = {query_pos, query_pos + gaf_record.kmer_size,
+                            target_pos, target_pos + gaf_record.kmer_size};
 
-        // compute the overlap with the previous minimizer
-        int64_t query_delta = query_pos - query_end;
-        int64_t target_delta = target_pos - target_end;
+        if (matches.empty()) {
+            matches.push_back(match);
+        } else {
+            
+            // compute the overlap with the previous minimizer
+            int64_t query_delta = match.query_start - matches.back().query_end;
+            int64_t target_delta = match.target_start - matches.back().target_end;
 
-        if (query_delta == target_delta && query_delta <= 0) {
-            // if the deltas are the same and both negative, we can just extend the current block
-            query_end += gaf_record.kmer_size + query_delta;
-            target_end += gaf_record.kmer_size + target_delta;
-        }  else {
-            int64_t min_delta = min((int64_t)0, min(query_delta, target_delta));
-            if (min_delta < 0) {
-                // there is an inconsistent overlap, which implies conflicting alignment.  we cut the blocks
-                // to leave the conflicting bits unaligned
-                query_end += min_delta;
-                target_end += min_delta;
-#ifdef debug
-                cerr << "query_delta=" << query_delta << " target_delta=" << target_delta << " min_delta=" << min_delta << endl;
-#endif
+            if (query_delta == target_delta && query_delta <= 0) {
+                // extend adjacent minimizers (todo: do we want to always do this or control with option?)            
+                matches.back().query_end = match.query_end;
+                matches.back().target_end = match.target_end;
+            } else if (query_delta < 0 || target_delta < 0) {
+                // drop inconsistent minimizers
+                matches.pop_back();
+            } else if (query_delta >= min_gap && target_delta >= min_gap) {
+                // add if passes gap filter
+                matches.push_back(match);
             }
-                
-            // we are going to make a new block, let's output the previous hit into the cigar
-            assert(query_end - query_start == target_end - target_start);
-            int64_t match_size = query_end - query_start;
-            if (match_size > 0) {
-                // catch up on query
-                if (query_start > prev_query_end) {
-                    cigar.push_back(std::to_string(query_start - prev_query_end) + "I");
-                    total_insertions += (query_start - prev_query_end);
-                }
-                // catch up on target
-                if (target_start > prev_target_end) {
-                    cigar.push_back(std::to_string(target_start - prev_target_end) + "D");
-                    total_deletions += (target_start - prev_target_end);
-                }
-                cigar.push_back(std::to_string(match_size) + "M");
-                total_matches += match_size;
-                // store end of block to compute indels needed before next
-                prev_query_end = query_end;
-                prev_target_end = target_end;
-            }
-
-#ifdef debug
-            cerr << "  print previous block as " << (query_end - query_start) << "M" << endl;
-#endif
-
-            // start new block (cutting the overlap off the front with min_delta)
-            query_start = query_pos - min_delta;
-            query_end = query_pos + gaf_record.kmer_size;
-            target_start = target_pos - min_delta;
-            target_end = target_pos + gaf_record.kmer_size;
         }
 
         // advance our position
@@ -125,47 +78,86 @@ void mzgaf2paf(const MzGafRecord& gaf_record,
         }
     }
 
-    assert(gaf_record.query_start + query_end == gaf_record.query_end);
-    assert(gaf_record.target_start + target_end == gaf_record.target_end);
+    // turn our matches into cigar (todo: go straight to string!)
+    vector<string> cigar;
 
-    // output the last block    
-    assert(query_end - query_start == target_end - target_start);
-    int64_t match_size = query_end - query_start;
-    if (match_size > 0) {
-        // catch up on query
-        if (query_start > prev_query_end) {
-            cigar.push_back(std::to_string(query_start - prev_query_end) + "I");
-            total_insertions += (query_start - prev_query_end);
-        }
-        // catch up on target
-        if (target_start > prev_target_end) {
-            cigar.push_back(std::to_string(target_start - prev_target_end) + "D");
-            total_deletions += (target_start - prev_target_end);
-        }
+    // need for output
+    int64_t total_matches = 0;
+    // used for sanity checks
+    int64_t total_deletions = 0;
+    int64_t total_insertions = 0;
+
+    // todo: kind of silly to start cigar with an indel -- should just clip
+    if (!matches.empty() && matches[0].query_start > 0) {
+        cigar.push_back(std::to_string(matches[0].query_start) + "I");
+        total_insertions += matches[0].query_start;
+    }
+    if (!matches.empty() && matches[0].target_start > 0) {
+        cigar.push_back(std::to_string(matches[0].target_start) + "D");
+        total_deletions += matches[0].target_start;
+    }
+    
+    for (size_t i = 0; i < matches.size(); ++i) {
+        // match
+        int64_t match_size = matches[i].query_end - matches[i].query_start;
+        assert(match_size == matches[i].target_end - matches[i].target_start);
         cigar.push_back(std::to_string(match_size) + "M");
         total_matches += match_size;
-    }
-
-    assert(total_insertions + total_matches == gaf_record.query_end - gaf_record.query_start);
-    assert(total_deletions + total_matches == gaf_record.target_end - gaf_record.target_start);
-
-
-    // do the last 3 columns
-    paf_stream << total_matches << "\t"
-               << (gaf_record.target_end - gaf_record.target_start) << "\t" // fudged
-               << 255 << "\t" << "cg:Z:";
-
-    // and the cigar
-    if (gaf_record.is_reverse) {
-        for (vector<string>::reverse_iterator ci = cigar.rbegin(); ci != cigar.rend(); ++ci) {
-            paf_stream << *ci;
-        }
-    } else {
-        for (vector<string>::iterator ci = cigar.begin(); ci != cigar.end(); ++ci) {
-            paf_stream << *ci;
+        if (i < matches.size() - 1) {
+            // insertion before next match
+            int64_t insertion_size = matches[i+1].query_start - matches[i].query_end;
+            assert(insertion_size >= min_gap);
+            cigar.push_back(std::to_string(insertion_size) + "I");
+            total_insertions += insertion_size;
+            // deletion before next match
+            int64_t deletion_size = matches[i+1].target_start - matches[i].target_end;
+            assert(deletion_size >= min_gap);
+            cigar.push_back(std::to_string(deletion_size) + "D");
+            total_deletions += deletion_size;
         }
     }
 
-    paf_stream << "\n";
+    // todo: kind of silly to end cigar with an indel -- should just clip
+    int64_t query_length = gaf_record.query_end - gaf_record.query_start;
+    int64_t leftover_insertions = query_length - (total_insertions + total_matches);
+    if (leftover_insertions) {
+        assert(matches.empty() || matches.back().query_end + leftover_insertions == query_length);
+        cigar.push_back(std::to_string(leftover_insertions) + "I");
+    }
+    int64_t target_length = gaf_record.target_end - gaf_record.target_start;
+    int64_t leftover_deletions = target_length - (total_deletions + total_matches);
+    if (leftover_deletions) {
+        assert(matches.empty() || matches.back().target_end + leftover_deletions == target_length);
+        cigar.push_back(std::to_string(leftover_deletions) + "D");
+    }
+
+    if (!matches.empty()) {
+        // output the paf columns
+        paf_stream << parent_record.query_name << "\t"
+                   << parent_record.query_length << "\t"
+                   << gaf_record.query_start << "\t"
+                   << gaf_record.query_end << "\t"
+                   << (gaf_record.is_reverse ? "-" : "+") << "\t"
+                   << target_prefix << gaf_record.target_name << "\t"
+                   << gaf_record.target_length << "\t"
+                   << paf_target_start << "\t"
+                   << paf_target_end << "\t"
+                   << total_matches << "\t"
+                   << (gaf_record.target_end - gaf_record.target_start) << "\t" // fudged
+                   << parent_record.mapq << "\t" << "cg:Z:";
+
+        // and the cigar
+        if (gaf_record.is_reverse) {
+            for (vector<string>::reverse_iterator ci = cigar.rbegin(); ci != cigar.rend(); ++ci) {
+                paf_stream << *ci;
+            }
+        } else {
+            for (vector<string>::iterator ci = cigar.begin(); ci != cigar.end(); ++ci) {
+                paf_stream << *ci;
+            }
+        }
+
+        paf_stream << "\n";
+    }
 }
 
