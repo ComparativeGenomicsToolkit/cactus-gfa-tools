@@ -44,6 +44,7 @@ void mzgaf2paf(const MzGafRecord& gaf_record,
 
     // cigar matches
     vector<MatchBlock> matches;
+    matches.reserve(gaf_record.num_minimizers);
 
     for (size_t i = 0; i < gaf_record.num_minimizers; ++i) {
 
