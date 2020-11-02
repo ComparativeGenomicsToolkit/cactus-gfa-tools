@@ -16,7 +16,8 @@ void help(char** argv) {
        << "    -p, --target-prefix PREFIX          Prepend all target (graph) contig names with this prefix" << endl
        << "    -b, --min-block-length N            Ignore records with block length (GAF col 11) < N [100000]" << endl      
        << "    -q, --min-mapq N                    Ignore records with MAPQ (GAF col 12) < N [5]" << endl
-       << "    -g, --min-gap N                     Filter so that reported minimizer matches have >=N bases between them [1000]" << endl;
+       << "    -g, --min-gap N                     Filter so that reported minimizer matches have >=N bases between them [1000]" << endl
+       << "    -u, --universal-mz FLOAT            Filter minimizers that appear in fewer than this fraction of alignments to target [0]" << endl;
 }    
 
 int main(int argc, char** argv) {
@@ -25,6 +26,7 @@ int main(int argc, char** argv) {
     int64_t min_block_len = 100000;
     int64_t min_mapq = 5;
     int64_t min_gap = 1000;
+    double universal_filter = 0.;
     
     int c;
     optind = 1; 
@@ -37,12 +39,13 @@ int main(int argc, char** argv) {
             {"min-block-length", required_argument, 0, 'b'},
             {"min-mapq", required_argument, 0, 'q'},
             {"min-gap", required_argument, 0, 'g'},
+            {"universal-mz", required_argument, 0, 'u'},
             {0, 0, 0, 0}
         };
 
         int option_index = 0;
 
-        c = getopt_long (argc, argv, "hp:b:q:g:",
+        c = getopt_long (argc, argv, "hp:b:q:g:u:",
                          long_options, &option_index);
 
         // Detect the end of the options.
@@ -62,6 +65,9 @@ int main(int argc, char** argv) {
             break;
         case 'g':
             min_gap = std::stol(optarg);
+            break;
+        case 'u':
+            universal_filter = std::stof(optarg);
             break;
         case 'h':
         case '?':
@@ -87,6 +93,12 @@ int main(int argc, char** argv) {
     }
 
     string in_path = argv[optind++];    
+
+    if (universal_filter > 0 && in_path == "-") {
+        cerr << "[mzgaf2paf] error: -u option requires 2 passes, so input cannot be streamed in with -" << endl;
+        return 1;
+    }
+
     ifstream in_file;
     istream* in_stream;
     if (in_path == "-") {
@@ -102,13 +114,31 @@ int main(int argc, char** argv) {
 
     ostream& out_stream = cout;
 
+    // optional first pass counts (very inefficiently atm) how many queries each minimizer appears in
+    MZMap mz_map;
+    if (universal_filter > 0) {
+        scan_mzgaf(*in_stream, [&](MzGafRecord& gaf_record, GafRecord& parent_record) {
+                // todo: buffer and parallelize?
+                if (gaf_record.num_minimizers > 0 &&
+                    parent_record.mapq >= min_mapq &&
+                    parent_record.block_length >= min_block_len) {
+
+                    update_mz_map(gaf_record, parent_record, mz_map);
+                }
+            });
+
+        // go back to the beginning by resetting the stream
+        in_stream->clear();
+        in_stream->seekg(0, ios::beg);
+    }
+
     scan_mzgaf(*in_stream, [&](MzGafRecord& gaf_record, GafRecord& parent_record) {
             // todo: buffer and parallelize?
             if (gaf_record.num_minimizers > 0 &&
                 parent_record.mapq >= min_mapq &&
                 parent_record.block_length >= min_block_len) {
                 
-                mzgaf2paf(gaf_record, parent_record, out_stream, min_gap, target_prefix);
+                mzgaf2paf(gaf_record, parent_record, out_stream, min_gap, mz_map, universal_filter, target_prefix);
             }
         });
 

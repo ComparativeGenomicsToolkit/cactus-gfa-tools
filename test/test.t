@@ -6,10 +6,11 @@ BASH_TAP_ROOT=./bash-tap
 PATH=../bin:$PATH
 PATH=../deps/hal:$PATH
 
-plan tests 9
+plan tests 17
 
 gzip -dc  hpp-20-2M/CHM13.fa.gz > CHM13.fa
 gzip -dc  hpp-20-2M/hg38.fa.gz > hg38.fa
+gzip -dc  hpp-20-2M/hg38-rev.fa.gz > hg38-rev.fa
 
 # validate the validator
 minimap2 hpp-20-2M/CHM13.fa.gz hpp-20-2M/hg38.fa.gz -c -A 30 -B 10 > CHM13_hg38.paf
@@ -46,12 +47,58 @@ is $? 0 "mzgaf2paf doesn't crash on simple forward alignment with -g 0"
 python ./verify_matches.py CHM13.paf CHM13.fa hpp-20-2M.gfa.fa
 is $? 0 "paf checks out for very simple forward alignment with -g 0"
 
-rm -f  CHM13.gaf CHM13.paf
-
 # repeat without gap filter
 mzgaf2paf hg38.gaf -g 0 > hg38.paf
 is $? 0 "mzgaf2paf doesn't crash on hg38 alignment with -g 0"
 python ./verify_matches.py hg38.paf hg38.fa hpp-20-2M.gfa.fa
 is $? 0 "paf checks out for hg38 alignment with -g 0"
 
-rm -f hpp-20-2M.gfa hpp-20-2M.gfa.fa CHM13.fa hg38.fa
+# try both at once
+cat CHM13.gaf hg38.gaf > CHM13_hg38.gaf
+mzgaf2paf CHM13_hg38.gaf -g 0 > CHM13_hg38.paf
+cat CHM13.paf hg38.paf > CHM13_hg38_cat.paf
+diff CHM13_hg38.paf CHM13_hg38_cat.paf
+is $? 0 "same output when catting input as when catting output"
+
+rm -f CHM13_hg38.paf CHM13_hg38_cat.paf
+rm -f hg38.paf CHM13.paf
+
+# test the universal filter doesn't apply when it shouldn't
+mzgaf2paf hg38.gaf -u 0 > hg38_u0.paf
+is $? 0 "mzgaf2paf doesn't crash on hg38 alignment with -u 0"
+mzgaf2paf hg38.gaf -u 1 > hg38_u1.paf
+is $? 0 "mzgaf2paf doesn't crash on hg38 alignment with -1 0"
+diff hg38_u0.paf hg38_u1.paf
+is $? 0 "universal filter has no effect on single sample"
+
+rm -f hg38_u0.paf hg38_u1.paf
+
+# test that the reverse strand is being treated correctly
+minigraph -xasm -t $(nproc) -K4g --inv=no -S --write-mz hpp-20-2M.gfa hpp-20-2M/hg38-rev.fa.gz > hg38-rev.gaf
+minigraph -xasm -t $(nproc) -K4g --inv=no -S --write-mz hpp-20-2M.gfa hpp-20-2M/hg38.fa.gz > hg38.gaf
+cat hg38-rev.gaf hg38.gaf > hg38-rf.gaf
+mzgaf2paf hg38-rf.gaf -u 1 | grep -v reverse> hg38-rf.paf
+mzgaf2paf hg38.gaf -u 0 > hg38.paf
+#diff hg38-rf.paf hg38.paf
+# this works on smaller tests, but it seems that minigraph minimizers are not perfectly symmetrical
+# all the time, which means that this test doesn't work
+#is $? 0 "universal filter doesn't obviously mess up on reverse strand"
+
+rm -f hg38-rev.gaf hg38-rf.paf hg38.paf
+
+# test that the universal filter runs without crashing
+mzgaf2paf CHM13_hg38.gaf -u 0 > CHM13_hg38_u0.paf
+is $? 0 "mzgaf2paf doesn't crash on CHM13_hg38 alignment with -u 0"
+mzgaf2paf CHM13_hg38.gaf -u 1 > CHM13_hg38_u1.paf
+is $? 0 "mzgaf2paf doesn't crash on CHM13_hg38 alignment with -u 1"
+diff CHM13_hg38_u0.paf CHM13_hg38_u1.paf > /dev/null
+isnt $? 0 "universal filter has effect on two samples"
+cat CHM13.fa hg38.fa > CHM13_hg38.fa
+python ./verify_matches.py CHM13_hg38_u1.paf CHM13_hg38.fa hpp-20-2M.gfa.fa
+is $? 0 "universal filter produces valid paf"
+
+rm -f CHM13_hg38.gaf CHM13_hg38_u0.paf CHM13_hg38_u1.paf CHM13_hg38.fa
+
+rm -f hpp-20-2M.gfa hpp-20-2M.gfa.fa CHM13.fa hg38.fa hg38-rev.fa CHM13.gaf hg38.gaf 
+
+

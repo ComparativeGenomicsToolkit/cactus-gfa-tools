@@ -23,7 +23,10 @@ void mzgaf2paf(const MzGafRecord& gaf_record,
                const GafRecord& parent_record,
                ostream& paf_stream,
                size_t min_gap,
+               MZMap& mz_map,
+               double universal_filter,
                const string& target_prefix) {
+
 
     // paf coordinates are always on forward strand. but the mz output coordinates for the target
     // can apparently be on the reverse strand, so we flip them as needed
@@ -36,6 +39,19 @@ void mzgaf2paf(const MzGafRecord& gaf_record,
   
     assert(gaf_record.target_mz_offsets.size() == gaf_record.query_mz_offsets.size());
 
+    // if we have a mz map, determine the acceptable count for each minimzer to consider "universal"
+    int64_t min_mz_count = 0;
+    int64_t max_mz_count = numeric_limits<int64_t>::max();
+    MZCount* mz_counts = nullptr;
+    if (universal_filter > 0) {
+        auto it = mz_map.find(gaf_record.target_name);
+        assert(it != mz_map.end());
+        int64_t target_map_count = it->second.first;
+        mz_counts = &it->second.second;
+        min_mz_count = target_map_count * universal_filter;
+        max_mz_count = target_map_count;
+    }
+    
     // turn the offsets vectors into match blocks, applying gap and inconsistency filters
     
     // positions as we move along (relative to gaf_record.query/target_starts)
@@ -51,8 +67,23 @@ void mzgaf2paf(const MzGafRecord& gaf_record,
         MatchBlock match = {query_pos, query_pos + gaf_record.kmer_size,
                             target_pos, target_pos + gaf_record.kmer_size};
 
+        // optional universal check
+        bool universal = true;
+        if (mz_counts != nullptr) {
+            uint32_t mz_count;
+            if (!gaf_record.is_reverse) {
+                mz_count = (*mz_counts)[gaf_record.target_start + target_pos];
+            } else {
+                mz_count = (*mz_counts)[gaf_record.target_length - gaf_record.target_start - target_pos - gaf_record.kmer_size];
+            }
+            assert(mz_count != 0);
+            universal = mz_count >= min_mz_count && mz_count <= max_mz_count;
+        }
+
         if (matches.empty()) {
-            matches.push_back(match);
+            if (universal) {
+                matches.push_back(match);
+            }
         } else {
             
             // compute the overlap with the previous minimizer
@@ -60,15 +91,19 @@ void mzgaf2paf(const MzGafRecord& gaf_record,
             int64_t target_delta = match.target_start - matches.back().target_end;
 
             if (query_delta == target_delta && query_delta <= 0) {
-                // extend adjacent minimizers (todo: do we want to always do this or control with option?)            
-                matches.back().query_end = match.query_end;
-                matches.back().target_end = match.target_end;
+                // extend adjacent minimizers (todo: do we want to always do this or control with option?)
+                if (universal) {
+                    matches.back().query_end = match.query_end;
+                    matches.back().target_end = match.target_end;
+                }
             } else if (query_delta < 0 || target_delta < 0) {
                 // drop inconsistent minimizers
                 matches.pop_back();
             } else if (query_delta >= min_gap && target_delta >= min_gap) {
                 // add if passes gap filter
-                matches.push_back(match);
+                if (universal) {
+                    matches.push_back(match);
+                }
             }
         }
 
@@ -160,6 +195,45 @@ void mzgaf2paf(const MzGafRecord& gaf_record,
         }
 
         paf_stream << "\n";
+    }
+}
+
+
+// update the counts for one mapping of query to target
+void update_mz_map(const gafkluge::MzGafRecord& gaf_record,
+                   const gafkluge::GafRecord& parent_record,
+                   MZMap& mz_map) {
+
+    // find our target in the map
+    pair<MZMap::iterator, bool> ret = mz_map.insert(make_pair(gaf_record.target_name, make_pair((size_t)0, MZCount())));
+    pair<size_t, MZCount>& value = ret.first->second;
+
+    // keep track of the number of queries that align to the target (we assume that each query->target mapping appears
+    // exactly once in the input
+    ++value.first;
+
+    // increment each minimzer
+    MZCount& mz_counts = value.second;
+    int64_t target_pos = gaf_record.target_start;
+    
+    for (size_t i = 0; i < gaf_record.num_minimizers; ++i) {
+
+        if (!gaf_record.is_reverse) {
+            ++mz_counts[target_pos];
+#ifdef debug
+            cerr << "f-increment i= " << i << " tp=" << target_pos << " to=" << mz_counts[target_pos] << endl;
+#endif
+        } else {
+            ++mz_counts[gaf_record.target_length - target_pos - gaf_record.kmer_size];
+#ifdef debug
+            cerr << "r-increment i= " << i << " tp=" << target_pos << "->" << (gaf_record.target_length - target_pos - gaf_record.kmer_size) << " to=" << mz_counts[gaf_record.target_length - target_pos - gaf_record.kmer_size] << endl;
+#endif
+        }
+
+        // advance our position
+        if (i < gaf_record.num_minimizers - 1) {
+            target_pos += gaf_record.target_mz_offsets[i];
+        }
     }
 }
 
