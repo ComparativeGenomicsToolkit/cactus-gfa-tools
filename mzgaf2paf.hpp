@@ -24,7 +24,8 @@ typedef unordered_map<string, MZCount> MZMap;
 void mzgaf2paf(const gafkluge::MzGafRecord& gaf_record,
                const gafkluge::GafRecord& parent_record,
                ostream& paf_stream,
-               size_t min_gap,
+               int64_t min_match_length,
+               int64_t min_gap,
                MZMap& mz_map,
                double universal_filter,
                const string& target_prefix = "");

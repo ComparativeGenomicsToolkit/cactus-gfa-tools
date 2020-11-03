@@ -17,6 +17,7 @@ void help(char** argv) {
        << "    -b, --min-block-length N            Ignore records with block length (GAF col 11) < N [100000]" << endl      
        << "    -q, --min-mapq N                    Ignore records with MAPQ (GAF col 12) < N [5]" << endl
        << "    -g, --min-gap N                     Filter so that reported minimizer matches have >=N bases between them [0]" << endl
+       << "    -m, --min-match-len N               Only write matches (formed by overlapping/adjacent mz chains) with length < N" << endl
        << "    -u, --universal-mz FLOAT            Filter minimizers that appear in fewer than this fraction of alignments to target [0]" << endl;
 }    
 
@@ -26,6 +27,7 @@ int main(int argc, char** argv) {
     int64_t min_block_len = 100000;
     int64_t min_mapq = 5;
     int64_t min_gap = 0;
+    int64_t min_match_length = 0;
     double universal_filter = 0.;
     
     int c;
@@ -39,13 +41,14 @@ int main(int argc, char** argv) {
             {"min-block-length", required_argument, 0, 'b'},
             {"min-mapq", required_argument, 0, 'q'},
             {"min-gap", required_argument, 0, 'g'},
+            {"min-match-len", required_argument, 0, 'm'},
             {"universal-mz", required_argument, 0, 'u'},
             {0, 0, 0, 0}
         };
 
         int option_index = 0;
 
-        c = getopt_long (argc, argv, "hp:b:q:g:u:",
+        c = getopt_long (argc, argv, "hp:b:q:g:m:u:",
                          long_options, &option_index);
 
         // Detect the end of the options.
@@ -65,6 +68,9 @@ int main(int argc, char** argv) {
             break;
         case 'g':
             min_gap = std::stol(optarg);
+            break;
+        case 'm':
+            min_match_length = std::stol(optarg);
             break;
         case 'u':
             universal_filter = std::stof(optarg);
@@ -138,7 +144,7 @@ int main(int argc, char** argv) {
                 parent_record.mapq >= min_mapq &&
                 parent_record.block_length >= min_block_len) {
                 
-                mzgaf2paf(gaf_record, parent_record, out_stream, min_gap, mz_map, universal_filter, target_prefix);
+                mzgaf2paf(gaf_record, parent_record, out_stream, min_gap, min_match_length, mz_map, universal_filter, target_prefix);
             }
         });
 

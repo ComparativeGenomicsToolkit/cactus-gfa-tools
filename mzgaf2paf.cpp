@@ -22,7 +22,8 @@ struct MatchBlock {
 void mzgaf2paf(const MzGafRecord& gaf_record,
                const GafRecord& parent_record,
                ostream& paf_stream,
-               size_t min_gap,
+               int64_t min_gap,
+               int64_t min_match_length,
                MZMap& mz_map,
                double universal_filter,
                const string& target_prefix) {
@@ -101,6 +102,10 @@ void mzgaf2paf(const MzGafRecord& gaf_record,
             } else if (query_delta >= min_gap && target_delta >= min_gap) {
                 // add if passes gap filter
                 if (universal) {
+                    // apply length filter
+                    if (min_match_length > 0 && !matches.empty() && matches.back().query_end - matches.back().query_start < min_match_length) {
+                        matches.pop_back();
+                    }
                     matches.push_back(match);
                 }
             }
@@ -111,6 +116,11 @@ void mzgaf2paf(const MzGafRecord& gaf_record,
             query_pos += gaf_record.query_mz_offsets[i];
             target_pos += gaf_record.target_mz_offsets[i];
         }
+    }
+    
+    // apply length filter
+    if (min_match_length > 0 && !matches.empty() && matches.back().query_end - matches.back().query_start < min_match_length) {
+        matches.pop_back();
     }
 
     // turn our matches into cigar (todo: go straight to string!)
