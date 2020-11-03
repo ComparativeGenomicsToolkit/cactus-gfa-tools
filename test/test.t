@@ -67,7 +67,7 @@ rm -f hg38.paf CHM13.paf
 mzgaf2paf hg38.gaf -u 0 > hg38_u0.paf
 is $? 0 "mzgaf2paf doesn't crash on hg38 alignment with -u 0"
 mzgaf2paf hg38.gaf -u 1 > hg38_u1.paf
-is $? 0 "mzgaf2paf doesn't crash on hg38 alignment with -1 0"
+is $? 0 "mzgaf2paf doesn't crash on hg38 alignment with -u 1"
 diff hg38_u0.paf hg38_u1.paf
 is $? 0 "universal filter has no effect on single sample"
 

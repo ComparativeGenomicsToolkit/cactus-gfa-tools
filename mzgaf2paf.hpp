@@ -9,15 +9,14 @@
 #include <iostream>
 #include <unordered_map>
 
-/** offset -> kmer count of given target sequence
- * using a map assumes some sparseness of minimizers, it's possible a vector would be better
+/** offset -> <number of minimzers, number of mappings> of given target sequence
  */
-typedef unordered_map<uint32_t, uint32_t> MZCount;
+typedef vector<pair<uint16_t, uint16_t>> MZCount;
 
 /** map a target sequence name to a pair of the number of times its been mapped to, along with
  * the number of times each of its minimizers has been mapped to
  */
-typedef unordered_map<string, pair<size_t, MZCount>> MZMap;
+typedef unordered_map<string, MZCount> MZMap;
 
 /**
  * Convert mzgaf to paf
