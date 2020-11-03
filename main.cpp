@@ -138,15 +138,23 @@ int main(int argc, char** argv) {
         in_stream->seekg(0, ios::beg);
     }
 
+    size_t total_match_length = 0;
+    size_t total_target_block_length = 0;
+    
     scan_mzgaf(*in_stream, [&](MzGafRecord& gaf_record, GafRecord& parent_record) {
             // todo: buffer and parallelize?
             if (gaf_record.num_minimizers > 0 &&
                 parent_record.mapq >= min_mapq &&
                 parent_record.block_length >= min_block_len) {
-                
-                mzgaf2paf(gaf_record, parent_record, out_stream, min_gap, min_match_length, mz_map, universal_filter, target_prefix);
+
+                total_match_length += mzgaf2paf(gaf_record, parent_record, out_stream, min_gap, min_match_length, mz_map, universal_filter, target_prefix);
+                total_target_block_length += gaf_record.target_end - gaf_record.target_start;
             }
         });
 
+
+    cerr << "Converted " << total_match_length << " bp of cigar Matches over " << total_target_block_length
+         << " bp of alignments to target (" << ((double)(total_match_length) / total_target_block_length) <<")" << endl;
+    
     return 0;
 }

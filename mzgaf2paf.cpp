@@ -19,14 +19,14 @@ struct MatchBlock {
     int64_t target_end; // could just store length instead of ends, but use to sanity check
 };
 
-void mzgaf2paf(const MzGafRecord& gaf_record,
-               const GafRecord& parent_record,
-               ostream& paf_stream,
-               int64_t min_gap,
-               int64_t min_match_length,
-               MZMap& mz_map,
-               double universal_filter,
-               const string& target_prefix) {
+size_t mzgaf2paf(const MzGafRecord& gaf_record,
+                 const GafRecord& parent_record,
+                 ostream& paf_stream,
+                 int64_t min_gap,
+                 int64_t min_match_length,
+                 MZMap& mz_map,
+                 double universal_filter,
+                 const string& target_prefix) {
 
 
     // paf coordinates are always on forward strand. but the mz output coordinates for the target
@@ -205,6 +205,8 @@ void mzgaf2paf(const MzGafRecord& gaf_record,
 
         paf_stream << "\n";
     }
+
+    return total_matches;
 }
 
 

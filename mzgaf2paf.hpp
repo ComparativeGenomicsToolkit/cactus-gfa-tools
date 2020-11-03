@@ -19,9 +19,9 @@ typedef vector<pair<uint16_t, uint16_t>> MZCount;
 typedef unordered_map<string, MZCount> MZMap;
 
 /**
- * Convert mzgaf to paf
+ * Conevert mzgaf to paf (returns total length of all matches)
  */
-void mzgaf2paf(const gafkluge::MzGafRecord& gaf_record,
+size_t mzgaf2paf(const gafkluge::MzGafRecord& gaf_record,
                const gafkluge::GafRecord& parent_record,
                ostream& paf_stream,
                int64_t min_match_length,
