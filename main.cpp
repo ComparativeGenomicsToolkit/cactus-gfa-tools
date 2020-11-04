@@ -9,8 +9,8 @@ using namespace std;
 using namespace gafkluge;
 
 void help(char** argv) {
-  cerr << "usage: " << argv[0] << " [options] <gaf> > output.paf" << endl
-       << "Convert minigraph --write-mz output to PAF" << endl
+  cerr << "usage: " << argv[0] << " [options] <gaf> [gaf2] [gaf3] [...] > output.paf" << endl
+       << "Convert minigraph --write-mz output(s) to PAF" << endl
        << endl
        << "options: " << endl
        << "    -p, --target-prefix PREFIX          Prepend all target (graph) contig names with this prefix" << endl
@@ -98,61 +98,77 @@ int main(int argc, char** argv) {
         return 1;
     }
 
-    string in_path = argv[optind++];    
+    vector<string> in_paths;
+    int stdin_count = 0;
+    while (optind < argc) {
+        in_paths.push_back(argv[optind++]);
+        if (in_paths.back() == "-") {
+            ++stdin_count;
+        }
+    }
 
-    if (universal_filter > 0 && in_path == "-") {
+    if (universal_filter > 0 && stdin_count > 0) {
         cerr << "[mzgaf2paf] error: -u option requires 2 passes, so input cannot be streamed in with -" << endl;
         return 1;
     }
 
-    ifstream in_file;
-    istream* in_stream;
-    if (in_path == "-") {
-        in_stream = &cin;
-    } else {
-        in_file.open(in_path);
-        if (!in_file) {
-            cerr << "[mzgaf2paf] error: unable to open input: " << in_path << endl;
-            return 1;
-        }
-        in_stream = &in_file;
+    if (stdin_count > 1) {
+        cerr << "mzgaf2paf] error: only one input can be piped with -" << endl;
+        return 1;
     }
 
-    ostream& out_stream = cout;
-
-    // optional first pass counts (very inefficiently atm) how many queries each minimizer appears in
+    // keep global counts of minimizers (used only for the universal filter)
     MZMap mz_map;
-    if (universal_filter > 0) {
+
+    size_t total_match_length = 0;
+    size_t total_target_block_length = 0;
+
+    for (const string& in_path : in_paths) {
+
+        ifstream in_file;
+        istream* in_stream;
+        if (in_path == "-") {
+            in_stream = &cin;
+        } else {
+            in_file.open(in_path);
+            if (!in_file) {
+                cerr << "[mzgaf2paf] error: unable to open input: " << in_path << endl;
+                return 1;
+            }
+            in_stream = &in_file;
+        }
+
+        // optional first pass counts (very inefficiently atm) how many queries each minimizer appears in
+        if (universal_filter > 0) {
+            scan_mzgaf(*in_stream, [&](MzGafRecord& gaf_record, GafRecord& parent_record) {
+                    // todo: buffer and parallelize?
+                    if (gaf_record.num_minimizers > 0 &&
+                        parent_record.mapq >= min_mapq &&
+                        parent_record.block_length >= min_block_len) {
+
+                        update_mz_map(gaf_record, parent_record, mz_map);
+                    }
+                });
+
+            // go back to the beginning by resetting the stream
+            in_stream->clear();
+            in_stream->seekg(0, ios::beg);
+        }
+
+    
         scan_mzgaf(*in_stream, [&](MzGafRecord& gaf_record, GafRecord& parent_record) {
                 // todo: buffer and parallelize?
                 if (gaf_record.num_minimizers > 0 &&
                     parent_record.mapq >= min_mapq &&
                     parent_record.block_length >= min_block_len) {
 
-                    update_mz_map(gaf_record, parent_record, mz_map);
+                    total_match_length += mzgaf2paf(gaf_record, parent_record, cout, min_gap, min_match_length, mz_map, universal_filter, target_prefix);
+                    total_target_block_length += gaf_record.target_end - gaf_record.target_start;
                 }
             });
 
-        // go back to the beginning by resetting the stream
-        in_stream->clear();
-        in_stream->seekg(0, ios::beg);
     }
-
-    size_t total_match_length = 0;
-    size_t total_target_block_length = 0;
     
-    scan_mzgaf(*in_stream, [&](MzGafRecord& gaf_record, GafRecord& parent_record) {
-            // todo: buffer and parallelize?
-            if (gaf_record.num_minimizers > 0 &&
-                parent_record.mapq >= min_mapq &&
-                parent_record.block_length >= min_block_len) {
-
-                total_match_length += mzgaf2paf(gaf_record, parent_record, out_stream, min_gap, min_match_length, mz_map, universal_filter, target_prefix);
-                total_target_block_length += gaf_record.target_end - gaf_record.target_start;
-            }
-        });
-
-
     cerr << "Converted " << total_match_length << " bp of cigar Matches over " << total_target_block_length
          << " bp of alignments to target (" << ((double)(total_match_length) / total_target_block_length) <<")" << endl;
     

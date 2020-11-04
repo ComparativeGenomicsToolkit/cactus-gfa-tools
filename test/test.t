@@ -6,7 +6,7 @@ BASH_TAP_ROOT=./bash-tap
 PATH=../bin:$PATH
 PATH=../deps/hal:$PATH
 
-plan tests 17
+plan tests 18
 
 gzip -dc  hpp-20-2M/CHM13.fa.gz > CHM13.fa
 gzip -dc  hpp-20-2M/hg38.fa.gz > hg38.fa
@@ -60,7 +60,11 @@ cat CHM13.paf hg38.paf > CHM13_hg38_cat.paf
 diff CHM13_hg38.paf CHM13_hg38_cat.paf
 is $? 0 "same output when catting input as when catting output"
 
-rm -f CHM13_hg38.paf CHM13_hg38_cat.paf
+mzgaf2paf CHM13.gaf hg38.gaf -g 0 > CHM12_hg38_1.paf
+diff CHM12_hg38_1.paf CHM13_hg38.paf
+is $? 0 "same output when passing multiple input files doing separately and catting"
+
+rm -f CHM13_hg38.paf CHM13_hg38_cat.paf CHM12_hg38_1.paf
 rm -f hg38.paf CHM13.paf
 
 # test the universal filter doesn't apply when it shouldn't
