@@ -35,7 +35,7 @@ CXXFLAGS := -O3 -Werror=return-type -std=c++14 -ggdb -g -MMD -MP $(PARALLEL_FLAG
 LIB_FLAGS = $(LIBS)
 INC_FLAGS = -I$(CWD)
 
-all: mzgaf2paf
+all: mzgaf2paf pafcoverage
 
 mzgaf2paf: mzgaf2paf.o main.o
 	$(CXX) $(INCLUDE_FLAGS) $(CXXFLAGS) $(CPPFLAGS) -o mzgaf2paf main.o mzgaf2paf.o $(LIB_FLAGS)
@@ -45,6 +45,15 @@ main.o:$(LIB_DEPS) main.cpp mzgaf2paf.hpp mzgaf.hpp gafkluge.hpp
 
 mzgaf2paf.o:$(LIB_DEPS) mzgaf2paf.cpp mzgaf2paf.hpp mzgaf.hpp gafkluge.hpp
 	$(CXX) $(INCLUDE_FLAGS) $(CXXFLAGS) $(CPPFLAGS) -c mzgaf2paf.cpp $(INC_FLAGS)
+
+pafcoverage: pafcoverage.o pafcoverage_main.o
+	$(CXX) $(INCLUDE_FLAGS) $(CXXFLAGS) $(CPPFLAGS) -o pafcoverage pafcoverage_main.o pafcoverage.o $(LIB_FLAGS)
+
+pafcoverage_main.o:$(LIB_DEPS) pafcoverage_main.cpp pafcoverage.hpp
+	$(CXX) $(INCLUDE_FLAGS) $(CXXFLAGS) $(CPPFLAGS) -c pafcoverage_main.cpp $(INC_FLAGS)
+
+pafcoverage.o:$(LIB_DEPS) pafcoverage.cpp pafcoverage.hpp
+	$(CXX) $(INCLUDE_FLAGS) $(CXXFLAGS) $(CPPFLAGS) -c pafcoverage.cpp $(INC_FLAGS)
 
 test : mzgaf2paf
 	cd test && prove -v hla.t

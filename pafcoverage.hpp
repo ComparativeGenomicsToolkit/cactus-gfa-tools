@@ -1,0 +1,30 @@
+/**
+ * pafcoverage.hpp: Get some stats from cigar pafs in order to see what kind of anchors they make for Cactus
+ *                 (not done within mzgaf2paf so it can be used on paf's from other sources too)
+ */
+
+
+#pragma once
+#include <string>
+#include <vector>
+#include <unordered_map>
+#include <ostream>
+
+using namespace std;
+
+// map a sequence name to all its covered bases (not caring about depth, so just using bools)
+typedef unordered_map<string, vector<bool>> CoverageMap;
+
+/** update bases covered in the query sequence of a paf line
+ */
+void update_coverage_map(const string& paf_line, CoverageMap& coverage_map);
+
+/** print some stats
+ */
+void print_coverage_summary(const CoverageMap& coverage_map, ostream& out);
+
+/** print bed of coverage gaps
+ */
+void print_coverage_gaps_as_bed(const CoverageMap& coverage_map, ostream& out);
+
+
