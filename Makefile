@@ -56,7 +56,7 @@ pafcoverage.o:$(LIB_DEPS) pafcoverage.cpp pafcoverage.hpp
 	$(CXX) $(INCLUDE_FLAGS) $(CXXFLAGS) $(CPPFLAGS) -c pafcoverage.cpp $(INC_FLAGS)
 
 test : mzgaf2paf
-	cd test && prove -v hla.t
+	cd test && prove -v test.t
 
 clean:
 	rm -rf mzgaf2paf main.o mzgaf2paf.o

@@ -69,10 +69,12 @@ size_t mzgaf2paf(const MzGafRecord& gaf_record,
             // index on forward strand
             int64_t mz_idx = !gaf_record.is_reverse ? gaf_record.target_start + target_pos :
                 gaf_record.target_length - gaf_record.target_start - target_pos - gaf_record.kmer_size;
-            assert(mz_counts->at(mz_idx).first > 0 && mz_counts->at(mz_idx).second > 0);
+            assert(universal == 1 || (mz_counts->at(mz_idx).first > 0 && mz_counts->at(mz_idx).second > 0));
             // proportion of mapped sequences that have this exact minimizer
             // todo: this is sample-unaware.  so if two sequences in a given sample have this
-            // minimizer, it's okay as far as the filter's concerned. 
+            // minimizer, it's okay as far as the filter's concerned.
+            // update: this is sample-aware if the samples are different files and u==1
+            // by way of lowering the numerator in the combine_mz funciton below
             float mz_frac = (float)mz_counts->at(mz_idx).first / (float)mz_counts->at(mz_idx).second;
             // mz_frac can be > 1 due to 0-offsets in the minigraph mz lists.  
             universal = mz_frac >= universal_filter && mz_frac <= 1.;
@@ -254,6 +256,32 @@ void update_mz_map(const gafkluge::MzGafRecord& gaf_record,
         if (i < gaf_record.num_minimizers - 1) {
             target_pos += gaf_record.target_mz_offsets[i];
         }
+    }
+}
+
+void combine_mz_maps(MZMap& map1, MZMap& map2, bool reset_multiple_counts_to_0) {
+    for (auto& kv : map1) {
+
+        MZCount& mz_counts1 = kv.second;
+        MZCount& mz_counts2 = map2[kv.first];
+
+        // init the count array
+        if (mz_counts2.empty() && !mz_counts1.empty()) {
+            mz_counts2.resize(mz_counts1.size());
+        }
+
+        // add the counts
+        for (int64_t i = 0; i < mz_counts1.size(); ++i) {
+            mz_counts2[i].first += mz_counts1[i].first;
+            mz_counts2[i].second += mz_counts1[i].second;
+            if (reset_multiple_counts_to_0 && mz_counts1[i].first > 1 || mz_counts1[i].second > 1) {
+                // this minimizer was covered or was present more than once in the current GAF file
+                // we set its hits to 0 (if reset_multple flag is set) 
+                mz_counts2[i].first = 0;
+            }
+        }
+        // remove from map1 to keep memory down
+        mz_counts1.clear();   
     }
 }
 

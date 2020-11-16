@@ -18,7 +18,8 @@ void help(char** argv) {
        << "    -q, --min-mapq N                    Ignore records with MAPQ (GAF col 12) < N [5]" << endl
        << "    -g, --min-gap N                     Filter so that reported minimizer matches have >=N bases between them [0]" << endl
        << "    -m, --min-match-len N               Only write matches (formed by overlapping/adjacent mz chains) with length < N" << endl
-       << "    -u, --universal-mz FLOAT            Filter minimizers that appear in fewer than this fraction of alignments to target [0]" << endl;
+       << "    -u, --universal-mz FLOAT            Filter minimizers that appear in fewer than this fraction of alignments to target [0]" << endl
+       << "    If u=1, then it will also filter minimizers appearing more than once in an input *file*" << endl; 
 }    
 
 int main(int argc, char** argv) {
@@ -120,6 +121,10 @@ int main(int argc, char** argv) {
     // keep global counts of minimizers (used only for the universal filter)
     MZMap mz_map;
 
+    // toggle on file-based filtering, which will catch and filter out cases where the same minimizer
+    // is touched more than once in a file.
+    bool file_based_filter = universal_filter == 1;
+
     size_t total_match_length = 0;
     size_t total_target_block_length = 0;
 
@@ -140,21 +145,26 @@ int main(int argc, char** argv) {
 
         // optional first pass counts (very inefficiently atm) how many queries each minimizer appears in
         if (universal_filter > 0) {
+            // per file counts (todo: we can save some memory by using fewer bits here in some cases)
+            MZMap file_mz_map;
             scan_mzgaf(*in_stream, [&](MzGafRecord& gaf_record, GafRecord& parent_record) {
                     // todo: buffer and parallelize?
                     if (gaf_record.num_minimizers > 0 &&
                         parent_record.mapq >= min_mapq &&
                         parent_record.block_length >= min_block_len) {
-
-                        update_mz_map(gaf_record, parent_record, mz_map);
+                        
+                        update_mz_map(gaf_record, parent_record, file_mz_map);
                     }
                 });
 
             // go back to the beginning by resetting the stream
             in_stream->clear();
             in_stream->seekg(0, ios::beg);
-        }
 
+            // combine the file-map into the overall map.  if universal_filter is 1, then
+            // minimizers counted more than once in the file get zapped to 0
+            combine_mz_maps(file_mz_map, mz_map, file_based_filter);
+        }
     
         scan_mzgaf(*in_stream, [&](MzGafRecord& gaf_record, GafRecord& parent_record) {
                 // todo: buffer and parallelize?

@@ -35,3 +35,7 @@ size_t mzgaf2paf(const gafkluge::MzGafRecord& gaf_record,
 void update_mz_map(const gafkluge::MzGafRecord& gaf_record,
                    const gafkluge::GafRecord& parent_record,
                    MZMap& mz_map);
+
+/* combine the two maps, adding all elements of map1 into map2 *and removing* them from map1
+ */
+void combine_mz_maps(MZMap& map1, MZMap& map2, bool reset_multiple_counts_to_0);
