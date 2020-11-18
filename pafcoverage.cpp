@@ -56,20 +56,19 @@ void update_coverage_map(const string& paf_line, CoverageMap& coverage_map) {
 
     for (int i = 12; i < toks.size(); ++i) {
         if (toks[i].substr(0, 5) == "cg:Z:") {
-            if (toks[4] == "+" || true) {
-                int64_t query_pos = std::stol(toks[2]);
-                for_each_cg(toks[i], [&](const string& val, const string& cat) {
-                        int64_t len = std::stol(val);
-                        if (cat == "M") {
-                            for (int64_t j = 0; j < len; ++j) {
-                                query_coverage[query_pos + j] = true;
-                            }
+            // note: query coordinates always on forward strand in paf
+            int64_t query_pos = std::stol(toks[2]);
+            for_each_cg(toks[i], [&](const string& val, const string& cat) {
+                    int64_t len = std::stol(val);
+                    if (cat == "M") {
+                        for (int64_t j = 0; j < len; ++j) {
+                            query_coverage[query_pos + j] = true;
                         }
-                        if (cat == "M" || cat == "D") {
-                            query_pos += len;
-                        }
-                    });
-            }
+                    }
+                    if (cat == "M" || cat == "I") {
+                        query_pos += len;
+                    }
+                });
         }
     }
 }
