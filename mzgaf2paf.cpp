@@ -274,7 +274,7 @@ void combine_mz_maps(MZMap& map1, MZMap& map2, bool reset_multiple_counts_to_0) 
         for (int64_t i = 0; i < mz_counts1.size(); ++i) {
             mz_counts2[i].first += mz_counts1[i].first;
             mz_counts2[i].second += mz_counts1[i].second;
-            if (reset_multiple_counts_to_0 && mz_counts1[i].first > 1 || mz_counts1[i].second > 1) {
+            if (reset_multiple_counts_to_0 && (mz_counts1[i].first > 1 || mz_counts1[i].second > 1)) {
                 // this minimizer was covered or was present more than once in the current GAF file
                 // we set its hits to 0 (if reset_multple flag is set) 
                 mz_counts2[i].first = 0;

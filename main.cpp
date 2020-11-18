@@ -19,7 +19,7 @@ void help(char** argv) {
        << "    -g, --min-gap N                     Filter so that reported minimizer matches have >=N bases between them [0]" << endl
        << "    -m, --min-match-len N               Only write matches (formed by overlapping/adjacent mz chains) with length < N" << endl
        << "    -u, --universal-mz FLOAT            Filter minimizers that appear in fewer than this fraction of alignments to target [0]" << endl
-       << "    If u=1, then it will also filter minimizers appearing more than once in an input *file*" << endl; 
+       << "    -f, --file-based-universal          Filter minimizers that appear more than once in a give input GAF file" << endl;
 }    
 
 int main(int argc, char** argv) {
@@ -30,6 +30,10 @@ int main(int argc, char** argv) {
     int64_t min_gap = 0;
     int64_t min_match_length = 0;
     double universal_filter = 0.;
+    // toggle on file-based filtering, which will catch and filter out cases where the same minimizer
+    // is touched more than once in a file.
+    bool file_based_filter = false;
+    
     
     int c;
     optind = 1; 
@@ -44,12 +48,13 @@ int main(int argc, char** argv) {
             {"min-gap", required_argument, 0, 'g'},
             {"min-match-len", required_argument, 0, 'm'},
             {"universal-mz", required_argument, 0, 'u'},
+            {"file-based-universal", no_argument, 0, 'f'},
             {0, 0, 0, 0}
         };
 
         int option_index = 0;
 
-        c = getopt_long (argc, argv, "hp:b:q:g:m:u:",
+        c = getopt_long (argc, argv, "hp:b:q:g:m:u:f",
                          long_options, &option_index);
 
         // Detect the end of the options.
@@ -75,6 +80,9 @@ int main(int argc, char** argv) {
             break;
         case 'u':
             universal_filter = std::stof(optarg);
+            break;
+        case 'f':
+            file_based_filter = true;
             break;
         case 'h':
         case '?':
@@ -120,10 +128,6 @@ int main(int argc, char** argv) {
 
     // keep global counts of minimizers (used only for the universal filter)
     MZMap mz_map;
-
-    // toggle on file-based filtering, which will catch and filter out cases where the same minimizer
-    // is touched more than once in a file.
-    bool file_based_filter = universal_filter == 1;
 
     size_t total_match_length = 0;
     size_t total_target_block_length = 0;
