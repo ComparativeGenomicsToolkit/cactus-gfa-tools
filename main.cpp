@@ -14,8 +14,8 @@ void help(char** argv) {
        << endl
        << "options: " << endl
        << "    -p, --target-prefix PREFIX          Prepend all target (graph) contig names with this prefix" << endl
-       << "    -b, --min-block-length N            Ignore records with block length (GAF col 11) < N [100000]" << endl      
-       << "    -q, --min-mapq N                    Ignore records with MAPQ (GAF col 12) < N [5]" << endl
+       << "    -b, --min-block-length N            Ignore records with block length (GAF col 11) < N [0]" << endl      
+       << "    -q, --min-mapq N                    Ignore records with MAPQ (GAF col 12) < N [0]" << endl
        << "    -g, --min-gap N                     Filter so that reported minimizer matches have >=N bases between them [0]" << endl
        << "    -m, --min-match-len N               Only write matches (formed by overlapping/adjacent mz chains) with length < N" << endl
        << "    -u, --universal-mz FLOAT            Filter minimizers that appear in fewer than this fraction of alignments to target [0]" << endl
@@ -25,8 +25,8 @@ void help(char** argv) {
 int main(int argc, char** argv) {
 
     string target_prefix;
-    int64_t min_block_len = 100000;
-    int64_t min_mapq = 5;
+    int64_t min_block_len = 0;
+    int64_t min_mapq = 0;
     int64_t min_gap = 0;
     int64_t min_match_length = 0;
     double universal_filter = 0.;
