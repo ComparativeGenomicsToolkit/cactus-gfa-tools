@@ -215,7 +215,8 @@ size_t mzgaf2paf(const MzGafRecord& gaf_record,
 // update the counts for one mapping of query to target
 void update_mz_map(const gafkluge::MzGafRecord& gaf_record,
                    const gafkluge::GafRecord& parent_record,
-                   MZMap& mz_map) {
+                   MZMap& mz_map,
+                   bool node_based_universal) {
 
     // find our target in the map
     MZCount& mz_counts = mz_map[gaf_record.target_name];
@@ -232,7 +233,15 @@ void update_mz_map(const gafkluge::MzGafRecord& gaf_record,
         paf_target_start = gaf_record.target_length - gaf_record.target_end;
         paf_target_end = gaf_record.target_length - gaf_record.target_start;
     }
-    for (int64_t i = paf_target_start; i < paf_target_end; ++i) {
+    int64_t range_start = paf_target_start;
+    int64_t range_end = paf_target_end;
+    if (node_based_universal) {
+        // todo: if we want to do things node based, we can use a much simpler structure that stores
+        // one coutn per node.  keeping range just to preserve flexibility for now
+        range_start = 0;
+        range_end = gaf_record.target_length;
+    }
+    for (int64_t i = range_start; i < range_end; ++i) {
         ++mz_counts[i].second;        
     }
     

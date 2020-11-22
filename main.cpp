@@ -19,7 +19,7 @@ void help(char** argv) {
        << "    -g, --min-gap N                     Filter so that reported minimizer matches have >=N bases between them [0]" << endl
        << "    -m, --min-match-len N               Only write matches (formed by overlapping/adjacent mz chains) with length < N" << endl
        << "    -u, --universal-mz FLOAT            Filter minimizers that appear in fewer than this fraction of alignments to target [0]" << endl
-       << "    -f, --file-based-universal          Filter minimizers that appear more than once in a give input GAF file" << endl;
+       << "    -n, --node-based-universal          Universal computed on entire node instead of mapped region" << endl;
 }    
 
 int main(int argc, char** argv) {
@@ -30,11 +30,11 @@ int main(int argc, char** argv) {
     int64_t min_gap = 0;
     int64_t min_match_length = 0;
     double universal_filter = 0.;
+    bool node_based_universal = false;
     // toggle on file-based filtering, which will catch and filter out cases where the same minimizer
     // is touched more than once in a file.
     bool file_based_filter = false;
-    
-    
+       
     int c;
     optind = 1; 
     while (true) {
@@ -48,13 +48,13 @@ int main(int argc, char** argv) {
             {"min-gap", required_argument, 0, 'g'},
             {"min-match-len", required_argument, 0, 'm'},
             {"universal-mz", required_argument, 0, 'u'},
-            {"file-based-universal", no_argument, 0, 'f'},
+            {"node-based-universal", no_argument, 0, 'n'},
             {0, 0, 0, 0}
         };
 
         int option_index = 0;
 
-        c = getopt_long (argc, argv, "hp:b:q:g:m:u:f",
+        c = getopt_long (argc, argv, "hp:b:q:g:m:u:n",
                          long_options, &option_index);
 
         // Detect the end of the options.
@@ -81,8 +81,8 @@ int main(int argc, char** argv) {
         case 'u':
             universal_filter = std::stof(optarg);
             break;
-        case 'f':
-            file_based_filter = true;
+        case 'n':
+            node_based_universal = true;
             break;
         case 'h':
         case '?':
@@ -131,6 +131,7 @@ int main(int argc, char** argv) {
 
     size_t total_match_length = 0;
     size_t total_target_block_length = 0;
+    size_t total_records = 0;
 
     for (const string& in_path : in_paths) {
 
@@ -157,7 +158,7 @@ int main(int argc, char** argv) {
                         parent_record.mapq >= min_mapq &&
                         parent_record.block_length >= min_block_len) {
                         
-                        update_mz_map(gaf_record, parent_record, file_mz_map);
+                        update_mz_map(gaf_record, parent_record, file_mz_map, node_based_universal);
                     }
                 });
 
@@ -178,12 +179,13 @@ int main(int argc, char** argv) {
 
                     total_match_length += mzgaf2paf(gaf_record, parent_record, cout, min_gap, min_match_length, mz_map, universal_filter, target_prefix);
                     total_target_block_length += gaf_record.target_end - gaf_record.target_start;
+                    ++total_records;
                 }
             });
 
     }
     
-    cerr << "Converted " << total_match_length << " bp of cigar Matches over " << total_target_block_length
+    cerr << "Converted " << total_records << " recs with " << total_match_length << " bp of cigar Matches over " << total_target_block_length
          << " bp of alignments to target (" << ((double)(total_match_length) / total_target_block_length) <<")" << endl;
     
     return 0;
