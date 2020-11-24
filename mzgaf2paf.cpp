@@ -216,6 +216,9 @@ size_t mzgaf2paf(const MzGafRecord& gaf_record,
 void update_mz_map(const gafkluge::MzGafRecord& gaf_record,
                    const gafkluge::GafRecord& parent_record,
                    MZMap& mz_map,
+                   int64_t min_mapq,
+                   int64_t min_block_len,
+                   int64_t min_node_len,
                    bool node_based_universal) {
 
     // find our target in the map
@@ -226,7 +229,7 @@ void update_mz_map(const gafkluge::MzGafRecord& gaf_record,
         mz_counts.resize(gaf_record.target_length, make_pair(0, 0));
     }
 
-    // increment the mapping counts
+    // increment the mapping counts (regardless of thresholds)
     int64_t paf_target_start = gaf_record.target_start;
     int64_t paf_target_end = gaf_record.target_end;
     if (gaf_record.is_reverse) {
@@ -244,26 +247,32 @@ void update_mz_map(const gafkluge::MzGafRecord& gaf_record,
     for (int64_t i = range_start; i < range_end; ++i) {
         ++mz_counts[i].second;        
     }
-    
-    // increment each minimzer
-    int64_t target_pos = gaf_record.target_start;
 
-    for (size_t i = 0; i < gaf_record.num_minimizers; ++i) {
+    // increment each minimzer (if the record passes the thresholds)
+    if (gaf_record.num_minimizers > 0 &&
+        parent_record.mapq >= min_mapq &&
+        parent_record.block_length >= min_block_len &&
+        gaf_record.target_length >= min_node_len) {
+        
+        int64_t target_pos = gaf_record.target_start;
 
-        int64_t mz_idx = !gaf_record.is_reverse ? target_pos :
-            gaf_record.target_length - target_pos - gaf_record.kmer_size;
+        for (size_t i = 0; i < gaf_record.num_minimizers; ++i) {
 
-        // note, mz_counts.first can be higher than .second because 0-offsets are apparently a thing in the
-        // minigraph output
-        ++mz_counts[mz_idx].first;
+            int64_t mz_idx = !gaf_record.is_reverse ? target_pos :
+                gaf_record.target_length - target_pos - gaf_record.kmer_size;
+
+            // note, mz_counts.first can be higher than .second because 0-offsets are apparently a thing in the
+            // minigraph output
+            ++mz_counts[mz_idx].first;
 
 #ifdef debug
-        cerr << (gaf_record.is_reverse ? "r" : "f") << "-increment i= " << i << " mzi=" << mz_idx << " to="
-             << mz_counts[mz_idx].first << "," << mz_counts[mz_idx].second << endl;
+            cerr << (gaf_record.is_reverse ? "r" : "f") << "-increment i= " << i << " mzi=" << mz_idx << " to="
+                 << mz_counts[mz_idx].first << "," << mz_counts[mz_idx].second << endl;
 #endif
-        // advance our position
-        if (i < gaf_record.num_minimizers - 1) {
-            target_pos += gaf_record.target_mz_offsets[i];
+            // advance our position
+            if (i < gaf_record.num_minimizers - 1) {
+                target_pos += gaf_record.target_mz_offsets[i];
+            }
         }
     }
 }

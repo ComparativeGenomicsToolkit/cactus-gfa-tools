@@ -30,11 +30,15 @@ size_t mzgaf2paf(const gafkluge::MzGafRecord& gaf_record,
                double universal_filter,
                const string& target_prefix = "");
 
-/* update the counts for one mapping of query to target
+/* update the counts for one mapping of query to target.  if the any of the filters
+ * fail, the coverage count is updated, but none of the minimizer counts.
  */
 void update_mz_map(const gafkluge::MzGafRecord& gaf_record,
                    const gafkluge::GafRecord& parent_record,
                    MZMap& mz_map,
+                   int64_t min_mapq,
+                   int64_t min_block_len,
+                   int64_t min_node_len,
                    bool node_based_universal);
 
 /* combine the two maps, adding all elements of map1 into map2 *and removing* them from map1

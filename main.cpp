@@ -35,7 +35,7 @@ int main(int argc, char** argv) {
     // toggle on file-based filtering, which will catch and filter out cases where the same minimizer
     // is touched more than once in a file.
     bool file_based_filter = false;
-    int64_t min_node_length = 0;
+    int64_t min_node_len = 0;
        
     int c;
     optind = 1; 
@@ -88,7 +88,7 @@ int main(int argc, char** argv) {
             node_based_universal = true;
             break;
         case 's':
-            min_node_length = std::stol(optarg);
+            min_node_len = std::stol(optarg);
             break;
         case 'h':
         case '?':
@@ -160,13 +160,7 @@ int main(int argc, char** argv) {
             MZMap file_mz_map;
             scan_mzgaf(*in_stream, [&](MzGafRecord& gaf_record, GafRecord& parent_record) {
                     // todo: buffer and parallelize?
-                    if (gaf_record.num_minimizers > 0 &&
-                        parent_record.mapq >= min_mapq &&
-                        parent_record.block_length >= min_block_len &&
-                        gaf_record.target_length >= min_node_length) {
-                        
-                        update_mz_map(gaf_record, parent_record, file_mz_map, node_based_universal);
-                    }
+                    update_mz_map(gaf_record, parent_record, file_mz_map, min_mapq, min_block_len, min_node_len, node_based_universal);
                 });
 
             // go back to the beginning by resetting the stream
@@ -183,7 +177,7 @@ int main(int argc, char** argv) {
                 if (gaf_record.num_minimizers > 0 &&
                     parent_record.mapq >= min_mapq &&
                     parent_record.block_length >= min_block_len &&
-                    gaf_record.target_length >= min_node_length) {
+                    gaf_record.target_length >= min_node_len) {
 
                     total_match_length += mzgaf2paf(gaf_record, parent_record, cout, min_gap, min_match_length, mz_map, universal_filter, target_prefix);
                     total_target_block_length += gaf_record.target_end - gaf_record.target_start;
