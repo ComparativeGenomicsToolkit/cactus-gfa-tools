@@ -20,7 +20,8 @@ void help(char** argv) {
        << "    -m, --min-match-len N               Only write matches (formed by overlapping/adjacent mz chains) with length < N" << endl
        << "    -u, --universal-mz FLOAT            Filter minimizers that appear in fewer than this fraction of alignments to target [0]" << endl
        << "    -n, --node-based-universal          Universal computed on entire node instead of mapped region" << endl
-       << "    -s, --min-node-length N             Ignore minimizers on GAF nodes of length < N [0]" << endl;
+       << "    -s, --min-node-length N             Ignore minimizers on GAF nodes of length < N [0]" << endl
+       << "    -i, --strict-unversal               Count mapq and block length filters against universal (instead of ignoring)" << endl;
 }    
 
 int main(int argc, char** argv) {
@@ -36,6 +37,7 @@ int main(int argc, char** argv) {
     // is touched more than once in a file.
     bool file_based_filter = false;
     int64_t min_node_len = 0;
+    bool strict_universal = false;
        
     int c;
     optind = 1; 
@@ -52,12 +54,13 @@ int main(int argc, char** argv) {
             {"universal-mz", required_argument, 0, 'u'},
             {"node-based-universal", no_argument, 0, 'n'},
             {"min-node-length", required_argument, 0, 's'},
+            {"strict-unversal", no_argument, 0, 'i'},
             {0, 0, 0, 0}
         };
 
         int option_index = 0;
 
-        c = getopt_long (argc, argv, "hp:b:q:g:m:u:ns:",
+        c = getopt_long (argc, argv, "hp:b:q:g:m:u:ns:i",
                          long_options, &option_index);
 
         // Detect the end of the options.
@@ -89,6 +92,9 @@ int main(int argc, char** argv) {
             break;
         case 's':
             min_node_len = std::stol(optarg);
+            break;
+        case 'i':
+            strict_universal = true;
             break;
         case 'h':
         case '?':
@@ -160,7 +166,13 @@ int main(int argc, char** argv) {
             MZMap file_mz_map;
             scan_mzgaf(*in_stream, [&](MzGafRecord& gaf_record, GafRecord& parent_record) {
                     // todo: buffer and parallelize?
-                    update_mz_map(gaf_record, parent_record, file_mz_map, min_mapq, min_block_len, min_node_len, node_based_universal);
+                    if (strict_universal ||
+                        (gaf_record.num_minimizers > 0 &&
+                        parent_record.mapq >= min_mapq &&
+                        parent_record.block_length >= min_block_len &&
+                         gaf_record.target_length >= min_node_len)) {                        
+                        update_mz_map(gaf_record, parent_record, file_mz_map, min_mapq, min_block_len, min_node_len, node_based_universal);
+                    }
                 });
 
             // go back to the beginning by resetting the stream
