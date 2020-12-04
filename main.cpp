@@ -22,7 +22,7 @@ void help(char** argv) {
        << "    -n, --node-based-universal          Universal computed on entire node instead of mapped region" << endl
        << "    -s, --min-node-length N             Ignore minimizers on GAF nodes of length < N [0]" << endl
        << "    -i, --strict-unversal               Count mapq and block length filters against universal (instead of ignoring)" << endl
-       << "    -o, --min-overlap-length N          If >= query regions with size >= N overlap, ignore the query region.  If 1 query region with size >= N overlaps any regions of size <= N, ignore the smaller ones only [10000]" << endl;
+       << "    -o, --min-overlap-length N          If >= query regions with size >= N overlap, ignore the query region.  If 1 query region with size >= N overlaps any regions of size <= N, ignore the smaller ones only. (0 = disable) [0]" << endl;
 }    
 
 int main(int argc, char** argv) {
@@ -39,7 +39,7 @@ int main(int argc, char** argv) {
     bool file_based_filter = false;
     int64_t min_node_len = 0;
     bool strict_universal = false;
-    int64_t min_overlap_len = 10000;
+    int64_t min_overlap_len = 0;
        
     int c;
     optind = 1; 
