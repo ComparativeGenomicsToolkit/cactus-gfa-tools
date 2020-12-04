@@ -26,8 +26,9 @@ size_t mzgaf2paf(const MzGafRecord& gaf_record,
                  int64_t min_match_length,
                  MZMap& mz_map,
                  double universal_filter,
+                 QueryCoverage& query_coverage,
+                 int64_t min_overlap_len,                 
                  const string& target_prefix) {
-
 
     // paf coordinates are always on forward strand. but the mz output coordinates for the target
     // can apparently be on the reverse strand, so we flip them as needed
@@ -46,6 +47,12 @@ size_t mzgaf2paf(const MzGafRecord& gaf_record,
         auto it = mz_map.find(gaf_record.target_name);
         assert(it != mz_map.end());
         mz_counts = &it->second;
+    }
+
+    TwoBitVec* cov_vec = min_overlap_len > 0 ? &query_coverage[parent_record.query_name] : nullptr;
+    if (cov_vec && cov_vec->size() == 0) {
+        assert(parent_record.block_length < min_overlap_len);
+        cov_vec = nullptr;
     }
     
     // turn the offsets vectors into match blocks, applying gap and inconsistency filters
@@ -78,6 +85,20 @@ size_t mzgaf2paf(const MzGafRecord& gaf_record,
             float mz_frac = (float)mz_counts->at(mz_idx).first / (float)mz_counts->at(mz_idx).second;
             // mz_frac can be > 1 due to 0-offsets in the minigraph mz lists.  
             universal = mz_frac >= universal_filter && mz_frac <= 1.;
+        }
+
+        // optional mz_overlap check: filter out minimizer if in query region covered more than once,
+        // or if the query region is covered once and we're too small
+        if (cov_vec != nullptr) {
+            // todo: this is all pretty slow (borrowing the per-base code of universal filter)
+            // may have to switch to interval queries at scale
+            for (int64_t i = match.query_start; i < match.query_end && universal; ++i) {
+                size_t coverage = cov_vec->get(gaf_record.query_start + i);
+                if (coverage > 1 || (coverage == 1 && parent_record.block_length < min_overlap_len)) {
+                    // we hijack the unversal flag, as the filters have the same effect
+                    universal = false;
+                }
+            }
         }
 
         if (matches.empty()) {
@@ -303,3 +324,15 @@ void combine_mz_maps(MZMap& map1, MZMap& map2, bool reset_multiple_counts_to_0) 
     }
 }
 
+void update_query_coverage(const gafkluge::GafRecord& parent_record,
+                           QueryCoverage& query_coverage) {
+    
+    TwoBitVec& cov_vec = query_coverage[parent_record.query_name];
+    if (cov_vec.size() == 0) {
+        cov_vec.resize(parent_record.query_length);
+    }
+    bool check = false;
+    for (size_t i = parent_record.query_start; i < parent_record.query_end; ++i) {
+        cov_vec.increment(i);
+    }
+}

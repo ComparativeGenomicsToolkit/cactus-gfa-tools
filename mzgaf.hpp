@@ -139,7 +139,8 @@ inline void parse_mzgaf_record(const std::string& gaf_line, MzGafRecord& gaf_rec
  *  are ignored except for the query name (though they are parsed, and could maybe get 
  *  used for filtering or validation)
  */
-inline void scan_mzgaf(istream& in_stream, function<void(MzGafRecord& gaf_record, GafRecord& parent_record)> visit_fn) {
+inline void scan_mzgaf(istream& in_stream, function<void(MzGafRecord& gaf_record, GafRecord& parent_record)> visit_fn,
+                       function<void(GafRecord& parent_record)> parent_fn = nullptr) {
     string line_buffer;
     GafRecord gaf_record;
     MzGafRecord mz_record;
@@ -150,6 +151,9 @@ inline void scan_mzgaf(istream& in_stream, function<void(MzGafRecord& gaf_record
             visit_fn(mz_record, gaf_record);
         } else {
             parse_gaf_record(line_buffer, gaf_record);
+            if (parent_fn) {
+                parent_fn(gaf_record);
+            }
         }
     }
 }

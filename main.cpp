@@ -21,7 +21,8 @@ void help(char** argv) {
        << "    -u, --universal-mz FLOAT            Filter minimizers that appear in fewer than this fraction of alignments to target [0]" << endl
        << "    -n, --node-based-universal          Universal computed on entire node instead of mapped region" << endl
        << "    -s, --min-node-length N             Ignore minimizers on GAF nodes of length < N [0]" << endl
-       << "    -i, --strict-unversal               Count mapq and block length filters against universal (instead of ignoring)" << endl;
+       << "    -i, --strict-unversal               Count mapq and block length filters against universal (instead of ignoring)" << endl
+       << "    -o, --min-overlap-length N          If >= query regions with size >= N overlap, ignore the query region.  If 1 query region with size >= N overlaps any regions of size <= N, ignore the smaller ones only [10000]" << endl;
 }    
 
 int main(int argc, char** argv) {
@@ -38,6 +39,7 @@ int main(int argc, char** argv) {
     bool file_based_filter = false;
     int64_t min_node_len = 0;
     bool strict_universal = false;
+    int64_t min_overlap_len = 10000;
        
     int c;
     optind = 1; 
@@ -55,12 +57,13 @@ int main(int argc, char** argv) {
             {"node-based-universal", no_argument, 0, 'n'},
             {"min-node-length", required_argument, 0, 's'},
             {"strict-unversal", no_argument, 0, 'i'},
+            {"min-overlap-length", required_argument, 0, 'o'},
             {0, 0, 0, 0}
         };
 
         int option_index = 0;
 
-        c = getopt_long (argc, argv, "hp:b:q:g:m:u:ns:i",
+        c = getopt_long (argc, argv, "hp:b:q:g:m:u:ns:io:",
                          long_options, &option_index);
 
         // Detect the end of the options.
@@ -96,6 +99,9 @@ int main(int argc, char** argv) {
         case 'i':
             strict_universal = true;
             break;
+        case 'o':
+            min_overlap_len = std::stol(optarg);
+            break;
         case 'h':
         case '?':
             /* getopt_long already printed an error message. */
@@ -128,18 +134,21 @@ int main(int argc, char** argv) {
         }
     }
 
-    if (universal_filter > 0 && stdin_count > 0) {
-        cerr << "[mzgaf2paf] error: -u option requires 2 passes, so input cannot be streamed in with -" << endl;
+    if ((universal_filter > 0 || min_overlap_len > 0) && stdin_count > 0) {
+        cerr << "[mzgaf2paf] error: nonzero values for -u and -o require 2 passes, so input cannot be streamed in with -" << endl;
         return 1;
     }
 
     if (stdin_count > 1) {
-        cerr << "mzgaf2paf] error: only one input can be piped with -" << endl;
+        cerr << "[mzgaf2paf] error: only one input can be piped with -" << endl;
         return 1;
     }
 
     // keep global counts of minimizers (used only for the universal filter)
     MZMap mz_map;
+
+    // per query region counts (todo: can save some memory with an interval structure)
+    QueryCoverage query_coverage;
 
     size_t total_match_length = 0;
     size_t total_target_block_length = 0;
@@ -161,20 +170,26 @@ int main(int argc, char** argv) {
         }
 
         // optional first pass counts (very inefficiently atm) how many queries each minimizer appears in
-        if (universal_filter > 0) {
+        if (universal_filter > 0 || min_overlap_len > 0) {
             // per file counts (todo: we can save some memory by using fewer bits here in some cases)
             MZMap file_mz_map;
-            scan_mzgaf(*in_stream, [&](MzGafRecord& gaf_record, GafRecord& parent_record) {
-                    // todo: buffer and parallelize?
-                    if (strict_universal ||
-                        (gaf_record.num_minimizers > 0 &&
-                        parent_record.mapq >= min_mapq &&
-                        parent_record.block_length >= min_block_len &&
-                         gaf_record.target_length >= min_node_len)) {                        
-                        update_mz_map(gaf_record, parent_record, file_mz_map, min_mapq, min_block_len, min_node_len, node_based_universal);
-                    }
-                });
-
+            scan_mzgaf(*in_stream,
+                       [&](MzGafRecord& gaf_record, GafRecord& parent_record) {
+                           // todo: buffer and parallelize?
+                           if (strict_universal ||
+                               (gaf_record.num_minimizers > 0 &&
+                                parent_record.mapq >= min_mapq &&
+                                parent_record.block_length >= min_block_len &&
+                                gaf_record.target_length >= min_node_len)) {                        
+                               update_mz_map(gaf_record, parent_record, file_mz_map, min_mapq, min_block_len, min_node_len, node_based_universal);
+                           }
+                       },
+                       [&](GafRecord& parent_record) {
+                           if (min_overlap_len > 0 && parent_record.block_length >= min_overlap_len) {
+                               update_query_coverage(parent_record, query_coverage);
+                           }
+                       });
+            
             // go back to the beginning by resetting the stream
             in_stream->clear();
             in_stream->seekg(0, ios::beg);
@@ -191,7 +206,17 @@ int main(int argc, char** argv) {
                     parent_record.block_length >= min_block_len &&
                     gaf_record.target_length >= min_node_len) {
 
-                    total_match_length += mzgaf2paf(gaf_record, parent_record, cout, min_gap, min_match_length, mz_map, universal_filter, target_prefix);
+                    total_match_length += mzgaf2paf(gaf_record,
+                                                    parent_record,
+                                                    cout,
+                                                    min_gap,
+                                                    min_match_length,
+                                                    mz_map,
+                                                    universal_filter,
+                                                    query_coverage,
+                                                    min_overlap_len,
+                                                    target_prefix);
+                    
                     total_target_block_length += gaf_record.target_end - gaf_record.target_start;
                     ++total_records;
                 }
