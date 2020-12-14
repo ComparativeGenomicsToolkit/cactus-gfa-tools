@@ -9,7 +9,7 @@ using namespace std;
 
 void help(char** argv) {
   cerr << "usage: " << argv[0] << " [options] <rgfa>" << endl
-       << "Partition rGFA nodes into reference contigs" << endl
+       << "Partition rGFA nodes into reference contigs.  Input must be uncompressed GFA (not stdin)" << endl
        << endl;
 }    
 
@@ -69,24 +69,21 @@ int main(int argc, char** argv) {
     // get stream to gfa (not supporting compression)
     string in_path = argv[optind];
 
-    ifstream in_file;
-    istream* in_stream;
     if (in_path == "-") {
-        in_stream = &cin;
-        // thanks tinygfa!
         cerr << "[rgfa2contig] error: - (stdin) not supported" << endl;
         return 1;
-    } else {
-        in_file.open(in_path);
+    };
+
+    {
+        ifstream in_file(in_path);
         if (!in_file) {
-            cerr << "[pafcoverage] error: unable to open input: " << in_path << endl;
+            cerr << "[rgfa2contig] error: unable to open input: " << in_path << endl;
             return 1;
         }
-        in_stream = &in_file;
     }
 
     // get the parittion of GFA nodes -> reference contig
-    pair<unordered_map<int64_t, int64_t>, vector<string>> partition = rgfa2contig(in_file);
+    pair<unordered_map<int64_t, int64_t>, vector<string>> partition = rgfa2contig(in_path);
 
     // print the partition as a tsv
     for (auto& node_contig : partition.first) {

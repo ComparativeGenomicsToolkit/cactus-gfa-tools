@@ -1,7 +1,8 @@
 #include <map>
+#include <list>
 #include <cassert>
 #include "rgfa2contig.hpp"
-#include "tinygfa.hpp"
+#include "gfakluge.hpp"
 
 /*
 
@@ -16,10 +17,10 @@ for each node in sorted list
    scan all edges for rank i-1 adjacencies
    build consensus contig
 */
-pair<unordered_map<int64_t, int64_t>, vector<string>> rgfa2contig(ifstream& gfa_stream) {
+pair<unordered_map<int64_t, int64_t>, vector<string>> rgfa2contig(const string& gfa_path) {
 
     // map rank -> nodes
-    map<int64_t, vector<int64_t>> rank_to_nodes;
+    map<int64_t, list<int64_t>> rank_to_nodes;
 
     // map node -> rank
     unordered_map<int64_t, int64_t> node_to_rank;
@@ -36,21 +37,21 @@ pair<unordered_map<int64_t, int64_t>, vector<string>> rgfa2contig(ifstream& gfa_
     unordered_map<int64_t, int64_t> node_to_contig;
 
     // get the node ranks, and rank-0 contigs
-    function<void(tgfa::sequence_elem&)> visit_seq = [&](tgfa::sequence_elem& gfa_seq) {
-        int64_t gfa_id = node_id(gfa_seq.seq_id);
+    function<void(const gfak::sequence_elem&)> visit_seq = [&](const gfak::sequence_elem& gfa_seq) {
+        int64_t gfa_id = node_id(gfa_seq.name);
         bool found_SN = false;
         bool found_SR = false;
         int64_t rank;
         string contig;
         // parse the SN (contig) and SR (rank) optional tags
-        for (tgfa::opt_elem& oe : gfa_seq.tags) {
-            if (strcmp(oe.opt_id, "SN") == 0) {
+        for (const gfak::opt_elem& oe : gfa_seq.opt_fields) {
+            if (oe.key == "SN") {
                 assert(found_SN == false);
                 contig = oe.val;
                 found_SN = true;
-            } else if (strcmp(oe.opt_id, "SR") == 0) {
+            } else if (oe.key == "SR") {
                 assert(found_SR == false);
-                int64_t rank = stol(oe.val);
+                rank = stol(oe.val);
                 assert(rank >= 0);                               
                 found_SR = true;
             }
@@ -76,50 +77,54 @@ pair<unordered_map<int64_t, int64_t>, vector<string>> rgfa2contig(ifstream& gfa_
     };
 
     // get the edges
-    function<void(tgfa::edge_elem&)> visit_edge = [&](tgfa::edge_elem& gfa_edge) {
-        int64_t source_id = node_id(gfa_edge.source_id);
-        int64_t sink_id = node_id(gfa_edge.sink_id);
+    function<void(const gfak::edge_elem&)> visit_edge = [&](const gfak::edge_elem& gfa_edge) {
+        int64_t source_id = node_id(gfa_edge.source_name);
+        int64_t sink_id = node_id(gfa_edge.sink_name);
         edges.insert(make_pair(source_id, sink_id));
         edges.insert(make_pair(sink_id, source_id));
     };
 
-    // do nothing on groups
-    function<void(tgfa::group_elem&)> visit_group = [&](tgfa::group_elem&) {
-    };
-
     // load the GFA into memory
-    tgfa::gfa_stat_t stats;
-    parse_gfa_file(gfa_stream,
-                   visit_seq,
-                   true,
-                   visit_edge,
-                   true,
-                   visit_group,
-                   false,
-                   stats,
-                   1);
+    gfak::GFAKluge kluge;
+    kluge.for_each_sequence_line_in_file(gfa_path.c_str(), visit_seq);
+    kluge.for_each_edge_line_in_file(gfa_path.c_str(), visit_edge);
 
     // fill out the contigs by rank
     for (auto& rank_nodes : rank_to_nodes) {
         // rank 0 was added above
         if (rank_nodes.first > 0) {
             const int64_t& rank = rank_nodes.first;
-            for (auto node_id : rank_nodes.second) {
+            auto& nodes_at_rank = rank_nodes.second;
+            // todo: clean up (this was a mistake in original design where i forgot that not every rank i node
+            // connects to rank i-1)
+            int64_t consecutive_pushes = 0;
+            while (!nodes_at_rank.empty()) {
+                int64_t node_id = nodes_at_rank.back();
+                nodes_at_rank.pop_back();
+                
                 // contig_id -> count of times it's connected
                 unordered_map<int64_t, int64_t> counts;
                 auto edge_iterators = edges.equal_range(node_id);
                 for (auto e = edge_iterators.first; e != edge_iterators.second; ++e) {
                     int64_t& other_id = e->second;
                     int64_t other_rank = node_to_rank[other_id];
-                    if (other_rank < rank) {
-                        assert(node_to_contig.count(other_id));
+                    if (other_rank < rank ||
+                        (other_rank == rank && node_to_contig.count(other_id))) {
                         int64_t other_contig = node_to_contig[other_id];
                         ++counts[other_contig];
                     }
                 }
                 if (counts.size() == 0) {
-                    cerr << "[error] Could not place node \"" << node_id << "\" with rank \"" << rank << endl;
-                    exit(1);
+                    // this node isn't connected to any nodes with rank -1, try it later
+                    nodes_at_rank.push_front(node_id);
+                    ++consecutive_pushes;
+                    if (consecutive_pushes > nodes_at_rank.size()) {
+                        cerr << "[error] Unable to assign contigs for the following nodes at rank " << rank << ":\n";
+                        for (const auto& ni : nodes_at_rank) {
+                            cerr << ni << endl;
+                        }
+                        exit(1);
+                    }
                 } else if (counts.size() > 1) {
                     cerr << "[error] Conflict found for node \"" << node_id << "\" with rank \"" << rank << ":\n";
                     for (auto& count_elem : counts) {
@@ -127,9 +132,12 @@ pair<unordered_map<int64_t, int64_t>, vector<string>> rgfa2contig(ifstream& gfa_
                         cerr << "\tcontig=" << contigs[count_elem.first] << " count=" << count_elem.second << endl;
                     }
                     exit(1);                    
+                } else {
+                    assert(counts.size() == 1);
+                    // set the contig to the unambiguous neighbour
+                    node_to_contig[node_id] = counts.begin()->first;
+                    consecutive_pushes = 0;
                 }
-                // set the contig to the unambiguous neighbour
-                node_to_contig[node_id] = counts.begin()->second;
             }
         }
     }

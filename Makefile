@@ -61,7 +61,7 @@ rgfa2contig: rgfa2contig.o rgfa2contig_main.o
 rgfa2contig_main.o:$(LIB_DEPS) rgfa2contig_main.cpp rgfa2contig.hpp
 	$(CXX) $(INCLUDE_FLAGS) $(CXXFLAGS) $(CPPFLAGS) -c rgfa2contig_main.cpp $(INC_FLAGS)
 
-rgfa2contig.o:$(LIB_DEPS) rgfa2contig.cpp rgfa2contig.hpp gafkluge.hpp tinygfa.hpp
+rgfa2contig.o:$(LIB_DEPS) rgfa2contig.cpp rgfa2contig.hpp gafkluge.hpp gfakluge.hpp pliib.hpp tinyfa.hpp
 	$(CXX) $(INCLUDE_FLAGS) $(CXXFLAGS) $(CPPFLAGS) -c rgfa2contig.cpp $(INC_FLAGS)
 
 test : mzgaf2paf
