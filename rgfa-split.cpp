@@ -159,9 +159,9 @@ pair<unordered_map<int64_t, int64_t>, vector<string>> load_contig_map(const stri
  */
 void paf_split(istream& input_paf_stream,
                const unordered_map<int64_t, int64_t>& contig_map,
-               vector<string>& contigs,
+               const vector<string>& contigs,
                function<bool(const string&)> visit_contig,
-               string output_prefix) {
+               const string& output_prefix) {
 
     // note: we're assuming a small number of reference contigs (ie 23), so we can afford to open file
     // for each. 
@@ -192,6 +192,7 @@ void paf_split(istream& input_paf_stream,
             if (out_paf_stream == nullptr) {
                 string out_paf_path = output_prefix + reference_contig + ".paf";
                 out_paf_stream = new ofstream(out_paf_path);
+                assert(out_files.size() < 100);
                 if (!(*out_paf_stream)) {
                     cerr << "error: unable to open output paf file: " << out_paf_path << endl;
                     exit(1);
@@ -223,4 +224,61 @@ void paf_split(istream& input_paf_stream,
             out_contigs_stream << query_name << "\n";
         }
     }
+}
+
+void gfa_split(const string& rgfa_path,
+               const unordered_map<int64_t, int64_t>& contig_map,
+               const vector<string>& contigs,
+               function<bool(const string&)> visit_contig,
+               const string& output__prefix) {
+
+    ifstream input_gfa_stream(rgfa_path);
+    assert(input_gfa_stream);
+
+    // note: we're assuming a small number of reference contigs (ie 23), so we can afford to open file
+    // for each. 
+    unordered_map<int64_t, ofstream*> out_files;
+
+    string gfa_line;
+    while (getline(input_gfa_stream, gfa_line)) {
+        vector<string> toks;
+        split_delims(gfa_line, "\t\n", toks);
+
+        const string* ref_contig = nullptr;
+        int64_t reference_id;
+        if (toks[0] == "S") {
+            int64_t seq_id = node_id(toks[1]);
+            assert(contig_map.count(seq_id));
+            reference_id = contig_map.at(seq_id);
+            ref_contig = &contigs[reference_id];
+        } else if (toks[0] == "L") {
+            int64_t seq_id = node_id(toks[1]);
+            assert(contig_map.count(seq_id));            
+            reference_id = contig_map.at(seq_id);
+            int64_t sink_seq_id = node_id(toks[3]);
+            assert(contig_map.count(sink_seq_id));            
+            int64_t sink_reference_id = contig_map.at(sink_seq_id);
+            assert(sink_reference_id == reference_id);
+            ref_contig = &contigs[reference_id];
+        }
+        if (ref_contig != nullptr && visit_contig(*ref_contig)) {
+            ofstream*& out_gfa_stream = out_files[reference_id];
+            if (out_gfa_stream == nullptr) {
+                string out_gfa_path = output__prefix + *ref_contig + ".gfa";
+                out_gfa_stream = new ofstream(out_gfa_path);
+                assert(out_files.size() < 100);
+                if (!(*out_gfa_stream)) {
+                    cerr << "error: unable to open output gfa file: " << out_gfa_path << endl;
+                    exit(1);
+                }
+            }
+            *out_gfa_stream << gfa_line;
+        }
+    }
+
+    // clean up the files
+    for (auto& ref_stream : out_files) {
+        delete ref_stream.second;
+    }
+    out_files.clear();
 }

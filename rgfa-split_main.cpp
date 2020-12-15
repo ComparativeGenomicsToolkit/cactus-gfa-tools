@@ -17,7 +17,7 @@ void help(char** argv) {
        << "    -m, --input-contig-map FILE         Use tsv map (computed with -M) instead of rGFA" << endl
        << "    -p, --paf FILE                      PAF file to split" << endl
        << "output options: " << endl 
-       << "    -b, --output-prefix PREFIX          All output files will be of the form <PREFIX><contig>.paf/contigs" << endl
+       << "    -b, --output-prefix PREFIX          All output files will be of the form <PREFIX><contig>.paf/.fa_contigs/.gfa" << endl
        << "    -M, --output-contig-map FILE        Output rgfa node -> contig map to this file" << endl
        << "contig selection options: " << endl
        << "    -q, --contig-prefix PREFIX          Only process contigs beginning with PREFIX" << endl
@@ -193,6 +193,11 @@ int main(int argc, char** argv) {
         }
 
         paf_split(*input_paf_stream, partition.first, partition.second, visit_contig, output_prefix);
+    }
+
+    // split the gfa
+    if (!rgfa_path.empty()) {
+        gfa_split(rgfa_path, partition.first, partition.second, visit_contig, output_prefix);
     }
 
     return 0;

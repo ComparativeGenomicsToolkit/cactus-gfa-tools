@@ -26,10 +26,18 @@ pair<unordered_map<int64_t, int64_t>, vector<string>> load_contig_map(const stri
  */
 void paf_split(istream& input_paf_stream,
                const unordered_map<int64_t, int64_t>& contig_map,
-               vector<string>& contigs,
+               const vector<string>& contigs,
                function<bool(const string&)> visit_contig,
-               string output_prefix);
+               const string& output_prefix);
 
+/**
+ * Use the contigs to split the GFA
+ */
+void gfa_split(const string& rgfa_path,
+               const unordered_map<int64_t, int64_t>& contig_map,
+               const vector<string>& contigs,
+               function<bool(const string&)> visit_contig,               
+               const string& output_gfa_prefix);
 
 /**
  * Map from minigraph string ID to numeric ID assuming S<ID> naming convention
