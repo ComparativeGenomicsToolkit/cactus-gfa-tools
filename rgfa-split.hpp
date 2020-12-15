@@ -24,7 +24,7 @@ pair<unordered_map<int64_t, int64_t>, vector<string>> load_contig_map(const stri
 /**
  * Use contigs identified above to split PAF
  */
-void paf_split(istream& input_paf_stream,
+void paf_split(const string& input_paf_path,
                const unordered_map<int64_t, int64_t>& contig_map,
                const vector<string>& contigs,
                function<bool(const string&)> visit_contig,

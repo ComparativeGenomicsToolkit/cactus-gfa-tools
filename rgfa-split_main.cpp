@@ -133,12 +133,10 @@ int main(int argc, char** argv) {
     }
 
     function<void(const string&)> check_ifile = [&](const string& path) {
-        if (path != "-") {
-            ifstream in_stream(path);
-            if (!in_stream) {
-                cerr << "[rgfa-split] error: unable to open input file \"" << path << "\"" << endl;
-                exit(1);
-            }
+        ifstream in_stream(path);
+        if (!in_stream) {
+            cerr << "[rgfa-split] error: unable to open input file \"" << path << "\"" << endl;
+            exit(1);
         }
     };
     
@@ -182,17 +180,8 @@ int main(int argc, char** argv) {
     // split the paf into one paf per reference contig.  also output a list of query contig names
     // alongside than can be used to split the fasta with samtools faidx
     if (!input_paf_path.empty()) {
-        ifstream input_paf_file;
-        istream* input_paf_stream;
-        if (input_paf_path == "-") {
-            input_paf_stream = &cin;
-        } else {
-            check_ifile(input_paf_path);
-            input_paf_file.open(input_paf_path);
-            input_paf_stream = &input_paf_file;
-        }
-
-        paf_split(*input_paf_stream, partition.first, partition.second, visit_contig, output_prefix);
+        check_ifile(input_paf_path);
+        paf_split(input_paf_path, partition.first, partition.second, visit_contig, output_prefix);
     }
 
     // split the gfa

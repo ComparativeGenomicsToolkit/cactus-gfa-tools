@@ -157,12 +157,69 @@ pair<unordered_map<int64_t, int64_t>, vector<string>> load_contig_map(const stri
 /**
  * Use contigs identified above to split PAF
  */
-void paf_split(istream& input_paf_stream,
+void paf_split(const string& input_paf_path,
                const unordered_map<int64_t, int64_t>& contig_map,
                const vector<string>& contigs,
                function<bool(const string&)> visit_contig,
                const string& output_prefix) {
 
+    // first pass, figure out which contig aligns where
+    ifstream input_paf_stream(input_paf_path);
+
+    // map query_contig to [reference_contig -> coverage]
+    unordered_map<string, map<int64_t, int64_t>> coverage_map;
+
+    string paf_line;
+    while (getline(input_paf_stream, paf_line)) {
+        vector<string> toks;
+        split_delims(paf_line, "\t\n", toks);
+
+        // parse the gaf columns
+        string& query_name = toks[0];
+        int64_t query_start = stol(toks[2]);
+        int64_t query_end = stol(toks[3]);
+        string& target_name = toks[5];
+        
+        // use the map to go from the target name (rgfa node id in this case) to t
+        // the reference contig (ex chr20)
+        int64_t target_id = node_id(target_name);
+        assert(contig_map.count(target_id));
+        int64_t reference_id = contig_map.at(target_id);
+
+        // add the coverage of this reference contig to this query contig
+        coverage_map[query_name][reference_id] += query_end - query_start;
+    }
+
+    // use the coverage map to decide a unique mapping for each query
+    unordered_map<string, int64_t> query_ref_map;
+    for (auto& query_coverage : coverage_map) {
+        int64_t max_coverage = 0;
+        int64_t max_id;
+        int64_t next_coverage = 0;
+        int64_t next_id;
+        // find the highest coverage
+        for (auto& ref_coverage : query_coverage.second) {
+            if (ref_coverage.second > max_coverage) {
+                next_coverage = max_coverage;
+                next_id = max_id;
+                max_id = ref_coverage.first;
+                max_coverage = ref_coverage.second;
+            }
+        }
+        if (next_coverage > 0 && max_coverage <= next_coverage * 2) {
+            cerr << "[warning]: Query contig " << query_coverage.first << " has ambigious coverage:\n";
+            for (auto& ref_coverage : query_coverage.second) {
+                cerr << contigs[ref_coverage.first] << ": " << ref_coverage.second << endl;
+            }
+        }
+        query_ref_map[query_coverage.first] = max_id;
+    }
+    coverage_map.clear();
+        
+    // second pass, do the splitting
+    input_paf_stream.clear();
+    input_paf_stream.seekg(0, ios::beg);
+    
     // note: we're assuming a small number of reference contigs (ie 23), so we can afford to open file
     // for each. 
     unordered_map<int64_t, ofstream*> out_files;
@@ -170,7 +227,6 @@ void paf_split(istream& input_paf_stream,
     // load up the query contigs for downstream fasta splitting
     unordered_map<int64_t, unordered_set<string> > query_map;
 
-    string paf_line;
     while (getline(input_paf_stream, paf_line)) {
         vector<string> toks;
         split_delims(paf_line, "\t\n", toks);
@@ -182,8 +238,8 @@ void paf_split(istream& input_paf_stream,
         // use the map to go from the target name (rgfa node id in this case) to t
         // the reference contig (ex chr20)
         int64_t target_id = node_id(target_name);
-        assert(contig_map.count(target_id));
-        int64_t reference_id = contig_map.at(target_id);
+        assert(query_ref_map.count(query_name));
+        int64_t reference_id = query_ref_map.at(query_name);
         const string& reference_contig = contigs[reference_id];
 
         // do we want to visit the contig
