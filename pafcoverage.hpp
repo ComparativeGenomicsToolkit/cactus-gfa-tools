@@ -27,4 +27,6 @@ void print_coverage_summary(const CoverageMap& coverage_map, ostream& out);
  */
 void print_coverage_gaps_as_bed(const CoverageMap& coverage_map, ostream& out);
 
+// some parsing functions more or less copied from vg
+vector<string> &split_delims(const string &s, const string& delims, vector<string> &elems);
 

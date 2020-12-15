@@ -3,6 +3,7 @@
 #include <cassert>
 #include "rgfa-split.hpp"
 #include "gfakluge.hpp"
+#include "pafcoverage.hpp"
 
 /*
 
@@ -162,4 +163,64 @@ void paf_split(istream& input_paf_stream,
                function<bool(const string&)> visit_contig,
                string output_prefix) {
 
+    // note: we're assuming a small number of reference contigs (ie 23), so we can afford to open file
+    // for each. 
+    unordered_map<int64_t, ofstream*> out_files;
+
+    // load up the query contigs for downstream fasta splitting
+    unordered_map<int64_t, unordered_set<string> > query_map;
+
+    string paf_line;
+    while (getline(input_paf_stream, paf_line)) {
+        vector<string> toks;
+        split_delims(paf_line, "\t\n", toks);
+
+        // parse the gaf columns
+        string& query_name = toks[0];
+        string& target_name = toks[5];
+
+        // use the map to go from the target name (rgfa node id in this case) to t
+        // the reference contig (ex chr20)
+        int64_t target_id = node_id(target_name);
+        assert(contig_map.count(target_id));
+        int64_t reference_id = contig_map.at(target_id);
+        const string& reference_contig = contigs[reference_id];
+
+        // do we want to visit the contig
+        if (visit_contig(reference_contig)) {
+            ofstream*& out_paf_stream = out_files[reference_id];
+            if (out_paf_stream == nullptr) {
+                string out_paf_path = output_prefix + reference_contig + ".paf";
+                out_paf_stream = new ofstream(out_paf_path);
+                if (!(*out_paf_stream)) {
+                    cerr << "error: unable to open output paf file: " << out_paf_path << endl;
+                    exit(1);
+                }
+            }
+            *out_paf_stream << paf_line;
+            // remember this query contig for future fasta splitting
+            query_map[reference_id].insert(query_name);
+        } 
+        
+    }
+
+    // clean up the files
+    for (auto& ref_stream : out_files) {
+        delete ref_stream.second;
+    }
+    out_files.clear();
+
+    // write the query_contigs
+    for (auto& ref_queries : query_map) {
+        const string& reference_contig = contigs[ref_queries.first];
+        string out_contigs_path = output_prefix + reference_contig + ".fa_contigs";
+        ofstream out_contigs_stream(out_contigs_path);
+        if (!out_contigs_stream) {
+            cerr << "error: unable to open output contigs path: " << out_contigs_path << endl;
+            exit(1);
+        }
+        for (const string& query_name : ref_queries.second) {
+            out_contigs_stream << query_name << "\n";
+        }
+    }
 }

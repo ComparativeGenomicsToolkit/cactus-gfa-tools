@@ -3,6 +3,7 @@
 #include <fstream>
 #include <iostream>
 #include <unordered_set>
+#include <cassert>
 
 #include "rgfa-split.hpp"
 
@@ -16,7 +17,7 @@ void help(char** argv) {
        << "    -m, --input-contig-map FILE         Use tsv map (computed with -M) instead of rGFA" << endl
        << "    -p, --paf FILE                      PAF file to split" << endl
        << "output options: " << endl 
-       << "    -r, --output-prefix PREFIX          All output files will be of the form <PREFIX><contig>.paf/contigs" << endl
+       << "    -b, --output-prefix PREFIX          All output files will be of the form <PREFIX><contig>.paf/contigs" << endl
        << "    -M, --output-contig-map FILE        Output rgfa node -> contig map to this file" << endl
        << "contig selection options: " << endl
        << "    -q, --contig-prefix PREFIX          Only process contigs beginning with PREFIX" << endl
@@ -51,6 +52,7 @@ int main(int argc, char** argv) {
             {"rgfa", required_argument, 0, 'g'},
             {"input-contig-map", required_argument, 0, 'm'},
             {"paf", required_argument, 0, 'p'},
+            {"output-prefix", required_argument, 0, 'b'},
             {"output-contig-map", required_argument, 0, 'M'},
             {"contig-prefix", required_argument, 0, 'q'},
             {"contig-name", required_argument, 0, 'c'},
@@ -60,7 +62,7 @@ int main(int argc, char** argv) {
 
         int option_index = 0;
 
-        c = getopt_long (argc, argv, "hg:m:p:M:q:c:C:",
+        c = getopt_long (argc, argv, "hg:m:p:b:M:q:c:C:",
                          long_options, &option_index);
 
         // Detect the end of the options.
@@ -77,6 +79,9 @@ int main(int argc, char** argv) {
             break;
         case 'p':
             input_paf_path = optarg;
+            break;
+        case 'b':
+            output_prefix = optarg;
             break;
         case 'M':
             output_contig_map_path = optarg;
@@ -164,8 +169,10 @@ int main(int argc, char** argv) {
     // load up contig selection options 
     function<bool(const string&)> visit_contig = [&](const string& name) -> bool {
         if (!contig_names.empty()) {
+            assert(false);
             return contig_names.count(name);
         } else if (!contig_prefix.empty()) {
+            assert(false);
             return name.substr(0, contig_prefix.length()) == contig_prefix;
         } else {
             return true;

@@ -55,13 +55,13 @@ pafcoverage_main.o:$(LIB_DEPS) pafcoverage_main.cpp pafcoverage.hpp
 pafcoverage.o:$(LIB_DEPS) pafcoverage.cpp pafcoverage.hpp
 	$(CXX) $(INCLUDE_FLAGS) $(CXXFLAGS) $(CPPFLAGS) -c pafcoverage.cpp $(INC_FLAGS)
 
-rgfa-split: rgfa-split.o rgfa-split_main.o
-	$(CXX) $(INCLUDE_FLAGS) $(CXXFLAGS) $(CPPFLAGS) -o rgfa-split rgfa-split_main.o rgfa-split.o $(LIB_FLAGS)
+rgfa-split: rgfa-split.o rgfa-split_main.o pafcoverage.o
+	$(CXX) $(INCLUDE_FLAGS) $(CXXFLAGS) $(CPPFLAGS) -o rgfa-split rgfa-split_main.o rgfa-split.o pafcoverage.o $(LIB_FLAGS)
 
 rgfa-split_main.o:$(LIB_DEPS) rgfa-split_main.cpp rgfa-split.hpp
 	$(CXX) $(INCLUDE_FLAGS) $(CXXFLAGS) $(CPPFLAGS) -c rgfa-split_main.cpp $(INC_FLAGS)
 
-rgfa-split.o:$(LIB_DEPS) rgfa-split.cpp rgfa-split.hpp gafkluge.hpp gfakluge.hpp pliib.hpp tinyfa.hpp
+rgfa-split.o:$(LIB_DEPS) rgfa-split.cpp rgfa-split.hpp gafkluge.hpp gfakluge.hpp pliib.hpp tinyfa.hpp pafcoverage.hpp
 	$(CXX) $(INCLUDE_FLAGS) $(CXXFLAGS) $(CPPFLAGS) -c rgfa-split.cpp $(INC_FLAGS)
 
 test : mzgaf2paf
