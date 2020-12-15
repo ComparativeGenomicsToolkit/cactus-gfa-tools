@@ -1,7 +1,7 @@
 #include <map>
 #include <list>
 #include <cassert>
-#include "rgfa2contig.hpp"
+#include "rgfa-split.hpp"
 #include "gfakluge.hpp"
 
 /*
@@ -143,4 +143,23 @@ pair<unordered_map<int64_t, int64_t>, vector<string>> rgfa2contig(const string& 
     }
 
     return make_pair(node_to_contig, contigs);
+}
+
+
+pair<unordered_map<int64_t, int64_t>, vector<string>> load_contig_map(const string& contgs_path) {
+    unordered_map<int64_t, int64_t> contig_map;
+    vector<string> contigs;
+    assert(false);
+    return make_pair(contig_map, contigs);
+}
+
+/**
+ * Use contigs identified above to split PAF
+ */
+void paf_split(istream& input_paf_stream,
+               const unordered_map<int64_t, int64_t>& contig_map,
+               vector<string>& contigs,
+               function<bool(const string&)> visit_contig,
+               string output_prefix) {
+
 }

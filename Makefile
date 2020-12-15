@@ -35,7 +35,7 @@ CXXFLAGS := -O3 -Werror=return-type -std=c++14 -ggdb -g -MMD -MP $(PARALLEL_FLAG
 LIB_FLAGS = $(LIBS)
 INC_FLAGS = -I$(CWD)
 
-all: mzgaf2paf pafcoverage rgfa2contig
+all: mzgaf2paf pafcoverage rgfa-split
 
 mzgaf2paf: mzgaf2paf.o main.o
 	$(CXX) $(INCLUDE_FLAGS) $(CXXFLAGS) $(CPPFLAGS) -o mzgaf2paf main.o mzgaf2paf.o $(LIB_FLAGS)
@@ -55,17 +55,17 @@ pafcoverage_main.o:$(LIB_DEPS) pafcoverage_main.cpp pafcoverage.hpp
 pafcoverage.o:$(LIB_DEPS) pafcoverage.cpp pafcoverage.hpp
 	$(CXX) $(INCLUDE_FLAGS) $(CXXFLAGS) $(CPPFLAGS) -c pafcoverage.cpp $(INC_FLAGS)
 
-rgfa2contig: rgfa2contig.o rgfa2contig_main.o
-	$(CXX) $(INCLUDE_FLAGS) $(CXXFLAGS) $(CPPFLAGS) -o rgfa2contig rgfa2contig_main.o rgfa2contig.o $(LIB_FLAGS)
+rgfa-split: rgfa-split.o rgfa-split_main.o
+	$(CXX) $(INCLUDE_FLAGS) $(CXXFLAGS) $(CPPFLAGS) -o rgfa-split rgfa-split_main.o rgfa-split.o $(LIB_FLAGS)
 
-rgfa2contig_main.o:$(LIB_DEPS) rgfa2contig_main.cpp rgfa2contig.hpp
-	$(CXX) $(INCLUDE_FLAGS) $(CXXFLAGS) $(CPPFLAGS) -c rgfa2contig_main.cpp $(INC_FLAGS)
+rgfa-split_main.o:$(LIB_DEPS) rgfa-split_main.cpp rgfa-split.hpp
+	$(CXX) $(INCLUDE_FLAGS) $(CXXFLAGS) $(CPPFLAGS) -c rgfa-split_main.cpp $(INC_FLAGS)
 
-rgfa2contig.o:$(LIB_DEPS) rgfa2contig.cpp rgfa2contig.hpp gafkluge.hpp gfakluge.hpp pliib.hpp tinyfa.hpp
-	$(CXX) $(INCLUDE_FLAGS) $(CXXFLAGS) $(CPPFLAGS) -c rgfa2contig.cpp $(INC_FLAGS)
+rgfa-split.o:$(LIB_DEPS) rgfa-split.cpp rgfa-split.hpp gafkluge.hpp gfakluge.hpp pliib.hpp tinyfa.hpp
+	$(CXX) $(INCLUDE_FLAGS) $(CXXFLAGS) $(CPPFLAGS) -c rgfa-split.cpp $(INC_FLAGS)
 
 test : mzgaf2paf
 	cd test && prove -v test.t
 
 clean:
-	rm -rf mzgaf2paf main.o mzgaf2paf.o pafcoverage pafcoverage.o pafcoverage_main.o rgfa2contig rgfa2contig.o rgfa2contig_main.o
+	rm -rf mzgaf2paf main.o mzgaf2paf.o pafcoverage pafcoverage.o pafcoverage_main.o rgfa-split rgfa-split.o rgfa-split_main.o
