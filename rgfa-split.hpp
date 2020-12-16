@@ -43,7 +43,9 @@ void gfa_split(const string& rgfa_path,
  * Map from minigraph string ID to numeric ID assuming S<ID> naming convention
  */
 inline int64_t node_id(const string& rgfa_id) {
-    return stol(rgfa_id.substr(1));
+    // cactus may have added some nonsense -- search past it:
+    size_t offset = rgfa_id.find('s') + 1;
+    return stol(rgfa_id.substr(offset));
 }
 
 

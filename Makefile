@@ -30,7 +30,7 @@ ifeq ($(shell uname -s),Darwin)
     endif
 endif
 
-CXXFLAGS := -O3 -Werror=return-type -std=c++14 -ggdb -g -MMD -MP $(PARALLEL_FLAGS) $(CXXFLAGS)
+CXXFLAGS := -O0 -Werror=return-type -std=c++14 -ggdb -g -MMD -MP $(PARALLEL_FLAGS) $(CXXFLAGS)
 
 LIB_FLAGS = $(LIBS)
 INC_FLAGS = -I$(CWD)
