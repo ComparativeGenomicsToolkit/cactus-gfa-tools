@@ -254,7 +254,7 @@ void paf_split(const string& input_paf_path,
                     exit(1);
                 }
             }
-            *out_paf_stream << paf_line;
+            *out_paf_stream << paf_line << "\n";
             // remember this query contig for future fasta splitting
             query_map[reference_id].insert(query_name);
         } 
