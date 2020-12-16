@@ -167,10 +167,8 @@ int main(int argc, char** argv) {
     // load up contig selection options 
     function<bool(const string&)> visit_contig = [&](const string& name) -> bool {
         if (!contig_names.empty()) {
-            assert(false);
             return contig_names.count(name);
         } else if (!contig_prefix.empty()) {
-            assert(false);
             return name.substr(0, contig_prefix.length()) == contig_prefix;
         } else {
             return true;

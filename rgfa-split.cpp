@@ -286,7 +286,7 @@ void gfa_split(const string& rgfa_path,
                const unordered_map<int64_t, int64_t>& contig_map,
                const vector<string>& contigs,
                function<bool(const string&)> visit_contig,
-               const string& output__prefix) {
+               const string& output_prefix) {
 
     ifstream input_gfa_stream(rgfa_path);
     assert(input_gfa_stream);
@@ -320,7 +320,7 @@ void gfa_split(const string& rgfa_path,
         if (ref_contig != nullptr && visit_contig(*ref_contig)) {
             ofstream*& out_gfa_stream = out_files[reference_id];
             if (out_gfa_stream == nullptr) {
-                string out_gfa_path = output__prefix + *ref_contig + ".gfa";
+                string out_gfa_path = output_prefix + *ref_contig + ".gfa";
                 out_gfa_stream = new ofstream(out_gfa_path);
                 assert(out_files.size() < 100);
                 if (!(*out_gfa_stream)) {
