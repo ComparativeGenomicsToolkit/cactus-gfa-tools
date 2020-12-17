@@ -161,7 +161,8 @@ void paf_split(const string& input_paf_path,
                const unordered_map<int64_t, int64_t>& contig_map,
                const vector<string>& contigs,
                function<bool(const string&)> visit_contig,
-               const string& output_prefix) {
+               const string& output_prefix,
+               const string& minigraph_prefix) {
 
     // first pass, figure out which contig aligns where
     ifstream input_paf_stream(input_paf_path);
@@ -279,6 +280,32 @@ void paf_split(const string& input_paf_path,
         for (const string& query_name : ref_queries.second) {
             out_contigs_stream << query_name << "\n";
         }
+    }
+
+    // write the target contigs
+    // start by sorting by reference contig
+    vector<int64_t> mg_contigs;
+    mg_contigs.reserve(contig_map.size());
+    for (const auto& target_kv : contig_map) {
+        mg_contigs.push_back(target_kv.first);
+    }
+    std::sort(mg_contigs.begin(), mg_contigs.end(), [&](int64_t a, int64_t b) {
+            return contig_map.at(a) < contig_map.at(b);
+        });
+    int64_t prev_ref_contig = -1;
+    ofstream out_contigs_stream;
+    for (const auto& target_kv : contig_map) {
+        const string& reference_contig = contigs[target_kv.second];
+        if (target_kv.second != prev_ref_contig) {
+            string out_contigs_path = output_prefix + reference_contig + ".fa_contigs";
+            out_contigs_stream.open(out_contigs_path);
+            if (!out_contigs_stream) {
+                cerr << "error: unable to open output contigs path: " << out_contigs_path << endl;
+                exit(1);
+            }
+            prev_ref_contig = target_kv.second;
+        }
+        out_contigs_stream << minigraph_prefix << "s" << target_kv.first << endl;
     }
 }
 

@@ -19,6 +19,7 @@ void help(char** argv) {
        << "output options: " << endl 
        << "    -b, --output-prefix PREFIX          All output files will be of the form <PREFIX><contig>.paf/.fa_contigs/.gfa" << endl
        << "    -M, --output-contig-map FILE        Output rgfa node -> contig map to this file" << endl
+       << "    -i, --minigraph-prefix PREFIX       Prepend prefix to minigraph node ids in .fa_contigs files" << endl
        << "contig selection options: " << endl
        << "    -q, --contig-prefix PREFIX          Only process contigs beginning with PREFIX" << endl
        << "    -c, --contig-name NAME              Only process NAME (multiple allowed)" << endl
@@ -36,6 +37,7 @@ int main(int argc, char** argv) {
     // output
     string output_prefix;
     string output_contig_map_path;
+    string minigraph_prefix;
 
     // contig selection
     string contig_prefix;
@@ -54,6 +56,7 @@ int main(int argc, char** argv) {
             {"paf", required_argument, 0, 'p'},
             {"output-prefix", required_argument, 0, 'b'},
             {"output-contig-map", required_argument, 0, 'M'},
+            {"minigraph-prefix", required_argument, 0, 'i'},            
             {"contig-prefix", required_argument, 0, 'q'},
             {"contig-name", required_argument, 0, 'c'},
             {"contig-file", required_argument, 0, 'C'},
@@ -62,7 +65,7 @@ int main(int argc, char** argv) {
 
         int option_index = 0;
 
-        c = getopt_long (argc, argv, "hg:m:p:b:M:q:c:C:",
+        c = getopt_long (argc, argv, "hg:m:p:b:M:i:q:c:C:",
                          long_options, &option_index);
 
         // Detect the end of the options.
@@ -85,6 +88,9 @@ int main(int argc, char** argv) {
             break;
         case 'M':
             output_contig_map_path = optarg;
+            break;
+        case 'i':
+            minigraph_prefix = optarg;
             break;
         case 'q':
             contig_prefix = optarg;
@@ -179,7 +185,7 @@ int main(int argc, char** argv) {
     // alongside than can be used to split the fasta with samtools faidx
     if (!input_paf_path.empty()) {
         check_ifile(input_paf_path);
-        paf_split(input_paf_path, partition.first, partition.second, visit_contig, output_prefix);
+        paf_split(input_paf_path, partition.first, partition.second, visit_contig, output_prefix, minigraph_prefix);
     }
 
     // split the gfa

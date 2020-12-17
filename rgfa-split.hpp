@@ -28,7 +28,8 @@ void paf_split(const string& input_paf_path,
                const unordered_map<int64_t, int64_t>& contig_map,
                const vector<string>& contigs,
                function<bool(const string&)> visit_contig,
-               const string& output_prefix);
+               const string& output_prefix,
+               const string& minigraph_prefix); // this is the cactus unique id prefix (ex id=0|)
 
 /**
  * Use the contigs to split the GFA
