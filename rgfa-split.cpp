@@ -298,6 +298,7 @@ void paf_split(const string& input_paf_path,
         for (const string& query_name : ref_queries.second) {
             out_contigs_stream << query_name << "\n";
         }
+        out_contigs_stream.close();
     }
 
     // write the target contigs
@@ -316,6 +317,9 @@ void paf_split(const string& input_paf_path,
         const string& reference_contig = contigs[target_kv.second];
         if (target_kv.second != prev_ref_contig) {
             string out_contigs_path = output_prefix + reference_contig + ".fa_contigs";
+            if (out_contigs_stream.is_open()) {
+                out_contigs_stream.close();
+            }
             out_contigs_stream.open(out_contigs_path);
             if (!out_contigs_stream) {
                 cerr << "error: unable to open output contigs path: " << out_contigs_path << endl;
