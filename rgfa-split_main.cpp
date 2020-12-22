@@ -4,7 +4,7 @@
 #include <iostream>
 #include <unordered_set>
 #include <cassert>
-
+#include <sys/stat.h>
 #include "rgfa-split.hpp"
 
 using namespace std;
@@ -148,6 +148,11 @@ int main(int argc, char** argv) {
     if (rgfa_path.empty() == input_contig_map_path.empty()) {
         cerr << "[rgfa-split] error: exactly 1 of -g or -m required to specifiy input contigs" << endl;
         return 1;
+    }
+
+    if (!output_prefix.empty() && output_prefix.back() == '/') {
+        // note: not checking for error here (it'll show up downstream if directory doesn't exist)
+        mkdir(output_prefix.c_str(), S_IRWXU | S_IRWXG | S_IROTH | S_IXOTH);
     }
 
     function<void(const string&)> check_ifile = [&](const string& path) {
