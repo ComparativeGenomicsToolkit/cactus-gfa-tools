@@ -320,7 +320,7 @@ void paf_split(const string& input_paf_path,
             if (out_contigs_stream.is_open()) {
                 out_contigs_stream.close();
             }
-            out_contigs_stream.open(out_contigs_path);
+            out_contigs_stream.open(out_contigs_path, std::ios_base::app);
             if (!out_contigs_stream) {
                 cerr << "error: unable to open output contigs path: " << out_contigs_path << endl;
                 exit(1);
