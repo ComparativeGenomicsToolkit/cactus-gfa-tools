@@ -154,6 +154,24 @@ pair<unordered_map<int64_t, int64_t>, vector<string>> load_contig_map(const stri
     return make_pair(contig_map, contigs);
 }
 
+void set_other_contig(unordered_map<int64_t, int64_t>& contig_map,
+                      vector<string>& contigs,
+                      function<bool(const string&)> visit_contig,
+                      const string& other_name) {
+
+    // add the other contig
+    int64_t other_idx = contigs.size();
+    contigs.push_back(other_name);
+
+    // change the mapping of all unselected contigs to point to it
+    for (auto& query_ref : contig_map) {
+        const string& ref_contig = contigs[query_ref.second];
+        if (!visit_contig(ref_contig)) {
+            query_ref.second = other_idx;
+        }
+    }    
+}
+
 /**
  * Use contigs identified above to split PAF
  */

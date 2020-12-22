@@ -17,13 +17,15 @@ void help(char** argv) {
        << "    -m, --input-contig-map FILE         Use tsv map (computed with -M) instead of rGFA" << endl
        << "    -p, --paf FILE                      PAF file to split" << endl
        << "output options: " << endl 
-       << "    -b, --output-prefix PREFIX          All output files will be of the form <PREFIX><contig>.paf/.fa_contigs/.gfa" << endl
+       << "    -b, --output-prefix PREFIX          All output files will be of the form <PREFIX><contig>.paf/.fa_contigs" << endl
        << "    -M, --output-contig-map FILE        Output rgfa node -> contig map to this file" << endl
        << "    -i, --minigraph-prefix PREFIX       Prepend prefix to minigraph node ids in .fa_contigs files" << endl
+       << "    -G, --split-gfa                     Split the input GFA too and output <PREFIX><config>.gfa files" << endl
        << "contig selection options: " << endl
        << "    -q, --contig-prefix PREFIX          Only process contigs beginning with PREFIX" << endl
        << "    -c, --contig-name NAME              Only process NAME (multiple allowed)" << endl
        << "    -C, --contig-file FILE              Path to list of contigs to process" << endl
+       << "    -o, --other-name NAME               Lump all contigs not selected by above options into single reference with name NAME" << endl
        << endl;
 }    
 
@@ -38,12 +40,14 @@ int main(int argc, char** argv) {
     string output_prefix;
     string output_contig_map_path;
     string minigraph_prefix;
+    bool split_gfa = false;
 
     // contig selection
     string contig_prefix;
     unordered_set<string> contig_names;
     string contig_names_path;
     size_t selection_options = 0;
+    string other_name;
     
     int c;
     optind = 1; 
@@ -56,16 +60,18 @@ int main(int argc, char** argv) {
             {"paf", required_argument, 0, 'p'},
             {"output-prefix", required_argument, 0, 'b'},
             {"output-contig-map", required_argument, 0, 'M'},
-            {"minigraph-prefix", required_argument, 0, 'i'},            
+            {"minigraph-prefix", required_argument, 0, 'i'},
+            {"split-gfa", no_argument, 0, 'G'},
             {"contig-prefix", required_argument, 0, 'q'},
             {"contig-name", required_argument, 0, 'c'},
             {"contig-file", required_argument, 0, 'C'},
+            {"other-name", required_argument, 0, 'o'},
             {0, 0, 0, 0}
         };
 
         int option_index = 0;
 
-        c = getopt_long (argc, argv, "hg:m:p:b:M:i:q:c:C:",
+        c = getopt_long (argc, argv, "hg:m:p:b:M:i:Gq:c:C:o:",
                          long_options, &option_index);
 
         // Detect the end of the options.
@@ -92,6 +98,9 @@ int main(int argc, char** argv) {
         case 'i':
             minigraph_prefix = optarg;
             break;
+        case 'G':
+            split_gfa = true;
+            break;
         case 'q':
             contig_prefix = optarg;
             break;
@@ -100,6 +109,9 @@ int main(int argc, char** argv) {
             break;
         case 'C':
             contig_names_path = optarg;
+            break;
+        case 'o':
+            other_name = optarg;
             break;
         case 'h':
         case '?':
@@ -181,6 +193,14 @@ int main(int argc, char** argv) {
         }
     };
 
+    // lump unselected contigs into the "other" category if desired
+    if (!other_name.empty()) {
+        set_other_contig(partition.first, partition.second, visit_contig, other_name);
+        visit_contig = [&](const string&) -> bool {
+            return true;
+        };
+    }    
+
     // split the paf into one paf per reference contig.  also output a list of query contig names
     // alongside than can be used to split the fasta with samtools faidx
     if (!input_paf_path.empty()) {
@@ -189,7 +209,7 @@ int main(int argc, char** argv) {
     }
 
     // split the gfa
-    if (!rgfa_path.empty()) {
+    if (!rgfa_path.empty() && split_gfa) {
         gfa_split(rgfa_path, partition.first, partition.second, visit_contig, output_prefix);
     }
 

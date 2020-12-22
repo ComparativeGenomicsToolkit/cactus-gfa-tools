@@ -21,6 +21,14 @@ pair<unordered_map<int64_t, int64_t>, vector<string>> rgfa2contig(const string& 
  */
 pair<unordered_map<int64_t, int64_t>, vector<string>> load_contig_map(const string& contgs_path);
 
+/*
+ * Reorganize mapping so all unselected reference contigs map to an "other" category of given name
+ */
+void set_other_contig(unordered_map<int64_t, int64_t>& contig_map,
+                      vector<string>& contigs,
+                      function<bool(const string&)> visit_contig,
+                      const string& other_name);
+
 /**
  * Use contigs identified above to split PAF
  */
@@ -37,7 +45,7 @@ void paf_split(const string& input_paf_path,
 void gfa_split(const string& rgfa_path,
                const unordered_map<int64_t, int64_t>& contig_map,
                const vector<string>& contigs,
-               function<bool(const string&)> visit_contig,               
+               function<bool(const string&)> visit_contig,
                const string& output_gfa_prefix);
 
 /**
