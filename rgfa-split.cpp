@@ -260,9 +260,11 @@ void paf_split(const string& input_paf_path,
         assert(query_ref_map.count(query_name));
         int64_t reference_id = query_ref_map.at(query_name);
         const string& reference_contig = contigs[reference_id];
+        int64_t target_reference_id = contig_map.at(target_id);
 
-        // do we want to visit the contig
-        if (visit_contig(reference_contig)) {
+        // do both the query and reference sequences fall in the same chromosome, and we wnat to visit that
+        // chromosome?  if so, we write the paf line, otherwise it's effectively filtered out
+        if (reference_id == target_reference_id && visit_contig(reference_contig)) {
             ofstream*& out_paf_stream = out_files[reference_id];
             if (out_paf_stream == nullptr) {
                 string out_paf_path = output_prefix + reference_contig + ".paf";
