@@ -238,13 +238,13 @@ void paf_split(const string& input_paf_path,
         }
         // check if it's good enough
         int64_t query_length = query_lengths[query_coverage.first];
-        double query_coverage_fraction = (double)max_coverage / (double)query_length;
+        double query_coverage_fraction = (double)max_coverage / query_length;
         if (query_coverage_fraction < min_query_coverage || 
-            (next_coverage > 0 && max_coverage < next_coverage * min_query_uniqueness)) {
+            (next_coverage > 0 && max_coverage < (double)next_coverage * min_query_uniqueness)) {
             cerr << "Query contig is ambiguous: " << query_coverage.first 
                  << "  len=" << query_length << " cov=" << query_coverage_fraction << " (vs " << min_query_coverage << ") ";
             if (next_coverage > 0) {
-                cerr << "uf=" << (max_coverage / next_coverage) << " (vs " << min_query_uniqueness << ")";
+                cerr << "uf=" << ((double)max_coverage / next_coverage) << " (vs " << min_query_uniqueness << ")";
                 cerr << "\n Reference contig mappings:" << "\n";
                 for (auto& ref_coverage : query_coverage.second) {
                     cerr << "  " << contigs[ref_coverage.first] << ": " << ref_coverage.second << endl;
@@ -344,19 +344,22 @@ void paf_split(const string& input_paf_path,
     ofstream out_contigs_stream;
     for (const auto& target_kv : contig_map) {
         const string& reference_contig = contigs[target_kv.second];
-        if (target_kv.second != prev_ref_contig) {
-            string out_contigs_path = output_prefix + reference_contig + ".fa_contigs";
-            if (out_contigs_stream.is_open()) {
-                out_contigs_stream.close();
+        if (visit_contig(reference_contig) ||
+            (ambiguous_id >= 0 && reference_contig == contigs[ambiguous_id])) {  
+            if (target_kv.second != prev_ref_contig) {
+                string out_contigs_path = output_prefix + reference_contig + ".fa_contigs";
+                if (out_contigs_stream.is_open()) {
+                    out_contigs_stream.close();
+                }
+                out_contigs_stream.open(out_contigs_path, std::ios_base::app);
+                if (!out_contigs_stream) {
+                    cerr << "error: unable to open output contigs path: " << out_contigs_path << endl;
+                    exit(1);
+                }
+                prev_ref_contig = target_kv.second;
             }
-            out_contigs_stream.open(out_contigs_path, std::ios_base::app);
-            if (!out_contigs_stream) {
-                cerr << "error: unable to open output contigs path: " << out_contigs_path << endl;
-                exit(1);
-            }
-            prev_ref_contig = target_kv.second;
+            out_contigs_stream << minigraph_prefix << "s" << target_kv.first << endl;
         }
-        out_contigs_stream << minigraph_prefix << "s" << target_kv.first << endl;
     }
 }
 
