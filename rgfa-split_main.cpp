@@ -4,6 +4,7 @@
 #include <iostream>
 #include <unordered_set>
 #include <cassert>
+#include <algorithm>
 #include <sys/stat.h>
 #include "rgfa-split.hpp"
 
@@ -25,8 +26,9 @@ void help(char** argv) {
        << "    -q, --contig-prefix PREFIX          Only process contigs beginning with PREFIX" << endl
        << "    -c, --contig-name NAME              Only process NAME (multiple allowed)" << endl
        << "    -C, --contig-file FILE              Path to list of contigs to process" << endl
+       << "    -n, --min-query-coverage FLOAT      At least this fraction of input contig must align to reference contig for it to be assigned" << endl
        << "    -o, --other-name NAME               Lump all contigs not selected by above options into single reference with name NAME" << endl
-       << endl;
+       << "    -a, --ambiguous-name NAME           All query contigs that do not meet min coverage (-n) assigned to single reference with name NAME" << endl;
 }    
 
 int main(int argc, char** argv) {
@@ -47,8 +49,9 @@ int main(int argc, char** argv) {
     unordered_set<string> contig_names;
     string contig_names_path;
     size_t selection_options = 0;
+    double min_query_coverage = 0;
     string other_name;
-    
+    string ambiguous_name;
     int c;
     optind = 1; 
     while (true) {
@@ -65,13 +68,15 @@ int main(int argc, char** argv) {
             {"contig-prefix", required_argument, 0, 'q'},
             {"contig-name", required_argument, 0, 'c'},
             {"contig-file", required_argument, 0, 'C'},
+            {"min-query-coverage", required_argument, 0, 'n'},
             {"other-name", required_argument, 0, 'o'},
+            {"ambiguous-name", required_argument, 0, 'a'},
             {0, 0, 0, 0}
         };
 
         int option_index = 0;
 
-        c = getopt_long (argc, argv, "hg:m:p:b:M:i:Gq:c:C:o:",
+        c = getopt_long (argc, argv, "hg:m:p:b:M:i:Gq:c:C:n:o:a:",
                          long_options, &option_index);
 
         // Detect the end of the options.
@@ -110,9 +115,15 @@ int main(int argc, char** argv) {
         case 'C':
             contig_names_path = optarg;
             break;
+        case 'n':
+            min_query_coverage = stof(optarg);
+            break;
         case 'o':
             other_name = optarg;
             break;
+        case 'a':
+            ambiguous_name = optarg;
+            break;            
         case 'h':
         case '?':
             /* getopt_long already printed an error message. */
@@ -155,6 +166,11 @@ int main(int argc, char** argv) {
         mkdir(output_prefix.c_str(), S_IRWXU | S_IRWXG | S_IROTH | S_IXOTH);
     }
 
+    if (min_query_coverage > 0 && ambiguous_name.empty()) {
+        cerr << "[rgfa-split] error: ambiguous name must be set with -a when using coverage threshold (-n)" << endl;
+        return 1;
+    }
+
     function<void(const string&)> check_ifile = [&](const string& path) {
         ifstream in_stream(path);
         if (!in_stream) {
@@ -163,7 +179,7 @@ int main(int argc, char** argv) {
         }
     };
     
-    // get the parittion of GFA nodes -> reference contig
+    // get the partition of GFA nodes -> reference contig
     pair<unordered_map<int64_t, int64_t>, vector<string>> partition;
     if (!rgfa_path.empty()) {
         // compute from minigraph output
@@ -204,13 +220,22 @@ int main(int argc, char** argv) {
         visit_contig = [&](const string&) -> bool {
             return true;
         };
-    }    
+    }
+    
+    // set the ambigious name
+    int64_t ambiguous_id = -1;
+    if (!ambiguous_name.empty()) {
+        assert(std::find(partition.second.begin(), partition.second.end(), ambiguous_name) == partition.second.end());
+        ambiguous_id = partition.second.size();
+        partition.second.push_back(ambiguous_name);
+    }
 
     // split the paf into one paf per reference contig.  also output a list of query contig names
     // alongside than can be used to split the fasta with samtools faidx
     if (!input_paf_path.empty()) {
         check_ifile(input_paf_path);
-        paf_split(input_paf_path, partition.first, partition.second, visit_contig, output_prefix, minigraph_prefix);
+        paf_split(input_paf_path, partition.first, partition.second, visit_contig, output_prefix, minigraph_prefix,
+                  min_query_coverage, ambiguous_id);
     }
 
     // split the gfa

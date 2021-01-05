@@ -180,21 +180,27 @@ void paf_split(const string& input_paf_path,
                const vector<string>& contigs,
                function<bool(const string&)> visit_contig,
                const string& output_prefix,
-               const string& minigraph_prefix) {
+               const string& minigraph_prefix,
+               double min_query_coverage,
+               int64_t ambiguous_id) {
 
     // first pass, figure out which contig aligns where
     ifstream input_paf_stream(input_paf_path);
 
     // map query_contig to [reference_contig -> coverage]
     unordered_map<string, map<int64_t, int64_t>> coverage_map;
+    
+    // keep track of query lengths
+    unordered_map<string, int64_t> query_lengths;
 
     string paf_line;
     while (getline(input_paf_stream, paf_line)) {
         vector<string> toks;
         split_delims(paf_line, "\t\n", toks);
 
-        // parse the gaf columns
+        // parse the paf columns
         string& query_name = toks[0];
+        int64_t query_length = stol(toks[1]);
         int64_t query_start = stol(toks[2]);
         int64_t query_end = stol(toks[3]);
         string& target_name = toks[5];
@@ -207,6 +213,10 @@ void paf_split(const string& input_paf_path,
 
         // add the coverage of this reference contig to this query contig
         coverage_map[query_name][reference_id] += query_end - query_start;
+
+        // store the query length (todo: we could save a few bytes by
+        // sticking it in the coverage map somewhere)
+        query_lengths[query_name] = query_length;
     }
 
     // use the coverage map to decide a unique mapping for each query
@@ -225,15 +235,24 @@ void paf_split(const string& input_paf_path,
                 max_coverage = ref_coverage.second;
             }
         }
-        if (next_coverage > 0 && max_coverage <= next_coverage * 2) {
-            cerr << "[warning]: Query contig " << query_coverage.first << " has ambigious coverage:\n";
-            for (auto& ref_coverage : query_coverage.second) {
-                cerr << contigs[ref_coverage.first] << ": " << ref_coverage.second << endl;
+        // check if it's good enough
+        int64_t query_length = query_lengths[query_coverage.first];
+        double query_coverage_fraction = (double)max_coverage / (double)query_length;
+        if (query_coverage_fraction >= min_query_coverage) {
+            // a high enough fraction should prevent this from ever getting tripped
+            if (next_coverage > 0 && max_coverage <= next_coverage * 2) {
+                for (auto& ref_coverage : query_coverage.second) {
+                    cerr << contigs[ref_coverage.first] << ": " << ref_coverage.second << endl;
+                }
             }
+        } else {
+            max_id = ambiguous_id;
+            assert(max_id >= 0 && max_id < contigs.size());
         }
         query_ref_map[query_coverage.first] = max_id;
     }
     coverage_map.clear();
+    query_lengths.clear();
         
     // second pass, do the splitting
     input_paf_stream.clear();
@@ -250,11 +269,11 @@ void paf_split(const string& input_paf_path,
         vector<string> toks;
         split_delims(paf_line, "\t\n", toks);
 
-        // parse the gaf columns
+        // parse the paf columns
         string& query_name = toks[0];
         string& target_name = toks[5];
 
-        // use the map to go from the target name (rgfa node id in this case) to t
+        // use the map to go from the target name (rgfa node id in this case) to
         // the reference contig (ex chr20)
         int64_t target_id = node_id(target_name);
         assert(query_ref_map.count(query_name));
@@ -264,7 +283,8 @@ void paf_split(const string& input_paf_path,
 
         // do both the query and reference sequences fall in the same chromosome, and we wnat to visit that
         // chromosome?  if so, we write the paf line, otherwise it's effectively filtered out
-        if (reference_id == target_reference_id && visit_contig(reference_contig)) {
+        if ((reference_id == target_reference_id && visit_contig(reference_contig)) ||
+            (ambiguous_id >= 0 && reference_contig == contigs[ambiguous_id])) {
             ofstream*& out_paf_stream = out_files[reference_id];
             if (out_paf_stream == nullptr) {
                 string out_paf_path = output_prefix + reference_contig + ".paf";
