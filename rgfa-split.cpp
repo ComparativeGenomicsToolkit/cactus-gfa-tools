@@ -182,6 +182,7 @@ void paf_split(const string& input_paf_path,
                const string& output_prefix,
                const string& minigraph_prefix,
                double min_query_coverage,
+               double min_query_uniqueness,
                int64_t ambiguous_id) {
 
     // first pass, figure out which contig aligns where
@@ -238,19 +239,25 @@ void paf_split(const string& input_paf_path,
         // check if it's good enough
         int64_t query_length = query_lengths[query_coverage.first];
         double query_coverage_fraction = (double)max_coverage / (double)query_length;
-        if (query_coverage_fraction >= min_query_coverage) {
-            // a high enough fraction should prevent this from ever getting tripped
-            if (next_coverage > 0 && max_coverage <= next_coverage * 2) {
+        if (query_coverage_fraction < min_query_coverage || 
+            (next_coverage > 0 && max_coverage < next_coverage * min_query_uniqueness)) {
+            cerr << "Query contig is ambiguous: " << query_coverage.first 
+                 << "  len=" << query_length << " cov=" << query_coverage_fraction << " (vs " << min_query_coverage << ") ";
+            if (next_coverage > 0) {
+                cerr << "uf=" << (max_coverage / next_coverage) << " (vs " << min_query_uniqueness << ")";
+                cerr << "\n Reference contig mappings:" << "\n";
                 for (auto& ref_coverage : query_coverage.second) {
-                    cerr << contigs[ref_coverage.first] << ": " << ref_coverage.second << endl;
+                    cerr << "  " << contigs[ref_coverage.first] << ": " << ref_coverage.second << endl;
                 }
+            } else {
+                cerr << endl;
             }
-        } else {
             max_id = ambiguous_id;
             assert(max_id >= 0 && max_id < contigs.size());
         }
         query_ref_map[query_coverage.first] = max_id;
     }
+    
     coverage_map.clear();
     query_lengths.clear();
         
