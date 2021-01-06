@@ -40,7 +40,8 @@ void paf_split(const string& input_paf_path,
                const string& minigraph_prefix, // this is the cactus unique id prefix (ex id=0|)
                double min_query_coverage,
                double min_query_uniqueness,
-               int64_t ambiguous_id); 
+               int64_t ambiguous_id,
+               const string& reference_prefix); 
 
 /**
  * Use the contigs to split the GFA

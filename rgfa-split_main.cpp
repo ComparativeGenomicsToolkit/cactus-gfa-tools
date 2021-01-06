@@ -30,7 +30,8 @@ void help(char** argv) {
        << "contig assignment ambiguity handling options: " << endl
        << "    -n, --min-query-coverage FLOAT      At least this fraction of input contig must align to reference contig for it to be assigned" << endl
        << "    -Q, --min-query-uniqueness FLOAT    The ratio of the number of query bases aligned to the chosen ref contig vs the next best ref contig must exceed this threshold to not be considered ambigious" << endl
-       << "    -a, --ambiguous-name NAME           All query contigs that do not meet min coverage (-n) assigned to single reference with name NAME" << endl;
+       << "    -a, --ambiguous-name NAME           All query contigs that do not meet min coverage (-n) assigned to single reference with name NAME" << endl
+       << "    -r, --reference-prefix PREFIX       Don't apply ambiguity filters to query contigs with this prefix" << endl;
 }    
 
 int main(int argc, char** argv) {
@@ -57,6 +58,7 @@ int main(int argc, char** argv) {
     double min_query_coverage = 0;
     double min_query_uniqueness = 0;
     string ambiguous_name;
+    string reference_prefix;
     
     int c;
     optind = 1; 
@@ -78,12 +80,13 @@ int main(int argc, char** argv) {
             {"min-query-coverage", required_argument, 0, 'n'},
             {"min-query-uniqueness", required_argument, 0, 'Q'},
             {"ambiguous-name", required_argument, 0, 'a'},
+            {"reference-prefix", required_argument, 0, 'r'},
             {0, 0, 0, 0}
         };
 
         int option_index = 0;
 
-        c = getopt_long (argc, argv, "hg:m:p:b:M:i:Gq:c:C:o:n:Q:a:",
+        c = getopt_long (argc, argv, "hg:m:p:b:M:i:Gq:c:C:o:n:Q:a:r:",
                          long_options, &option_index);
 
         // Detect the end of the options.
@@ -133,6 +136,9 @@ int main(int argc, char** argv) {
             break;            
         case 'a':
             ambiguous_name = optarg;
+            break;
+        case 'r':
+            reference_prefix = optarg;
             break;
         case 'h':
         case '?':
@@ -245,7 +251,7 @@ int main(int argc, char** argv) {
     if (!input_paf_path.empty()) {
         check_ifile(input_paf_path);
         paf_split(input_paf_path, partition.first, partition.second, visit_contig, output_prefix, minigraph_prefix,
-                  min_query_coverage, min_query_uniqueness, ambiguous_id);
+                  min_query_coverage, min_query_uniqueness, ambiguous_id, reference_prefix);
     }
 
     // split the gfa

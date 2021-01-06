@@ -183,7 +183,8 @@ void paf_split(const string& input_paf_path,
                const string& minigraph_prefix,
                double min_query_coverage,
                double min_query_uniqueness,
-               int64_t ambiguous_id) {
+               int64_t ambiguous_id,
+               const string& reference_prefix) {
 
     // first pass, figure out which contig aligns where
     ifstream input_paf_stream(input_paf_path);
@@ -239,8 +240,10 @@ void paf_split(const string& input_paf_path,
         // check if it's good enough
         int64_t query_length = query_lengths[query_coverage.first];
         double query_coverage_fraction = (double)max_coverage / query_length;
-        if (query_coverage_fraction < min_query_coverage || 
-            (next_coverage > 0 && max_coverage < (double)next_coverage * min_query_uniqueness)) {
+        bool is_ref = !reference_prefix.empty() &&
+            query_coverage.first.substr(0, reference_prefix.length()) == reference_prefix;
+        if (!is_ref && (query_coverage_fraction < min_query_coverage || 
+                        (next_coverage > 0 && max_coverage < (double)next_coverage * min_query_uniqueness))) {
             cerr << "Query contig is ambiguous: " << query_coverage.first 
                  << "  len=" << query_length << " cov=" << query_coverage_fraction << " (vs " << min_query_coverage << ") ";
             if (next_coverage > 0) {
