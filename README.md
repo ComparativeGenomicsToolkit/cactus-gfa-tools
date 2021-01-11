@@ -1,6 +1,6 @@
 # cactus-gfa-tools
 
-Command-line utilitites required for the [Cactus Pangenome Pipeline](https://github.com/ComparativeGenomicsToolkit/cactus/blob/master/doc/pangenome.md) pangenome pipeline.
+Command-line utilitites required for the [Cactus Pangenome Pipeline](https://github.com/ComparativeGenomicsToolkit/cactus/blob/master/doc/pangenome.md).
 
 ## Build
 
