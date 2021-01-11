@@ -9,7 +9,7 @@ git clone https://github.com/ComparativeGenomicsToolkit/cactus-gfa-tools.git
 cd cactus-gfa-tools && make
 ```
 
-## Run tests
+### Run tests
 
 Requires:
 * [minigraph](https://github.com/lh3/minigraph)
