@@ -35,13 +35,13 @@ CXXFLAGS := -O3 -Werror=return-type -std=c++14 -ggdb -g -MMD -MP $(PARALLEL_FLAG
 LIB_FLAGS = $(LIBS)
 INC_FLAGS = -I$(CWD)
 
-all: mzgaf2paf pafcoverage rgfa-split
+all: mzgaf2paf pafcoverage rgfa-split paf2lastz
 
-mzgaf2paf: mzgaf2paf.o main.o
-	$(CXX) $(INCLUDE_FLAGS) $(CXXFLAGS) $(CPPFLAGS) -o mzgaf2paf main.o mzgaf2paf.o $(LIB_FLAGS)
+mzgaf2paf: mzgaf2paf.o mzgaf2paf_main.o
+	$(CXX) $(INCLUDE_FLAGS) $(CXXFLAGS) $(CPPFLAGS) -o mzgaf2paf mzgaf2paf_main.o mzgaf2paf.o $(LIB_FLAGS)
 
-main.o:$(LIB_DEPS) main.cpp mzgaf2paf.hpp mzgaf.hpp gafkluge.hpp
-	$(CXX) $(INCLUDE_FLAGS) $(CXXFLAGS) $(CPPFLAGS) -c main.cpp $(INC_FLAGS)
+mzgaf2paf_main.o:$(LIB_DEPS) mzgaf2paf_main.cpp mzgaf2paf.hpp mzgaf.hpp gafkluge.hpp
+	$(CXX) $(INCLUDE_FLAGS) $(CXXFLAGS) $(CPPFLAGS) -c mzgaf2paf_main.cpp $(INC_FLAGS)
 
 mzgaf2paf.o:$(LIB_DEPS) mzgaf2paf.cpp mzgaf2paf.hpp mzgaf.hpp gafkluge.hpp
 	$(CXX) $(INCLUDE_FLAGS) $(CXXFLAGS) $(CPPFLAGS) -c mzgaf2paf.cpp $(INC_FLAGS)
@@ -64,8 +64,30 @@ rgfa-split_main.o:$(LIB_DEPS) rgfa-split_main.cpp rgfa-split.hpp
 rgfa-split.o:$(LIB_DEPS) rgfa-split.cpp rgfa-split.hpp gafkluge.hpp gfakluge.hpp pliib.hpp tinyfa.hpp pafcoverage.hpp
 	$(CXX) $(INCLUDE_FLAGS) $(CXXFLAGS) $(CPPFLAGS) -c rgfa-split.cpp $(INC_FLAGS)
 
-test : mzgaf2paf
+paf2lastz: paf2lastz.o paf2lastz_main.o
+	$(CXX) $(INCLUDE_FLAGS) $(CXXFLAGS) $(CPPFLAGS) -o paf2lastz paf2lastz_main.o paf2lastz.o
+
+paf2lastz_main.o:$(LIB_DEPS) paf2lastz_main.cpp paf2lastz.hpp paf2lastz.hpp
+	$(CXX) $(INCLUDE_FLAGS) $(CXXFLAGS) $(CPPFLAGS) -c paf2lastz_main.cpp $(INC_FLAGS)
+
+paf2lastz.o:$(LIB_DEPS) paf2lastz.cpp paf2lastz.hpp
+	$(CXX) $(INCLUDE_FLAGS) $(CXXFLAGS) $(CPPFLAGS) -c paf2lastz.cpp $(INC_FLAGS)
+
+test : mzgaf2paf paf2lastz_test
 	cd test && prove -v test.t
 
+paf2lastz_test: mapqTest scoreTest
+	rm -f test/paf2lastz/out_mapq test/paf2lastz/out_score
+
+mapqTest:
+	./paf2lastz test/paf2lastz/evolver_rat.paf -q > test/paf2lastz/out_mapq
+	diff test/paf2lastz/out_mapq test/paf2lastz/evolver_rat_mapq.cigar
+	echo "OK"
+
+scoreTest:
+	./paf2lastz test/paf2lastz/evolver_rat.paf > test/paf2lastz/out_score
+	diff test/paf2lastz/out_score test/paf2lastz/evolver_rat_score.cigar
+	echo "OK"
+
 clean:
-	rm -rf mzgaf2paf main.o mzgaf2paf.o pafcoverage pafcoverage.o pafcoverage_main.o rgfa-split rgfa-split.o rgfa-split_main.o
+	rm -rf mzgaf2paf main.o mzgaf2paf.o pafcoverage pafcoverage.o pafcoverage_main.o rgfa-split rgfa-split.o rgfa-split_main.o paf2lastz paf2lastz_main.o paf2lastz.o
