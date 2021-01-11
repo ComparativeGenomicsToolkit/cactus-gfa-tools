@@ -1,14 +1,12 @@
-# mzgaf2paf
+# cactus-gfa-tools
 
-Converts [minigraph](https://github.com/lh3/minigraph) output from GAF to PAF, where PAF records represent pairwise aligments between the target and nodes in the graph.  The output alignments have cigar strings, and are based on the minimizer offsets obtained when using `minigraph -S --write-mz`.
-
-The use case is that a set of such alignments can be used as anchors by [Cactus](https://github.com/ComparativeGenomicsToolkit/cactus) to form its initial graph. 
+Command-line utilitites required for the [Cactus Pangenome Pipeline](https://github.com/ComparativeGenomicsToolkit/cactus/blob/master/doc/pangenome.md) pangenome pipeline.
 
 ## Build
 
 ```
-git clone https://github.com/glennhickey/mzgaf2paf.git
-cd mzgaf2paf && make
+git clone https://github.com/ComparativeGenomicsToolkit/cactus-gfa-tools.git
+cd cactus-gfa-tools && make
 ```
 
 ## Run tests
@@ -20,11 +18,43 @@ Requires:
 
 ```
 export PATH=$(pwd):$PATH
-cd test
-prove -v test.t
+make test
 ```
 
-## Example
+## Tools Included
+
+* [paf2lastz](#paf2lastz)
+* [mzgaf2paf](#mzgaf2paf)
+* [rgfa-split](#rgfa-split)
+* pafcoverage (for debugging only)
+
+### paf2lastz
+
+Convert PAF with cg cigars to LASTZ cigars
+
+This is a re-implentation of the following [paftools](https://github.com/lh3/minimap2/blob/master/misc/paftools.js) command:
+```
+paftools view -f lastz-cigar
+```
+that
+* is standalone (ie does not require Javascript)
+* incorporates @Robin-Rounthwaite's [fix](https://github.com/Robin-Rounthwaite/reference-based-cactus-aligner/blob/master/src/paf_to_lastz.py#L49-L71)
+* provides option (`-q`) to use the PAF MAPQ as the score
+
+usage:
+```
+paf2lastz a.paf > a.cigar
+```
+where `a.paf` was created by, for example, `minimap2 -c`
+
+### mzgaf2paf
+
+Convert [minigraph](https://github.com/lh3/minigraph) output from GAF to PAF, where PAF records represent pairwise aligments between the target and nodes in the graph.  The output alignments have cigar strings, and are based on the minimizer offsets obtained when using `minigraph -S --write-mz`.
+
+The use case is that a set of such alignments can be used as anchors by [Cactus](https://github.com/ComparativeGenomicsToolkit/cactus) to form its initial graph. 
+
+
+#### Example
 
 ```
 cd test
@@ -46,11 +76,14 @@ Will be converted to the following PAF
 hg38.chr20  2833756  709771   709857   -  s43   97 5  91 86 86 255   cg:Z:86M                       
 ```
 
-## Prefix graph sequence ids 
+A variety of filters are available.  Use `mzgaf2paf -h` to list them.
 
-To add a prefix to all contig sequences in order to avoid conflicts or make it easier to remove them later, use `mzgaf2paf -p` and pipe the gfa2fa output through `faprefix.sh`, ex:
-```
-mzgaf2paf hg38.gaf -p PREFIX > hg38.paf
-gfatools gfa2fa  hpp-20-2M.gfa | faprefix.sh PREFIX > hpp-20-2M.gfa.fa
+### rgfa-split
 
-```
+Use [rGFA tags](https://github.com/lh3/gfatools/blob/master/doc/rGFA.md) to assign query contigs from a PAF to reference contigs from the rGFA.  It performs the following steps.
+
+1. Using a BFS from the rank-0 nodes, assign each other node to the stable sequence (reference contig) of its nearest rank-0 node
+2. Use the PAF to determine the alignment coverage for each query contig against each reference contig
+3. Assign each query contig to the reference contig to which it most aligns
+
+Filters are provided to only assign contigs if they pass specificity and uniqueness filters (and label as "ambiguous" if they don't).  See `rgfa-split -h` for a full list of options. 
