@@ -26,6 +26,7 @@ make test
 * [paf2lastz](#paf2lastz)
 * [mzgaf2paf](#mzgaf2paf)
 * [rgfa-split](#rgfa-split)
+* [rgfa2paf](#rgfa2paf)
 * pafcoverage (for debugging only)
 
 ### paf2lastz
@@ -87,3 +88,7 @@ Use [rGFA tags](https://github.com/lh3/gfatools/blob/master/doc/rGFA.md) to assi
 3. Assign each query contig to the reference contig to which it most aligns
 
 Filters are provided to only assign contigs if they pass specificity and uniqueness filters (and label as "ambiguous" if they don't).  See `rgfa-split -h` for a full list of options. 
+
+### rgfa2paf
+
+Generate a PAF from the rank-0 [rGFA tags](https://github.com/lh3/gfatools/blob/master/doc/rGFA.md) in the given rGFA file. Each PAF line will represent an exact alignment between the contig range from the tags to the given node.  Note that the query lengths are inferred from the rGFA and will be wrong unless the file is complete.
