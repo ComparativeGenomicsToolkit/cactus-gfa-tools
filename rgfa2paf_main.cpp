@@ -17,16 +17,18 @@ void help(char** argv) {
        << "options: " << endl
        << "    -r, --max-rank N                    Process nodes with rank <= N [0]" << endl
        << "    -q, --query-lengths FILE            Tab-separated file listing query contig lengths" << endl
+       << "    -T, --target-prefix STRING          Prefix all target (reference) contig names with STRING" << endl
+       << "    -P, --query-prefix STRING           Prefix all query contig names with STRING" << endl
        << endl;
 }    
 
 int main(int argc, char** argv) {
 
-    // input
     string rgfa_path;
-
     int64_t max_rank = 0;
     string query_lengths_path;
+    string query_prefix;
+    string target_prefix;
     
     int c;
     optind = 1; 
@@ -36,12 +38,14 @@ int main(int argc, char** argv) {
             {"help", no_argument, 0, 'h'},
             {"max-rank", required_argument, 0, 'r'},
             {"query-lengths", required_argument, 0, 'q'},
+            {"target-prefix", required_argument, 0, 'T'},
+            {"query-prefix", required_argument, 0, 'P'},
             {0, 0, 0, 0}
         };
 
         int option_index = 0;
 
-        c = getopt_long (argc, argv, "hr:q:",
+        c = getopt_long (argc, argv, "hr:q:T:P:",
                          long_options, &option_index);
 
         // Detect the end of the options.
@@ -55,6 +59,12 @@ int main(int argc, char** argv) {
             break;
         case 'q':
             query_lengths_path = optarg;
+            break;
+        case 'T':
+            target_prefix = optarg;
+            break;
+        case 'P':
+            query_prefix = optarg;
             break;
         case 'h':
         case '?':
@@ -180,12 +190,12 @@ int main(int argc, char** argv) {
 
         if (rank <= max_rank) {
             // emit the paf line
-            cout << contig << "\t"
+            cout << (query_prefix + contig) << "\t"
                  << query_lengths[contig] << "\t"
                  << offset << "\t"
                  << offset + gfa_seq.sequence.length() << "\t"
                  << "+" << "\t"
-                 << gfa_seq.name << "\t"
+                 << (target_prefix + gfa_seq.name) << "\t"
                  << gfa_seq.sequence.length() << "\t"
                  << "0" << "\t"
                  << gfa_seq.sequence.length()  << "\t"
