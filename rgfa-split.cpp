@@ -203,9 +203,8 @@ void paf_split(const string& input_paf_path,
         // parse the paf columns
         string& query_name = toks[0];
         int64_t query_length = stol(toks[1]);
-        int64_t query_start = stol(toks[2]);
-        int64_t query_end = stol(toks[3]);
         string& target_name = toks[5];
+        int64_t matching_bases = stol(toks[9]);
         
         // use the map to go from the target name (rgfa node id in this case) to t
         // the reference contig (ex chr20)
@@ -214,7 +213,9 @@ void paf_split(const string& input_paf_path,
         int64_t reference_id = contig_map.at(target_id);
 
         // add the coverage of this reference contig to this query contig
-        coverage_map[query_name][reference_id] += query_end - query_start;
+        // note: important to use matching_bases here instead of just the query interval
+        //       to account for softclips which can have a big impact
+        coverage_map[query_name][reference_id] += matching_bases;
 
         // store the query length (todo: we could save a few bytes by
         // sticking it in the coverage map somewhere)
