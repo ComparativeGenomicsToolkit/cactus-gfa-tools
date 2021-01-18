@@ -13,13 +13,15 @@ void help(char** argv) {
        << endl
        << "options: " << endl
        << "    -p, --query-prefix PREFIX           Only look at query sequences with given prefix" << endl
-       << "    -g, --print-gaps                    Print gaps in coverage in BED format" << endl;
+       << "    -g, --print-gaps                    Print gaps in coverage in BED format" << endl
+       << "    -m, --min-gap-length N              Only print gaps that are >= Nbp [default: 1]" << endl;
 }    
 
 int main(int argc, char** argv) {
 
     string query_prefix;
     bool print_gaps = false;
+    int64_t min_gap_length = 1;
     int c;
     optind = 1; 
     while (true) {
@@ -28,12 +30,13 @@ int main(int argc, char** argv) {
             {"help", no_argument, 0, 'h'},
             {"query-prefix", required_argument, 0, 'q'},
             {"print-gaps", no_argument, 0, 'g'},
+            {"min-gap-length", required_argument, 0, 'm'},
             {0, 0, 0, 0}
         };
 
         int option_index = 0;
 
-        c = getopt_long (argc, argv, "hp:g",
+        c = getopt_long (argc, argv, "hp:gm:",
                          long_options, &option_index);
 
         // Detect the end of the options.
@@ -47,6 +50,9 @@ int main(int argc, char** argv) {
             break;
         case 'g':
             print_gaps = true;
+            break;
+        case 'm':
+            min_gap_length = stol(optarg);
             break;
         case 'h':
         case '?':
@@ -113,7 +119,7 @@ int main(int argc, char** argv) {
 
     // print the bed
     if (print_gaps) {
-        print_coverage_gaps_as_bed(coverage_map, cout);
+        print_coverage_gaps_as_bed(coverage_map, cout, min_gap_length);
     } else {
         print_coverage_summary(coverage_map, cout);
     }

@@ -112,7 +112,7 @@ void print_coverage_summary(const CoverageMap& coverage_map, ostream& out) {
     }    
 }
 
-void print_coverage_gaps_as_bed(const CoverageMap& coverage_map, ostream& out) {
+void print_coverage_gaps_as_bed(const CoverageMap& coverage_map, ostream& out, int64_t min_gap_length) {
     for (const auto& kv : coverage_map) {
         const string& query_name = kv.first;
         const vector<bool>& coverage = kv.second;
@@ -120,16 +120,16 @@ void print_coverage_gaps_as_bed(const CoverageMap& coverage_map, ostream& out) {
 
         for (int64_t i = 0; i < coverage.size(); ++i) {
             if (coverage[i] == true) {
-                if (i - last_covered > 1) {
-                    out << query_name << "\t" << (last_covered + 1) << "\t" << i << endl;
+                if (i - last_covered > min_gap_length) {
+                    out << query_name << "\t" << (last_covered + 1) << "\t" << i << "\t" << "pafcoverage-m" << min_gap_length << endl;
                 }
                 last_covered = i;
             }
         }
 
         int64_t i = coverage.size();
-        if (i - last_covered > 1) {
-            out << query_name << "\t" << (last_covered + 1) << "\t" << i << endl;
+        if (i - last_covered > min_gap_length) {
+            out << query_name << "\t" << (last_covered + 1) << "\t" << i << "\t" << "pafcoverage-m" << min_gap_length << endl;
         }
     }
 }
