@@ -39,6 +39,8 @@ void paf_split(const string& input_paf_path,
                const string& output_prefix,
                const string& minigraph_prefix, // this is the cactus unique id prefix (ex id=0|)
                double min_query_coverage,
+               double min_small_query_coverage,
+               int64_t small_coverage_threshold,
                double min_query_uniqueness,
                int64_t ambiguous_id,
                const string& reference_prefix); 

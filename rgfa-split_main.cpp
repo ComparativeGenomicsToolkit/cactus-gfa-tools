@@ -14,24 +14,26 @@ void help(char** argv) {
   cerr << "usage: " << argv[0] << " [options]" << endl
        << "Partition rGFA nodes into reference contigs.  Input must be uncompressed GFA (not stdin)" << endl
        << "input options: " << endl
-       << "    -g, --rgfa FILE                     rGFA to use as baseline for contig splitting" << endl
-       << "    -m, --input-contig-map FILE         Use tsv map (computed with -M) instead of rGFA" << endl
-       << "    -p, --paf FILE                      PAF file to split" << endl
+       << "    -g, --rgfa FILE                         rGFA to use as baseline for contig splitting" << endl
+       << "    -m, --input-contig-map FILE             Use tsv map (computed with -M) instead of rGFA" << endl
+       << "    -p, --paf FILE                          PAF file to split" << endl
        << "output options: " << endl 
-       << "    -b, --output-prefix PREFIX          All output files will be of the form <PREFIX><contig>.paf/.fa_contigs" << endl
-       << "    -M, --output-contig-map FILE        Output rgfa node -> contig map to this file" << endl
-       << "    -i, --minigraph-prefix PREFIX       Prepend prefix to minigraph node ids in .fa_contigs files" << endl
-       << "    -G, --split-gfa                     Split the input GFA too and output <PREFIX><config>.gfa files" << endl
+       << "    -b, --output-prefix PREFIX              All output files will be of the form <PREFIX><contig>.paf/.fa_contigs" << endl
+       << "    -M, --output-contig-map FILE            Output rgfa node -> contig map to this file" << endl
+       << "    -i, --minigraph-prefix PREFIX           Prepend prefix to minigraph node ids in .fa_contigs files" << endl
+       << "    -G, --split-gfa                         Split the input GFA too and output <PREFIX><config>.gfa files" << endl
        << "contig selection options: " << endl
-       << "    -q, --contig-prefix PREFIX          Only process contigs beginning with PREFIX" << endl
-       << "    -c, --contig-name NAME              Only process NAME (multiple allowed)" << endl
-       << "    -C, --contig-file FILE              Path to list of contigs to process" << endl
-       << "    -o, --other-name NAME               Lump all contigs not selected by above options into single reference with name NAME" << endl
+       << "    -q, --contig-prefix PREFIX              Only process contigs beginning with PREFIX" << endl
+       << "    -c, --contig-name NAME                  Only process NAME (multiple allowed)" << endl
+       << "    -C, --contig-file FILE                  Path to list of contigs to process" << endl
+       << "    -o, --other-name NAME                   Lump all contigs not selected by above options into single reference with name NAME" << endl
        << "contig assignment ambiguity handling options: " << endl
-       << "    -n, --min-query-coverage FLOAT      At least this fraction of input contig must align to reference contig for it to be assigned" << endl
-       << "    -Q, --min-query-uniqueness FLOAT    The ratio of the number of query bases aligned to the chosen ref contig vs the next best ref contig must exceed this threshold to not be considered ambigious" << endl
-       << "    -a, --ambiguous-name NAME           All query contigs that do not meet min coverage (-n) assigned to single reference with name NAME" << endl
-       << "    -r, --reference-prefix PREFIX       Don't apply ambiguity filters to query contigs with this prefix" << endl;
+       << "    -n, --min-query-coverage FLOAT          At least this fraction of input contig must align to reference contig for it to be assigned" << endl
+       << "    -N, --min-small-query-coverage FLOAT    Override -n for query contigs < [--small-coverage-threshold] bp" << endl
+       << "    -T, --small-coverage-threshold N        Used to toggle between the two coverage thresholds (-n and -N)" << endl
+       << "    -Q, --min-query-uniqueness FLOAT        The ratio of the number of query bases aligned to the chosen ref contig vs the next best ref contig must exceed this threshold to not be considered ambigious" << endl
+       << "    -a, --ambiguous-name NAME               All query contigs that do not meet min coverage (-n) assigned to single reference with name NAME" << endl
+       << "    -r, --reference-prefix PREFIX           Don't apply ambiguity filters to query contigs with this prefix" << endl;
 }    
 
 int main(int argc, char** argv) {
@@ -56,6 +58,8 @@ int main(int argc, char** argv) {
 
     // ambiguity handling
     double min_query_coverage = 0;
+    double min_small_query_coverage = 0;
+    double small_coverage_threshold = 0;
     double min_query_uniqueness = 0;
     string ambiguous_name;
     string reference_prefix;
@@ -78,6 +82,8 @@ int main(int argc, char** argv) {
             {"contig-file", required_argument, 0, 'C'},
             {"other-name", required_argument, 0, 'o'},            
             {"min-query-coverage", required_argument, 0, 'n'},
+            {"min-small-query-coverage", required_argument, 0, 'N'},
+            {"small-coverage-threshold", required_argument, 0, 'T'},
             {"min-query-uniqueness", required_argument, 0, 'Q'},
             {"ambiguous-name", required_argument, 0, 'a'},
             {"reference-prefix", required_argument, 0, 'r'},
@@ -86,7 +92,7 @@ int main(int argc, char** argv) {
 
         int option_index = 0;
 
-        c = getopt_long (argc, argv, "hg:m:p:b:M:i:Gq:c:C:o:n:Q:a:r:",
+        c = getopt_long (argc, argv, "hg:m:p:b:M:i:Gq:c:C:o:n:N:T:Q:a:r:",
                          long_options, &option_index);
 
         // Detect the end of the options.
@@ -130,6 +136,12 @@ int main(int argc, char** argv) {
             break;            
         case 'n':
             min_query_coverage = stof(optarg);
+            break;
+        case 'N':
+            min_small_query_coverage = stof(optarg);
+            break;
+        case 'T':
+            small_coverage_threshold = stol(optarg);
             break;
         case 'Q':
             min_query_uniqueness = stof(optarg);
@@ -184,6 +196,16 @@ int main(int argc, char** argv) {
 
     if ((min_query_coverage > 0 || min_query_uniqueness > 1) && ambiguous_name.empty()) {
         cerr << "[rgfa-split] error: ambiguous name must be set with -a when using -n or -Q" << endl;
+        return 1;
+    }
+    
+    if (min_small_query_coverage > 0 && (min_query_coverage == 0 || small_coverage_threshold == 0)) {
+        cerr << "[rgfa-split] error: -N and -T can only be used with -n" << endl;
+        return 1;
+    }
+
+    if (small_coverage_threshold > 0 && min_small_query_coverage < min_query_coverage) {
+        cerr << "[rgfa-split] error: When using -T, --min-small-query-coverage (-N) must be >= --min-query-coverage (-n)" << endl;
         return 1;
     }
 
@@ -251,7 +273,8 @@ int main(int argc, char** argv) {
     if (!input_paf_path.empty()) {
         check_ifile(input_paf_path);
         paf_split(input_paf_path, partition.first, partition.second, visit_contig, output_prefix, minigraph_prefix,
-                  min_query_coverage, min_query_uniqueness, ambiguous_id, reference_prefix);
+                  min_query_coverage, min_small_query_coverage, small_coverage_threshold, min_query_uniqueness,
+                  ambiguous_id, reference_prefix);
     }
 
     // split the gfa

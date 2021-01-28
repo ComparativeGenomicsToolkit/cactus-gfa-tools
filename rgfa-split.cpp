@@ -182,6 +182,8 @@ void paf_split(const string& input_paf_path,
                const string& output_prefix,
                const string& minigraph_prefix,
                double min_query_coverage,
+               double min_small_query_coverage,
+               int64_t small_coverage_threshold,
                double min_query_uniqueness,
                int64_t ambiguous_id,
                const string& reference_prefix) {
@@ -241,12 +243,16 @@ void paf_split(const string& input_paf_path,
         // check if it's good enough
         int64_t query_length = query_lengths[query_coverage.first];
         double query_coverage_fraction = (double)max_coverage / query_length;
+        int64_t min_coverage = min_query_coverage;
+        if (small_coverage_threshold > 0 && query_length < small_coverage_threshold) {
+            min_coverage = min_small_query_coverage;
+        }
         bool is_ref = !reference_prefix.empty() &&
             query_coverage.first.substr(0, reference_prefix.length()) == reference_prefix;
-        if (!is_ref && (query_coverage_fraction < min_query_coverage || 
+        if (!is_ref && (query_coverage_fraction < min_coverage || 
                         (next_coverage > 0 && max_coverage < (double)next_coverage * min_query_uniqueness))) {
             cerr << "Query contig is ambiguous: " << query_coverage.first 
-                 << "  len=" << query_length << " cov=" << query_coverage_fraction << " (vs " << min_query_coverage << ") ";
+                 << "  len=" << query_length << " cov=" << query_coverage_fraction << " (vs " << min_coverage << ") ";
             if (next_coverage > 0) {
                 cerr << "uf=" << ((double)max_coverage / next_coverage) << " (vs " << min_query_uniqueness << ")";
                 cerr << "\n Reference contig mappings:" << "\n";
