@@ -14,7 +14,7 @@ void help(char** argv) {
        << endl
        << "options: " << endl
        << "    -p, --target-prefix PREFIX          Prepend all target (graph) contig names with this prefix" << endl
-       << "    -b, --min-block-length N            Ignore records with block length (GAF col 11) < N [0]" << endl      
+       << "    -b, --min-block-length N            Ignore records with block length (GAF col 11) (only applies if query length > N)< N [0]" << endl      
        << "    -q, --min-mapq N                    Ignore records with MAPQ (GAF col 12) < N [0]" << endl
        << "    -g, --min-gap N                     Filter so that reported minimizer matches have >=N bases between them [0]" << endl
        << "    -m, --min-match-len N               Only write matches (formed by overlapping/adjacent mz chains) with length < N" << endl
@@ -179,7 +179,7 @@ int main(int argc, char** argv) {
                            if (strict_universal ||
                                (gaf_record.num_minimizers > 0 &&
                                 parent_record.mapq >= min_mapq &&
-                                parent_record.block_length >= min_block_len &&
+                                (parent_record.query_length <= min_block_len || parent_record.block_length >= min_block_len) &&
                                 gaf_record.target_length >= min_node_len)) {                        
                                update_mz_map(gaf_record, parent_record, file_mz_map, min_mapq, min_block_len, min_node_len, node_based_universal);
                            }
