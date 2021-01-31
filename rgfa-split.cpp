@@ -243,7 +243,7 @@ void paf_split(const string& input_paf_path,
         // check if it's good enough
         int64_t query_length = query_lengths[query_coverage.first];
         double query_coverage_fraction = (double)max_coverage / query_length;
-        int64_t min_coverage = min_query_coverage;
+        double min_coverage = min_query_coverage;
         if (small_coverage_threshold > 0 && query_length < small_coverage_threshold) {
             min_coverage = min_small_query_coverage;
         }
