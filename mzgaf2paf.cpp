@@ -272,7 +272,7 @@ void update_mz_map(const gafkluge::MzGafRecord& gaf_record,
     // increment each minimzer (if the record passes the thresholds)
     if (gaf_record.num_minimizers > 0 &&
         parent_record.mapq >= min_mapq &&
-        parent_record.block_length >= min_block_len &&
+        (parent_record.query_length <= min_block_len || parent_record.block_length >= min_block_len) &&
         gaf_record.target_length >= min_node_len) {
         
         int64_t target_pos = gaf_record.target_start;

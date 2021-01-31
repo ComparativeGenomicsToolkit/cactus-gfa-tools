@@ -203,7 +203,7 @@ int main(int argc, char** argv) {
                 // todo: buffer and parallelize?
                 if (gaf_record.num_minimizers > 0 &&
                     parent_record.mapq >= min_mapq &&
-                    parent_record.block_length >= min_block_len &&
+                    (parent_record.query_length <= min_block_len || parent_record.block_length >= min_block_len) &&
                     gaf_record.target_length >= min_node_len) {
 
                     total_match_length += mzgaf2paf(gaf_record,
