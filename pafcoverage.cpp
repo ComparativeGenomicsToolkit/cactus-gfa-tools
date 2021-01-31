@@ -108,7 +108,7 @@ void print_coverage_summary(const CoverageMap& coverage_map, ostream& out) {
         out << query_name << "\t"
             << ((float)coverage_count / coverage.size()) << "\t"
             << max_gap << "\t"
-            << (total_gap / gaps.size()) << endl;
+            << (!gaps.empty() ? (total_gap / gaps.size()) : 0) << endl;
     }    
 }
 
