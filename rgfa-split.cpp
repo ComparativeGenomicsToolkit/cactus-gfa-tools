@@ -262,7 +262,9 @@ void paf_split(const string& input_paf_path,
             // factor in the masking stats by subtracting from denominator
             int64_t masked_bases = mask_stats.at(query_coverage.first);
             assert(masked_bases <= query_length);
-            if (masked_bases < query_length) {
+            // avoid degenerate cases by making sure at least half of query contig is unmasked
+            // before applying correction
+            if (masked_bases < query_length / 2) {
                 query_length -= masked_bases;
             }
         }
