@@ -22,6 +22,11 @@ pair<unordered_map<int64_t, int64_t>, vector<string>> rgfa2contig(const string& 
 pair<unordered_map<int64_t, int64_t>, vector<string>> load_contig_map(const string& contgs_path);
 
 /*
+ * Load bed file into coverage map to keep track of masked intervals
+ */
+unordered_map<string, int64_t> load_query_mask_stats(const string& bed_path);
+
+/*
  * Reorganize mapping so all unselected reference contigs map to an "other" category of given name
  */
 void set_other_contig(unordered_map<int64_t, int64_t>& contig_map,
@@ -43,7 +48,8 @@ void paf_split(const string& input_paf_path,
                int64_t small_coverage_threshold,
                double min_query_uniqueness,
                int64_t ambiguous_id,
-               const string& reference_prefix); 
+               const string& reference_prefix,
+               const unordered_map<string, int64_t>& mask_stats); 
 
 /**
  * Use the contigs to split the GFA

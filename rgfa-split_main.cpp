@@ -17,6 +17,7 @@ void help(char** argv) {
        << "    -g, --rgfa FILE                         rGFA to use as baseline for contig splitting" << endl
        << "    -m, --input-contig-map FILE             Use tsv map (computed with -M) instead of rGFA" << endl
        << "    -p, --paf FILE                          PAF file to split" << endl
+       << "    -B, --bed FILE                          BED file.  Used to subtract out softmasked regions when computing coverage (multiple allowed)" << endl
        << "output options: " << endl 
        << "    -b, --output-prefix PREFIX              All output files will be of the form <PREFIX><contig>.paf/.fa_contigs" << endl
        << "    -M, --output-contig-map FILE            Output rgfa node -> contig map to this file" << endl
@@ -42,6 +43,7 @@ int main(int argc, char** argv) {
     string rgfa_path;
     string input_contig_map_path;
     string input_paf_path;
+    string bed_path;
 
     // output
     string output_prefix;
@@ -73,6 +75,7 @@ int main(int argc, char** argv) {
             {"rgfa", required_argument, 0, 'g'},
             {"input-contig-map", required_argument, 0, 'm'},
             {"paf", required_argument, 0, 'p'},
+            {"bed", required_argument, 0, 'B'},
             {"output-prefix", required_argument, 0, 'b'},
             {"output-contig-map", required_argument, 0, 'M'},
             {"minigraph-prefix", required_argument, 0, 'i'},
@@ -92,7 +95,7 @@ int main(int argc, char** argv) {
 
         int option_index = 0;
 
-        c = getopt_long (argc, argv, "hg:m:p:b:M:i:Gq:c:C:o:n:N:T:Q:a:r:",
+        c = getopt_long (argc, argv, "hg:m:p:B:b:M:i:Gq:c:C:o:n:N:T:Q:a:r:",
                          long_options, &option_index);
 
         // Detect the end of the options.
@@ -109,6 +112,9 @@ int main(int argc, char** argv) {
             break;
         case 'p':
             input_paf_path = optarg;
+            break;
+        case 'B':
+            bed_path = optarg;
             break;
         case 'b':
             output_prefix = optarg;
@@ -268,13 +274,20 @@ int main(int argc, char** argv) {
         partition.second.push_back(ambiguous_name);
     }
 
+    // make sure the bed file exists
+    unordered_map<string, int64_t> query_mask_stats;
+    if (!bed_path.empty()) {
+        check_ifile(bed_path);
+        query_mask_stats = load_query_mask_stats(bed_path);
+    }
+
     // split the paf into one paf per reference contig.  also output a list of query contig names
     // alongside than can be used to split the fasta with samtools faidx
     if (!input_paf_path.empty()) {
         check_ifile(input_paf_path);
         paf_split(input_paf_path, partition.first, partition.second, visit_contig, output_prefix, minigraph_prefix,
                   min_query_coverage, min_small_query_coverage, small_coverage_threshold, min_query_uniqueness,
-                  ambiguous_id, reference_prefix);
+                  ambiguous_id, reference_prefix, query_mask_stats);
     }
 
     // split the gfa

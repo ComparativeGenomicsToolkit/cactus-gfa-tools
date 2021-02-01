@@ -154,6 +154,21 @@ pair<unordered_map<int64_t, int64_t>, vector<string>> load_contig_map(const stri
     return make_pair(contig_map, contigs);
 }
 
+unordered_map<string, int64_t> load_query_mask_stats(const string& bed_path) {
+    ifstream bed_file(bed_path);
+    string bed_line;
+    unordered_map<string, int64_t> mask_stats;
+    while (getline(bed_file, bed_line)) {
+        vector<string> toks;
+        split_delims(bed_line, "\t\n", toks);
+        if (toks.size() > 2) {
+            int64_t range_size = stol(toks[2]) - stol(toks[1]);
+            mask_stats[toks[0]] += range_size;
+        }
+    }
+    return mask_stats;
+}
+
 void set_other_contig(unordered_map<int64_t, int64_t>& contig_map,
                       vector<string>& contigs,
                       function<bool(const string&)> visit_contig,
@@ -186,7 +201,8 @@ void paf_split(const string& input_paf_path,
                int64_t small_coverage_threshold,
                double min_query_uniqueness,
                int64_t ambiguous_id,
-               const string& reference_prefix) {
+               const string& reference_prefix,
+               const unordered_map<string, int64_t>& mask_stats) {               
 
     // first pass, figure out which contig aligns where
     ifstream input_paf_stream(input_paf_path);
@@ -242,6 +258,14 @@ void paf_split(const string& input_paf_path,
         }
         // check if it's good enough
         int64_t query_length = query_lengths[query_coverage.first];
+        if (mask_stats.count(query_coverage.first)) {
+            // factor in the masking stats by subtracting from denominator
+            int64_t masked_bases = mask_stats.at(query_coverage.first);
+            assert(masked_bases <= query_length);
+            if (masked_bases < query_length) {
+                query_length -= masked_bases;
+            }
+        }
         double query_coverage_fraction = (double)max_coverage / query_length;
         double min_coverage = min_query_coverage;
         if (small_coverage_threshold > 0 && query_length < small_coverage_threshold) {
