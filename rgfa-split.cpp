@@ -445,7 +445,7 @@ void gfa_split(const string& rgfa_path,
                     exit(1);
                 }
             }
-            *out_gfa_stream << gfa_line;
+            *out_gfa_stream << gfa_line << "\n";
         }
     }
 
