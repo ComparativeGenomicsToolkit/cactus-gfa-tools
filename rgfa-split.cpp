@@ -202,7 +202,8 @@ void paf_split(const string& input_paf_path,
                double min_query_uniqueness,
                int64_t ambiguous_id,
                const string& reference_prefix,
-               const unordered_map<string, int64_t>& mask_stats) {               
+               const unordered_map<string, int64_t>& mask_stats,
+               int64_t max_gap_as_match) { 
 
     // first pass, figure out which contig aligns where
     ifstream input_paf_stream(input_paf_path);
@@ -229,11 +230,15 @@ void paf_split(const string& input_paf_path,
         int64_t target_id = node_id(target_name);
         assert(contig_map.count(target_id));
         int64_t reference_id = contig_map.at(target_id);
+        
+        // also count tiny indels between matches
+        int64_t small_gap_bases = count_small_gap_bases(toks, max_gap_as_match);
 
         // add the coverage of this reference contig to this query contig
         // note: important to use matching_bases here instead of just the query interval
         //       to account for softclips which can have a big impact
-        coverage_map[query_name][reference_id] += matching_bases;
+        coverage_map[query_name][reference_id] += matching_bases + small_gap_bases;
+
 
         // store the query length (todo: we could save a few bytes by
         // sticking it in the coverage map somewhere)
@@ -286,7 +291,7 @@ void paf_split(const string& input_paf_path,
                     cerr << "  " << contigs[ref_coverage.first] << ": " << ref_coverage.second << endl;
                 }
             } else {
-                cerr << endl;
+                cerr << "uf= infinity (vs " << min_query_uniqueness << ")" << endl;
             }
             max_id = ambiguous_id;
             assert(max_id >= 0 && max_id < contigs.size());
@@ -454,4 +459,34 @@ void gfa_split(const string& rgfa_path,
         delete ref_stream.second;
     }
     out_files.clear();
+}
+
+int64_t count_small_gap_bases(const vector<string>& toks, int64_t max_gap_as_match) {
+
+    bool after_match = false;
+    int64_t running_ins = 0;
+    int64_t running_del = 0;
+    int64_t total_gap = 0;
+    for (int i = 12; i < toks.size(); ++i) {
+        if (toks[i].substr(0, 5) == "cg:Z:") {
+            for_each_cg(toks[i], [&](const string& val, const string& cat) {
+                    int64_t len = stol(val);
+                    if (cat == "M") {
+                        if (after_match && running_ins < max_gap_as_match && running_del < max_gap_as_match) {
+                            total_gap += running_ins;
+                        }
+                        running_ins = 0;
+                        running_del = 0;
+                        after_match = true;
+                    } else if (cat == "I") {
+                        running_ins += len;
+                    } else {
+                        assert(cat == "D");
+                        running_del += len;
+                    }
+                });
+        }
+    }
+
+    return total_gap;
 }

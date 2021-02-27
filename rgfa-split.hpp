@@ -49,7 +49,8 @@ void paf_split(const string& input_paf_path,
                double min_query_uniqueness,
                int64_t ambiguous_id,
                const string& reference_prefix,
-               const unordered_map<string, int64_t>& mask_stats); 
+               const unordered_map<string, int64_t>& mask_stats,
+               int64_t max_gap_as_match); 
 
 /**
  * Use the contigs to split the GFA
@@ -69,5 +70,8 @@ inline int64_t node_id(const string& rgfa_id) {
     return stol(rgfa_id.substr(offset));
 }
 
-
+/**
+ * Count up bases of small indels bookended by matches, which we will apply to the coverage
+ */
+int64_t count_small_gap_bases(const vector<string>& toks, int64_t max_gap_as_match);
 

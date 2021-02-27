@@ -33,6 +33,7 @@ void help(char** argv) {
        << "    -N, --min-small-query-coverage FLOAT    Override -n for query contigs < [--small-coverage-threshold] bp" << endl
        << "    -T, --small-coverage-threshold N        Used to toggle between the two coverage thresholds (-n and -N)" << endl
        << "    -Q, --min-query-uniqueness FLOAT        The ratio of the number of query bases aligned to the chosen ref contig vs the next best ref contig must exceed this threshold to not be considered ambigious" << endl
+       << "    -P, --max-gap N                         Count cigar gaps of length <= N towards coverage" << endl
        << "    -a, --ambiguous-name NAME               All query contigs that do not meet min coverage (-n) assigned to single reference with name NAME" << endl
        << "    -r, --reference-prefix PREFIX           Don't apply ambiguity filters to query contigs with this prefix" << endl;
 }    
@@ -63,6 +64,7 @@ int main(int argc, char** argv) {
     double min_small_query_coverage = 0;
     double small_coverage_threshold = 0;
     double min_query_uniqueness = 0;
+    int64_t max_gap = 0;
     string ambiguous_name;
     string reference_prefix;
     
@@ -88,6 +90,7 @@ int main(int argc, char** argv) {
             {"min-small-query-coverage", required_argument, 0, 'N'},
             {"small-coverage-threshold", required_argument, 0, 'T'},
             {"min-query-uniqueness", required_argument, 0, 'Q'},
+            {"max-gap", required_argument, 0, 'P'},
             {"ambiguous-name", required_argument, 0, 'a'},
             {"reference-prefix", required_argument, 0, 'r'},
             {0, 0, 0, 0}
@@ -95,7 +98,7 @@ int main(int argc, char** argv) {
 
         int option_index = 0;
 
-        c = getopt_long (argc, argv, "hg:m:p:B:b:M:i:Gq:c:C:o:n:N:T:Q:a:r:",
+        c = getopt_long (argc, argv, "hg:m:p:B:b:M:i:Gq:c:C:o:n:N:T:Q:P:a:r:",
                          long_options, &option_index);
 
         // Detect the end of the options.
@@ -151,7 +154,10 @@ int main(int argc, char** argv) {
             break;
         case 'Q':
             min_query_uniqueness = stof(optarg);
-            break;            
+            break;
+        case 'P':
+            max_gap = stol(optarg);
+            break;
         case 'a':
             ambiguous_name = optarg;
             break;
@@ -287,7 +293,7 @@ int main(int argc, char** argv) {
         check_ifile(input_paf_path);
         paf_split(input_paf_path, partition.first, partition.second, visit_contig, output_prefix, minigraph_prefix,
                   min_query_coverage, min_small_query_coverage, small_coverage_threshold, min_query_uniqueness,
-                  ambiguous_id, reference_prefix, query_mask_stats);
+                  ambiguous_id, reference_prefix, query_mask_stats, max_gap);
     }
 
     // split the gfa

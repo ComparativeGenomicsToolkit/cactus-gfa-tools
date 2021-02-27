@@ -24,7 +24,7 @@ vector<string> &split_delims(const string &s, const string& delims, vector<strin
     return elems;
 }
 
-static void for_each_cg(const string& cg_tok, function<void(const string&, const string&)> fn) {
+void for_each_cg(const string& cg_tok, function<void(const string&, const string&)> fn) {
     size_t next;
     for (size_t co = 5; co != string::npos; co = next) {
         next = cg_tok.find_first_of("MDI", co + 1);
