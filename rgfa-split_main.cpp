@@ -7,6 +7,7 @@
 #include <algorithm>
 #include <sys/stat.h>
 #include "rgfa-split.hpp"
+#include "pafcoverage.hpp"
 
 using namespace std;
 
@@ -250,6 +251,23 @@ int main(int argc, char** argv) {
         }
         for (auto& node_contig : partition.first) {
             output_contig_map_file << "S" << node_contig.first << "\t" << partition.second[node_contig.second] << "\n";
+        }
+    }
+
+    // load the contig names file
+    if (!contig_names_path.empty()) {
+        ifstream contig_names_file(contig_names_path);
+        if (!contig_names_file) {
+            cerr << "[rgfa-split] error: unable to open contig names file \"" << contig_names_path << "\"" << endl;
+            return 1;
+        }
+        string buffer;
+        while (getline(contig_names_file, buffer)) {
+            vector<string> toks;
+            split_delims(buffer, "\t\n", toks);
+            if (!toks.empty() && !toks[0].empty()) {
+                contig_names.insert(toks[0]);
+            }
         }
     }
 
