@@ -38,7 +38,7 @@ void set_other_contig(unordered_map<int64_t, int64_t>& contig_map,
  * Use contigs identified above to split PAF
  */
 void paf_split(const string& input_paf_path,
-               const unordered_map<int64_t, int64_t>& contig_map,
+               function<int64_t(const string&)> name_to_refid,
                const vector<string>& contigs,
                function<bool(const string&)> visit_contig,
                const string& output_prefix,

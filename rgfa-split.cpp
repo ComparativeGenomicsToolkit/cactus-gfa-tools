@@ -191,7 +191,7 @@ void set_other_contig(unordered_map<int64_t, int64_t>& contig_map,
  * Use contigs identified above to split PAF
  */
 void paf_split(const string& input_paf_path,
-               const unordered_map<int64_t, int64_t>& contig_map,
+               function<int64_t(const string&)> name_to_refid,
                const vector<string>& contigs,
                function<bool(const string&)> visit_contig,
                const string& output_prefix,
@@ -227,9 +227,7 @@ void paf_split(const string& input_paf_path,
         
         // use the map to go from the target name (rgfa node id in this case) to t
         // the reference contig (ex chr20)
-        int64_t target_id = node_id(target_name);
-        assert(contig_map.count(target_id));
-        int64_t reference_id = contig_map.at(target_id);
+        int64_t reference_id = name_to_refid(target_name);
         
         // also count tiny indels between matches
         int64_t small_gap_bases = count_small_gap_bases(toks, max_gap_as_match);
@@ -313,6 +311,9 @@ void paf_split(const string& input_paf_path,
     // load up the query contigs for downstream fasta splitting
     unordered_map<int64_t, unordered_set<string> > query_map;
 
+    // keep track of every unique taret
+    unordered_set<string> target_set;
+
     while (getline(input_paf_stream, paf_line)) {
         vector<string> toks;
         split_delims(paf_line, "\t\n", toks);
@@ -320,14 +321,15 @@ void paf_split(const string& input_paf_path,
         // parse the paf columns
         string& query_name = toks[0];
         string& target_name = toks[5];
+        target_set.insert(target_name);
 
         // use the map to go from the target name (rgfa node id in this case) to
         // the reference contig (ex chr20)
-        int64_t target_id = node_id(target_name);
+        int64_t target_reference_id = name_to_refid(target_name);
+
         assert(query_ref_map.count(query_name));
         int64_t reference_id = query_ref_map.at(query_name);
         const string& reference_contig = contigs[reference_id];
-        int64_t target_reference_id = contig_map.at(target_id);
 
         // do both the query and reference sequences fall in the same chromosome, and we wnat to visit that
         // chromosome?  if so, we write the paf line, otherwise it's effectively filtered out
@@ -373,21 +375,22 @@ void paf_split(const string& input_paf_path,
 
     // write the target contigs
     // start by sorting by reference contig
-    vector<int64_t> mg_contigs;
-    mg_contigs.reserve(contig_map.size());
-    for (const auto& target_kv : contig_map) {
-        mg_contigs.push_back(target_kv.first);
+    vector<string> mg_contigs;
+    mg_contigs.reserve(target_set.size());
+    for (const auto& target_name : target_set) {
+        mg_contigs.push_back(target_name);
     }
-    std::sort(mg_contigs.begin(), mg_contigs.end(), [&](int64_t a, int64_t b) {
-            return contig_map.at(a) < contig_map.at(b);
+    std::sort(mg_contigs.begin(), mg_contigs.end(), [&](const string& a, const string& b) {
+            return contigs[name_to_refid(a)] < contigs[name_to_refid(b)];
         });
-    int64_t prev_ref_contig = -1;
+    int64_t prev_ref_contig_id = -1;
     ofstream out_contigs_stream;
-    for (const auto& target_kv : contig_map) {
-        const string& reference_contig = contigs[target_kv.second];
+    for (const auto& target_name : mg_contigs) {
+        int64_t reference_contig_id = name_to_refid(target_name);
+        const string& reference_contig = contigs[name_to_refid(target_name)];
         if (visit_contig(reference_contig) ||
             (ambiguous_id >= 0 && reference_contig == contigs[ambiguous_id])) {  
-            if (target_kv.second != prev_ref_contig) {
+            if (reference_contig_id != prev_ref_contig_id) {
                 string out_contigs_path = output_prefix + reference_contig + ".fa_contigs";
                 if (out_contigs_stream.is_open()) {
                     out_contigs_stream.close();
@@ -397,9 +400,9 @@ void paf_split(const string& input_paf_path,
                     cerr << "error: unable to open output contigs path: " << out_contigs_path << endl;
                     exit(1);
                 }
-                prev_ref_contig = target_kv.second;
+                prev_ref_contig_id = reference_contig_id;
             }
-            out_contigs_stream << minigraph_prefix << "s" << target_kv.first << endl;
+            out_contigs_stream << minigraph_prefix << target_name << endl;
         }
     }
 }

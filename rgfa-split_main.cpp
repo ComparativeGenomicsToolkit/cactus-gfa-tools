@@ -15,7 +15,7 @@ void help(char** argv) {
   cerr << "usage: " << argv[0] << " [options]" << endl
        << "Partition rGFA nodes into reference contigs.  Input must be uncompressed GFA (not stdin)" << endl
        << "input options: " << endl
-       << "    -g, --rgfa FILE                         rGFA to use as baseline for contig splitting" << endl
+       << "    -g, --rgfa FILE                         rGFA to use as baseline for contig splitting (if not defined, minmap2 output assumed)" << endl
        << "    -m, --input-contig-map FILE             Use tsv map (computed with -M) instead of rGFA" << endl
        << "    -p, --paf FILE                          PAF file to split" << endl
        << "    -B, --bed FILE                          BED file.  Used to subtract out softmasked regions when computing coverage (multiple allowed)" << endl
@@ -197,11 +197,6 @@ int main(int argc, char** argv) {
         return 1;
     };
 
-    if (rgfa_path.empty() == input_contig_map_path.empty()) {
-        cerr << "[rgfa-split] error: exactly 1 of -g or -m required to specifiy input contigs" << endl;
-        return 1;
-    }
-
     if (!output_prefix.empty() && output_prefix.back() == '/') {
         // note: not checking for error here (it'll show up downstream if directory doesn't exist)
         mkdir(output_prefix.c_str(), S_IRWXU | S_IRWXG | S_IROTH | S_IXOTH);
@@ -232,16 +227,30 @@ int main(int argc, char** argv) {
     
     // get the partition of GFA nodes -> reference contig
     pair<unordered_map<int64_t, int64_t>, vector<string>> partition;
+    unordered_map<string, int64_t> target_to_id;
     if (!rgfa_path.empty()) {
         // compute from minigraph output
         check_ifile(rgfa_path);
         partition = rgfa2contig(rgfa_path);
-    } else {
+    } else if (!input_contig_map_path.empty()) {
         // load table
         check_ifile(input_contig_map_path);
         partition = load_contig_map(input_contig_map_path);
+    } else {
+        // load a paf file int the existing structs (bit of a hack)
+        check_ifile(input_paf_path);
+        ifstream paf_file(input_paf_path);
+        string paf_line;
+        while (getline(paf_file, paf_line)) {
+            vector<string> toks;
+            split_delims(paf_line, "\t\n", toks);
+            if (toks.size() > 5 && !target_to_id.count(toks[5])) {
+                target_to_id[toks[5]] = partition.second.size();
+                partition.second.push_back(toks[5]);
+            }
+        }   
     }
-
+    
     // output the contig map if path given
     if (!output_contig_map_path.empty()) {
         ofstream output_contig_map_file(output_contig_map_path);
@@ -309,7 +318,25 @@ int main(int argc, char** argv) {
     // alongside than can be used to split the fasta with samtools faidx
     if (!input_paf_path.empty()) {
         check_ifile(input_paf_path);
-        paf_split(input_paf_path, partition.first, partition.second, visit_contig, output_prefix, minigraph_prefix,
+        // toggle how we want to handle target names, depending if the PAF comes from minigraph or minimap2
+        function<int64_t(const string&)> name_to_refid;
+        if (!rgfa_path.empty()) {
+            name_to_refid = [&](const string& target_name) {
+                // use the map to go from the target name (rgfa node id in this case) to t
+                // the reference contig (ex chr20)
+                int64_t target_id = node_id(target_name);
+                assert(partition.first.count(target_id));
+                int64_t reference_id = partition.first.at(target_id);
+                return reference_id;
+            };
+        } else {
+            name_to_refid = [&](const string& target_name) {
+                // just use a trivial map expeting the contig names from minimap2
+                assert(target_to_id.count(target_name));
+                return target_to_id[target_name];
+            };
+        }
+        paf_split(input_paf_path, name_to_refid, partition.second, visit_contig, output_prefix, minigraph_prefix,
                   min_query_coverage, min_small_query_coverage, small_coverage_threshold, min_query_uniqueness,
                   ambiguous_id, reference_prefix, query_mask_stats, max_gap);
     }
