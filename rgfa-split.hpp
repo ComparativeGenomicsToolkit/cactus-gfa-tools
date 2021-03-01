@@ -51,7 +51,8 @@ void paf_split(const string& input_paf_path,
                const string& reference_prefix,
                const unordered_map<string, int64_t>& mask_stats,
                int64_t max_gap_as_match,
-               int64_t min_mapq); 
+               int64_t min_mapq,
+               ostream& log_stream); 
 
 /**
  * Use the contigs to split the GFA

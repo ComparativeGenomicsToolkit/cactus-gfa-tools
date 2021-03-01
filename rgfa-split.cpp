@@ -204,7 +204,8 @@ void paf_split(const string& input_paf_path,
                const string& reference_prefix,
                const unordered_map<string, int64_t>& mask_stats,
                int64_t max_gap_as_match,
-               int64_t min_mapq) { 
+               int64_t min_mapq,
+               ostream& log_stream) { 
 
     // first pass, figure out which contig aligns where
     ifstream input_paf_stream(input_paf_path);
@@ -284,19 +285,22 @@ void paf_split(const string& input_paf_path,
             query_coverage.first.substr(0, reference_prefix.length()) == reference_prefix;
         if (!is_ref && (query_coverage_fraction < min_coverage || 
                         (next_coverage > 0 && max_coverage < (double)next_coverage * min_query_uniqueness))) {
-            cerr << "Query contig is ambiguous: " << query_coverage.first 
-                 << "  len=" << query_length << " cov=" << query_coverage_fraction << " (vs " << min_coverage << ") ";
-            if (next_coverage > 0) {
-                cerr << "uf=" << ((double)max_coverage / next_coverage) << " (vs " << min_query_uniqueness << ")";
-                cerr << "\n Reference contig mappings:" << "\n";
-                for (auto& ref_coverage : query_coverage.second) {
-                    cerr << "  " << contigs[ref_coverage.first] << ": " << ref_coverage.second << endl;
-                }
-            } else {
-                cerr << "uf= infinity (vs " << min_query_uniqueness << ")" << endl;
-            }
+            log_stream << "Query contig is ambiguous: ";
             max_id = ambiguous_id;
             assert(max_id >= 0 && max_id < contigs.size());
+        } else {
+            log_stream << "Assigned contig to " << contigs[max_id] << ": ";
+        }
+        log_stream << query_coverage.first 
+                   << "  len=" << query_length << " cov=" << query_coverage_fraction << " (vs " << min_coverage << ") ";
+        if (next_coverage > 0) {
+            log_stream << "uf=" << ((double)max_coverage / next_coverage) << " (vs " << min_query_uniqueness << ")";
+            log_stream << "\n Reference contig mappings:" << "\n";
+            for (auto& ref_coverage : query_coverage.second) {
+                log_stream << "  " << contigs[ref_coverage.first] << ": " << ref_coverage.second << endl;
+            }
+        } else {
+            log_stream << "uf= infinity (vs " << min_query_uniqueness << ")" << endl;
         }
         query_ref_map[query_coverage.first] = max_id;
     }

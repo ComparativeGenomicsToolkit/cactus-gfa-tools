@@ -37,7 +37,8 @@ void help(char** argv) {
        << "    -P, --max-gap N                         Count cigar gaps of length <= N towards coverage" << endl
        << "    -a, --ambiguous-name NAME               All query contigs that do not meet min coverage (-n) assigned to single reference with name NAME" << endl
        << "    -A, --min-mapq N                        Don't count PAF lines with MAPQ<N towards coverage" << endl
-       << "    -r, --reference-prefix PREFIX           Don't apply ambiguity filters to query contigs with this prefix" << endl;
+       << "    -r, --reference-prefix PREFIX           Don't apply ambiguity filters to query contigs with this prefix" << endl
+       << "    -L, --log FILE                          Keep track of filtered and assigned contigs in given file [stderr]" << endl;
 }    
 
 int main(int argc, char** argv) {
@@ -70,6 +71,7 @@ int main(int argc, char** argv) {
     string ambiguous_name;
     string reference_prefix;
     int64_t min_mapq = 0;
+    string log_path;
     
     int c;
     optind = 1; 
@@ -97,12 +99,13 @@ int main(int argc, char** argv) {
             {"ambiguous-name", required_argument, 0, 'a'},
             {"min-mapq", required_argument, 0, 'A'},
             {"reference-prefix", required_argument, 0, 'r'},
+            {"log", required_argument, 0, 'L'},
             {0, 0, 0, 0}
         };
 
         int option_index = 0;
 
-        c = getopt_long (argc, argv, "hg:m:p:B:b:M:i:Gq:c:C:o:n:N:T:Q:P:a:A:r:",
+        c = getopt_long (argc, argv, "hg:m:p:B:b:M:i:Gq:c:C:o:n:N:T:Q:P:a:A:r:L:",
                          long_options, &option_index);
 
         // Detect the end of the options.
@@ -171,6 +174,9 @@ int main(int argc, char** argv) {
         case 'r':
             reference_prefix = optarg;
             break;
+        case 'L':
+            log_path = optarg;
+            break;
         case 'h':
         case '?':
             /* getopt_long already printed an error message. */
@@ -222,6 +228,16 @@ int main(int argc, char** argv) {
         cerr << "[rgfa-split] error: When using -T, --min-small-query-coverage (-N) must be >= --min-query-coverage (-n)" << endl;
         return 1;
     }
+
+    ofstream log_fstream;
+    if (!log_path.empty()) {
+        log_fstream.open(log_path);
+        if (!log_fstream) {
+            cerr << "[rgfa-split] error: Cannot open log file " << log_path << endl;
+            return 1;
+        }
+    }
+    ostream& log_stream = !log_path.empty() ? log_fstream : cerr;
 
     function<void(const string&)> check_ifile = [&](const string& path) {
         ifstream in_stream(path);
@@ -344,7 +360,7 @@ int main(int argc, char** argv) {
         }
         paf_split(input_paf_path, name_to_refid, partition.second, visit_contig, output_prefix, minigraph_prefix,
                   min_query_coverage, min_small_query_coverage, small_coverage_threshold, min_query_uniqueness,
-                  ambiguous_id, reference_prefix, query_mask_stats, max_gap, min_mapq);
+                  ambiguous_id, reference_prefix, query_mask_stats, max_gap, min_mapq, log_stream);
     }
 
     // split the gfa
