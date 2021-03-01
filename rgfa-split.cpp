@@ -195,7 +195,6 @@ void paf_split(const string& input_paf_path,
                const vector<string>& contigs,
                function<bool(const string&)> visit_contig,
                const string& output_prefix,
-               const string& minigraph_prefix,
                double min_query_coverage,
                double min_small_query_coverage,
                int64_t small_coverage_threshold,
@@ -410,7 +409,7 @@ void paf_split(const string& input_paf_path,
                 }
                 prev_ref_contig_id = reference_contig_id;
             }
-            out_contigs_stream << minigraph_prefix << target_name << endl;
+            out_contigs_stream << target_name << endl;
         }
     }
 }

@@ -22,7 +22,6 @@ void help(char** argv) {
        << "output options: " << endl 
        << "    -b, --output-prefix PREFIX              All output files will be of the form <PREFIX><contig>.paf/.fa_contigs" << endl
        << "    -M, --output-contig-map FILE            Output rgfa node -> contig map to this file" << endl
-       << "    -i, --minigraph-prefix PREFIX           Prepend prefix to minigraph node ids in .fa_contigs files" << endl
        << "    -G, --split-gfa                         Split the input GFA too and output <PREFIX><config>.gfa files" << endl
        << "contig selection options: " << endl
        << "    -q, --contig-prefix PREFIX              Only process contigs beginning with PREFIX" << endl
@@ -52,7 +51,6 @@ int main(int argc, char** argv) {
     // output
     string output_prefix;
     string output_contig_map_path;
-    string minigraph_prefix;
     bool split_gfa = false;
 
     // contig selection
@@ -85,7 +83,6 @@ int main(int argc, char** argv) {
             {"bed", required_argument, 0, 'B'},
             {"output-prefix", required_argument, 0, 'b'},
             {"output-contig-map", required_argument, 0, 'M'},
-            {"minigraph-prefix", required_argument, 0, 'i'},
             {"split-gfa", no_argument, 0, 'G'},
             {"contig-prefix", required_argument, 0, 'q'},
             {"contig-name", required_argument, 0, 'c'},
@@ -105,7 +102,7 @@ int main(int argc, char** argv) {
 
         int option_index = 0;
 
-        c = getopt_long (argc, argv, "hg:m:p:B:b:M:i:Gq:c:C:o:n:N:T:Q:P:a:A:r:L:",
+        c = getopt_long (argc, argv, "hg:m:p:B:b:M:Gq:c:C:o:n:N:T:Q:P:a:A:r:L:",
                          long_options, &option_index);
 
         // Detect the end of the options.
@@ -131,9 +128,6 @@ int main(int argc, char** argv) {
             break;
         case 'M':
             output_contig_map_path = optarg;
-            break;
-        case 'i':
-            minigraph_prefix = optarg;
             break;
         case 'G':
             split_gfa = true;
@@ -358,7 +352,7 @@ int main(int argc, char** argv) {
                 return target_to_id[target_name];
             };
         }
-        paf_split(input_paf_path, name_to_refid, partition.second, visit_contig, output_prefix, minigraph_prefix,
+        paf_split(input_paf_path, name_to_refid, partition.second, visit_contig, output_prefix,
                   min_query_coverage, min_small_query_coverage, small_coverage_threshold, min_query_uniqueness,
                   ambiguous_id, reference_prefix, query_mask_stats, max_gap, min_mapq, log_stream);
     }
