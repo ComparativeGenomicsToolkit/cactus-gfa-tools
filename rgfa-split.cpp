@@ -203,7 +203,8 @@ void paf_split(const string& input_paf_path,
                int64_t ambiguous_id,
                const string& reference_prefix,
                const unordered_map<string, int64_t>& mask_stats,
-               int64_t max_gap_as_match) { 
+               int64_t max_gap_as_match,
+               int64_t min_mapq) { 
 
     // first pass, figure out which contig aligns where
     ifstream input_paf_stream(input_paf_path);
@@ -224,7 +225,8 @@ void paf_split(const string& input_paf_path,
         int64_t query_length = stol(toks[1]);
         string& target_name = toks[5];
         int64_t matching_bases = stol(toks[9]);
-        
+        int64_t mapq = stol(toks[11]);
+
         // use the map to go from the target name (rgfa node id in this case) to t
         // the reference contig (ex chr20)
         int64_t reference_id = name_to_refid(target_name);
@@ -232,11 +234,13 @@ void paf_split(const string& input_paf_path,
         // also count tiny indels between matches
         int64_t small_gap_bases = count_small_gap_bases(toks, max_gap_as_match);
 
+        // zero out the coverage if mapq too small
+        int64_t effective_coverage = mapq >= min_mapq ? matching_bases + small_gap_bases : 0;
+            
         // add the coverage of this reference contig to this query contig
         // note: important to use matching_bases here instead of just the query interval
         //       to account for softclips which can have a big impact
-        coverage_map[query_name][reference_id] += matching_bases + small_gap_bases;
-
+        coverage_map[query_name][reference_id] += effective_coverage;
 
         // store the query length (todo: we could save a few bytes by
         // sticking it in the coverage map somewhere)
