@@ -38,11 +38,10 @@ void set_other_contig(unordered_map<int64_t, int64_t>& contig_map,
  * Use contigs identified above to split PAF
  */
 void paf_split(const string& input_paf_path,
-               const unordered_map<int64_t, int64_t>& contig_map,
+               function<int64_t(const string&)> name_to_refid,
                const vector<string>& contigs,
                function<bool(const string&)> visit_contig,
                const string& output_prefix,
-               const string& minigraph_prefix, // this is the cactus unique id prefix (ex id=0|)
                double min_query_coverage,
                double min_small_query_coverage,
                int64_t small_coverage_threshold,
@@ -50,7 +49,9 @@ void paf_split(const string& input_paf_path,
                int64_t ambiguous_id,
                const string& reference_prefix,
                const unordered_map<string, int64_t>& mask_stats,
-               int64_t max_gap_as_match); 
+               int64_t max_gap_as_match,
+               int64_t min_mapq,
+               ostream& log_stream); 
 
 /**
  * Use the contigs to split the GFA
