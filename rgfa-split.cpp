@@ -210,7 +210,7 @@ void paf_split(const string& input_paf_path,
     ifstream input_paf_stream(input_paf_path);
 
     // map query_contig to [reference_contig -> coverage]
-    unordered_map<string, map<int64_t, int64_t>> coverage_map;
+    unordered_map<string, map<int64_t, vector<CoverageInterval>>> coverage_map;
     
     // keep track of query lengths
     unordered_map<string, int64_t> query_lengths;
@@ -240,7 +240,7 @@ void paf_split(const string& input_paf_path,
         // add the coverage of this reference contig to this query contig
         // note: important to use matching_bases here instead of just the query interval
         //       to account for softclips which can have a big impact
-        coverage_map[query_name][reference_id] += effective_coverage;
+        coverage_map[query_name][reference_id].emplace_back(stol(toks[2]), stol(toks[3]), effective_coverage);
 
         // store the query length (todo: we could save a few bytes by
         // sticking it in the coverage map somewhere)
@@ -254,13 +254,29 @@ void paf_split(const string& input_paf_path,
         int64_t max_id;
         int64_t next_coverage = 0;
         int64_t next_id;
+
+        // merge up the coverage intervals
+        for (auto& ref_coverage : query_coverage.second) {
+            auto intervals = ref_coverage.second;
+            CoverageIntervalTree coverage_intervals(intervals);
+            vector<CoverageInterval> merged_intervals;
+            scan_coverage_intervals(coverage_intervals, max_gap_as_match, [&](int64_t s, int64_t e, int64_t v) {
+                    merged_intervals.emplace_back(s, e, v);
+                });
+            ref_coverage.second = std::move(merged_intervals);
+        }
+        
         // find the highest coverage
         for (auto& ref_coverage : query_coverage.second) {
-            if (ref_coverage.second > max_coverage) {
+            int64_t total_ref_coverage = 0;
+            for (auto& interval : ref_coverage.second) {
+                total_ref_coverage += interval.value;
+            }
+            if (total_ref_coverage > max_coverage) {
                 next_coverage = max_coverage;
                 next_id = max_id;
                 max_id = ref_coverage.first;
-                max_coverage = ref_coverage.second;
+                max_coverage = total_ref_coverage;
             }
         }
         // check if it's good enough
@@ -296,7 +312,11 @@ void paf_split(const string& input_paf_path,
             log_stream << "uf=" << ((double)max_coverage / next_coverage) << " (vs " << min_query_uniqueness << ")";
             log_stream << "\n Reference contig mappings:" << "\n";
             for (auto& ref_coverage : query_coverage.second) {
-                log_stream << "  " << contigs[ref_coverage.first] << ": " << ref_coverage.second << endl;
+                int64_t total_ref_coverage = 0;
+                for (auto& interval : ref_coverage.second) {
+                    total_ref_coverage += interval.value;
+                }            
+                log_stream << "  " << contigs[ref_coverage.first] << ": " << total_ref_coverage << endl;
             }
         } else {
             log_stream << "uf= infinity (vs " << min_query_uniqueness << ")" << endl;
@@ -499,4 +519,41 @@ int64_t count_small_gap_bases(const vector<string>& toks, int64_t max_gap_as_mat
     }
 
     return total_gap;
+}
+
+void scan_coverage_intervals(CoverageIntervalTree& intervals, int64_t padding, function<void(int64_t, int64_t, int64_t)> fn) {
+    unordered_set<const CoverageInterval*> visited;
+    // go through every interval, and all its overlaps once
+    intervals.visit_all([&](const CoverageInterval& interval) {
+            if (!visited.count(&interval)) {
+                // collect a set of all overlapping intervals (taking into account padding)
+                // and mark them all as visited
+                visited.insert(&interval);
+                vector<const CoverageInterval*> overlaps = {&interval};
+                int64_t idx_to_search = 0;
+                // loop here to collect all transitive overlaps
+                while (idx_to_search < overlaps.size()) {
+                    const CoverageInterval* to_search = overlaps[idx_to_search++];
+                    intervals.visit_overlapping(to_search->start - padding, to_search->stop + padding, [&](const CoverageInterval& overlapping_interval) {
+                            if (!visited.count(&overlapping_interval)) {
+                                overlaps.push_back(&overlapping_interval);
+                                visited.insert(&overlapping_interval);
+                            }
+                        });
+                }
+                // merge up the set, using weighted average to determine a rough approximation of the merged coverage
+                size_t total_coverage_numerator = 0;
+                size_t total_coverage_denominator = 0;
+                int64_t start = numeric_limits<int64_t>::max();
+                int64_t end = -1;
+                for (auto& overlap_interval : overlaps) {
+                    start = std::min(start, overlap_interval->start);
+                    end = std::max(end, overlap_interval->stop);
+                    total_coverage_numerator += overlap_interval->value;
+                    total_coverage_denominator += overlap_interval->stop - overlap_interval->start + 1;
+                }
+                double coverage_density = (double)total_coverage_numerator / (double)total_coverage_denominator;
+                fn(start, end, (end - start + 1) * coverage_density);
+            }
+        });
 }

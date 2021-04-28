@@ -7,6 +7,7 @@
 #include <vector>
 #include <unordered_map>
 #include <functional>
+#include "IntervalTree.h"
 
 using namespace std;
 
@@ -75,4 +76,12 @@ inline int64_t node_id(const string& rgfa_id) {
  * Count up bases of small indels bookended by matches, which we will apply to the coverage
  */
 int64_t count_small_gap_bases(const vector<string>& toks, int64_t max_gap_as_match);
+
+/**
+ * Keep track of PAF coverage by remembering intervals (generalizes previous logic that
+ * just counted bases 
+ */
+typedef IntervalTree<int64_t, int64_t> CoverageIntervalTree;
+typedef CoverageIntervalTree::interval CoverageInterval;
+void scan_coverage_intervals(CoverageIntervalTree& intervals, int64_t padding, function<void(int64_t, int64_t, int64_t)> fn);
 
