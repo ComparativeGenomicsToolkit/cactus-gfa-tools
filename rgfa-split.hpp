@@ -84,7 +84,7 @@ int64_t count_small_gap_bases(const vector<string>& toks, int64_t max_gap_as_mat
  */
 typedef IntervalTree<int64_t, int64_t> CoverageIntervalTree;
 typedef CoverageIntervalTree::interval CoverageInterval;
-void scan_coverage_intervals(CoverageIntervalTree& intervals, int64_t padding, function<void(int64_t, int64_t, int64_t)> fn);
+void scan_coverage_intervals(CoverageIntervalTree& interval_tree, int64_t padding, function<void(int64_t, int64_t, int64_t)> fn);
 
 
 /**

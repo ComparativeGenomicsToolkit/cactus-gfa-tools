@@ -346,8 +346,35 @@ void paf_split(const string& input_paf_path,
                     }
                 }
             }
-            // todo: must check for and resolve query overlaps in the intervals (should not be many, but still possible)
             CoverageIntervalTree interval_tree(intervals);
+            // we can have overlapping query intervals that map to separate chromosomes.  rather than go through
+            // the rabbit hole of chopping them up to enforce constency, we just drop all but the biggest.
+            vector<CoverageInterval> non_overlapping_intervals;
+            interval_tree.visit_all([&](const CoverageInterval& interval) {
+                    cerr << "Visit " << interval << endl;
+                    vector<CoverageInterval> overlaps = interval_tree.findOverlapping(interval.start, interval.stop);
+                    if (overlaps.size() >= 0) {
+                        cerr << "found " << overlaps.size() << " overlaps for " << interval << endl;
+                    }
+                    bool keep = true;
+                    for (CoverageInterval& overlap : overlaps) {
+                        if (overlap.stop - overlap.start > interval.stop - interval.start) {
+                            cerr << "Dropping PAF line as it overlaps larger query range that maps to different contig: "
+                                 << query_coverage.first << "\t" << interval.start << "\t" << (interval.stop + 1) << "\t"
+                                 << contigs[interval.value] << endl;                        
+                            keep = false;
+                            break;
+                        }
+                    }
+                    if (keep) {
+                        non_overlapping_intervals.push_back(interval);
+                    }
+                    
+                });
+        
+            if (non_overlapping_intervals.size() < intervals.size()) {
+                interval_tree = CoverageIntervalTree(non_overlapping_intervals);
+            }
             query_ref_map[query_coverage.first] = interval_tree;
         }
         // add in complement intervals as ambiguous
@@ -421,6 +448,13 @@ void paf_split(const string& input_paf_path,
         assert(query_ref_map.count(query_name));
         CoverageIntervalTree& intervals = query_ref_map.at(query_name);
         vector<CoverageInterval> overlaps = intervals.findOverlapping(query_start, query_end - 1);
+
+        if (overlaps.size() > 1) {
+            // the only way for this to happen is if the paf line corresponds to a query overlap that gets
+            // filtered out.  all we can do is erase it, as even putting it in the ambiguous pile can cause
+            // trouble later on
+            continue;
+        }
         assert(overlaps.size() == 1);
         int64_t reference_id = overlaps[0].value;
         const string& reference_contig = contigs[reference_id];
@@ -595,10 +629,10 @@ int64_t count_small_gap_bases(const vector<string>& toks, int64_t max_gap_as_mat
     return total_gap;
 }
 
-void scan_coverage_intervals(CoverageIntervalTree& intervals, int64_t padding, function<void(int64_t, int64_t, int64_t)> fn) {
+void scan_coverage_intervals(CoverageIntervalTree& interval_tree, int64_t padding, function<void(int64_t, int64_t, int64_t)> fn) {
     unordered_set<const CoverageInterval*> visited;
     // go through every interval, and all its overlaps once
-    intervals.visit_all([&](const CoverageInterval& interval) {
+    interval_tree.visit_all([&](const CoverageInterval& interval) {
             if (!visited.count(&interval)) {
                 // collect a set of all overlapping intervals (taking into account padding)
                 // and mark them all as visited
@@ -608,7 +642,7 @@ void scan_coverage_intervals(CoverageIntervalTree& intervals, int64_t padding, f
                 // loop here to collect all transitive overlaps
                 while (idx_to_search < overlaps.size()) {
                     const CoverageInterval* to_search = overlaps[idx_to_search++];
-                    intervals.visit_overlapping(to_search->start - padding, to_search->stop + padding, [&](const CoverageInterval& overlapping_interval) {
+                    interval_tree.visit_overlapping(to_search->start - padding, to_search->stop + padding, [&](const CoverageInterval& overlapping_interval) {
                             if (!visited.count(&overlapping_interval)) {
                                 overlaps.push_back(&overlapping_interval);
                                 visited.insert(&overlapping_interval);
