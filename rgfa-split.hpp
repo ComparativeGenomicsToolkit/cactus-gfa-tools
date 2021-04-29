@@ -47,6 +47,7 @@ void paf_split(const string& input_paf_path,
                double min_small_query_coverage,
                int64_t small_coverage_threshold,
                double min_query_uniqueness,
+               int64_t min_query_chunk,
                int64_t ambiguous_id,
                const string& reference_prefix,
                const unordered_map<string, int64_t>& mask_stats,
@@ -85,3 +86,22 @@ typedef IntervalTree<int64_t, int64_t> CoverageIntervalTree;
 typedef CoverageIntervalTree::interval CoverageInterval;
 void scan_coverage_intervals(CoverageIntervalTree& intervals, int64_t padding, function<void(int64_t, int64_t, int64_t)> fn);
 
+
+/**
+ * Rename the query contig to a sub-fragment in order to reflect the fact that it will be cut in the output
+ */
+void apply_paf_query_offsets(vector<string>& paf_toks, int64_t query_fragment_start, int64_t query_fragment_end); 
+
+
+// TODO: make consisten with vg's naming scheme (requires change in grpahmap-split that would postprocess faidx output)
+
+/**
+ * Turn chr1:10-100 into <"chr1", 9, 99>
+ */
+tuple<string, int64_t, int64_t>  parse_faidx_subpath(const string& name);
+
+
+/**
+ * Turn <"chr1", 9, 99> into chr1:10-100
+ */
+string make_faidx_subpath(const string& name, int64_t start, int64_t end);

@@ -5,6 +5,8 @@
 #include "gfakluge.hpp"
 #include "pafcoverage.hpp"
 
+//#define debug 1
+
 /*
 
 sort nodes by rank (ascending)
@@ -199,6 +201,7 @@ void paf_split(const string& input_paf_path,
                double min_small_query_coverage,
                int64_t small_coverage_threshold,
                double min_query_uniqueness,
+               int64_t min_query_chunk,               
                int64_t ambiguous_id,
                const string& reference_prefix,
                const unordered_map<string, int64_t>& mask_stats,
@@ -240,22 +243,15 @@ void paf_split(const string& input_paf_path,
         // add the coverage of this reference contig to this query contig
         // note: important to use matching_bases here instead of just the query interval
         //       to account for softclips which can have a big impact
-        coverage_map[query_name][reference_id].emplace_back(stol(toks[2]), stol(toks[3]), effective_coverage);
+        coverage_map[query_name][reference_id].emplace_back(stol(toks[2]), stol(toks[3]) - 1, effective_coverage);
 
         // store the query length (todo: we could save a few bytes by
         // sticking it in the coverage map somewhere)
         query_lengths[query_name] = query_length;
     }
 
-    // use the coverage map to decide a unique mapping for each query
-    unordered_map<string, int64_t> query_ref_map;
+    // merge the coverage intervals
     for (auto& query_coverage : coverage_map) {
-        int64_t max_coverage = 0;
-        int64_t max_id;
-        int64_t next_coverage = 0;
-        int64_t next_id;
-
-        // merge up the coverage intervals
         for (auto& ref_coverage : query_coverage.second) {
             auto intervals = ref_coverage.second;
             CoverageIntervalTree coverage_intervals(intervals);
@@ -265,63 +261,129 @@ void paf_split(const string& input_paf_path,
                 });
             ref_coverage.second = std::move(merged_intervals);
         }
+    }
+    
+    // use the coverage map to decide a unique mapping for each query
+    // (if min_query_chunk is set, this is generalized to chunks of the query)
+    unordered_map<string, CoverageIntervalTree> query_ref_map;
+
+    if (min_query_chunk <= 0) {
+        // this is the "old" way where the entire query contig is mapped to a single reference
+        for (auto& query_coverage : coverage_map) {
+            int64_t max_coverage = 0;
+            int64_t max_id;
+            int64_t next_coverage = 0;
+            int64_t next_id;
         
-        // find the highest coverage
-        for (auto& ref_coverage : query_coverage.second) {
-            int64_t total_ref_coverage = 0;
-            for (auto& interval : ref_coverage.second) {
-                total_ref_coverage += interval.value;
-            }
-            if (total_ref_coverage > max_coverage) {
-                next_coverage = max_coverage;
-                next_id = max_id;
-                max_id = ref_coverage.first;
-                max_coverage = total_ref_coverage;
-            }
-        }
-        // check if it's good enough
-        int64_t query_length = query_lengths[query_coverage.first];
-        if (mask_stats.count(query_coverage.first)) {
-            // factor in the masking stats by subtracting from denominator
-            int64_t masked_bases = mask_stats.at(query_coverage.first);
-            assert(masked_bases <= query_length);
-            // avoid degenerate cases by making sure at least half of query contig is unmasked
-            // before applying correction
-            if (masked_bases < query_length / 2) {
-                query_length -= masked_bases;
-            }
-        }
-        double query_coverage_fraction = (double)max_coverage / query_length;
-        double min_coverage = min_query_coverage;
-        if (small_coverage_threshold > 0 && query_length < small_coverage_threshold) {
-            min_coverage = min_small_query_coverage;
-        }
-        bool is_ref = !reference_prefix.empty() &&
-            query_coverage.first.substr(0, reference_prefix.length()) == reference_prefix;
-        if (!is_ref && (query_coverage_fraction < min_coverage || 
-                        (next_coverage > 0 && max_coverage < (double)next_coverage * min_query_uniqueness))) {
-            log_stream << "Query contig is ambiguous: ";
-            max_id = ambiguous_id;
-            assert(max_id >= 0 && max_id < contigs.size());
-        } else {
-            log_stream << "Assigned contig to " << contigs[max_id] << ": ";
-        }
-        log_stream << query_coverage.first 
-                   << "  len=" << query_length << " cov=" << query_coverage_fraction << " (vs " << min_coverage << ") ";
-        if (next_coverage > 0) {
-            log_stream << "uf=" << ((double)max_coverage / next_coverage) << " (vs " << min_query_uniqueness << ")";
-            log_stream << "\n Reference contig mappings:" << "\n";
+            // find the highest coverage
             for (auto& ref_coverage : query_coverage.second) {
                 int64_t total_ref_coverage = 0;
                 for (auto& interval : ref_coverage.second) {
                     total_ref_coverage += interval.value;
-                }            
-                log_stream << "  " << contigs[ref_coverage.first] << ": " << total_ref_coverage << endl;
+                }
+                if (total_ref_coverage > max_coverage) {
+                    next_coverage = max_coverage;
+                    next_id = max_id;
+                    max_id = ref_coverage.first;
+                    max_coverage = total_ref_coverage;
+                }
             }
-        } else {
-            log_stream << "uf= infinity (vs " << min_query_uniqueness << ")" << endl;
+            // check if it's good enough
+            int64_t query_length = query_lengths[query_coverage.first];
+            if (mask_stats.count(query_coverage.first)) {
+                // factor in the masking stats by subtracting from denominator
+                int64_t masked_bases = mask_stats.at(query_coverage.first);
+                assert(masked_bases <= query_length);
+                // avoid degenerate cases by making sure at least half of query contig is unmasked
+                // before applying correction
+                if (masked_bases < query_length / 2) {
+                    query_length -= masked_bases;
+                }
+            }
+            double query_coverage_fraction = (double)max_coverage / query_length;
+            double min_coverage = min_query_coverage;
+            if (small_coverage_threshold > 0 && query_length < small_coverage_threshold) {
+                min_coverage = min_small_query_coverage;
+            }
+            bool is_ref = !reference_prefix.empty() &&
+                query_coverage.first.substr(0, reference_prefix.length()) == reference_prefix;
+            if (!is_ref && (query_coverage_fraction < min_coverage || 
+                            (next_coverage > 0 && max_coverage < (double)next_coverage * min_query_uniqueness))) {
+                log_stream << "Query contig is ambiguous: ";
+                max_id = ambiguous_id;
+                assert(max_id >= 0 && max_id < contigs.size());
+            } else {
+                log_stream << "Assigned contig to " << contigs[max_id] << ": ";
+            }
+            log_stream << query_coverage.first 
+                       << "  len=" << query_length << " cov=" << query_coverage_fraction << " (vs " << min_coverage << ") ";
+            if (next_coverage > 0) {
+                log_stream << "uf=" << ((double)max_coverage / next_coverage) << " (vs " << min_query_uniqueness << ")";
+                log_stream << "\n Reference contig mappings:" << "\n";
+                for (auto& ref_coverage : query_coverage.second) {
+                    int64_t total_ref_coverage = 0;
+                    for (auto& interval : ref_coverage.second) {
+                        total_ref_coverage += interval.value;
+                    }            
+                    log_stream << "  " << contigs[ref_coverage.first] << ": " << total_ref_coverage << endl;
+                }
+            } else {
+                log_stream << "uf= infinity (vs " << min_query_uniqueness << ")" << endl;
+            }
+            vector<CoverageInterval> intervals;
+            intervals.emplace_back(0, query_lengths[query_coverage.first], max_id);
+            CoverageIntervalTree interval_tree(intervals);
+            query_ref_map[query_coverage.first] = interval_tree;
         }
-        query_ref_map[query_coverage.first] = max_id;
+    } else {
+        // just map query ranges exceeding chunk size to which ever reference contig they are aligned to
+        for (auto& query_coverage : coverage_map) {
+            vector<CoverageInterval> intervals;
+            for (auto& ref_coverage : query_coverage.second) {
+                for (auto& interval : ref_coverage.second) {
+                    if (interval.stop - interval.start + 1 >= min_query_chunk) {
+                        intervals.emplace_back(interval.start, interval.stop, ref_coverage.first);
+                    }
+                }
+            }
+            // todo: must check for and resolve query overlaps in the intervals (should not be many, but still possible)
+            CoverageIntervalTree interval_tree(intervals);
+            query_ref_map[query_coverage.first] = interval_tree;
+        }
+        // add in complement intervals as ambiguous
+        for (auto& query_ref : query_ref_map) {
+            int64_t query_len = query_lengths[query_ref.first];
+            // todo: make better
+            vector<bool> covered(query_len, false);
+            vector<CoverageInterval> intervals;
+            query_ref.second.visit_all([&](const CoverageInterval& interval) {
+                    for (int64_t p = interval.start; p <= interval.stop; ++p) {
+                        covered[p] = true;
+                    }
+                    intervals.push_back(interval);
+                });
+            size_t intervals_size = intervals.size();
+            int64_t start = -1;
+            for (int64_t i = 0; i < covered.size(); ++i) {
+                if (!covered[i] && start == -1) {
+                    start = i;
+                } else if ((covered[i] || i == covered.size() -1) && start >=0) {
+                    int64_t stop = covered[i] ? i - 1: i;
+                    intervals.emplace_back(start, stop, ambiguous_id);
+                    start = -1;
+                }
+            }
+            if (intervals.size() > intervals_size) {
+                query_ref.second = CoverageIntervalTree(intervals);
+            }
+#ifdef debug
+            cerr << "intervals for " << query_ref.first << endl;
+            query_ref.second.visit_all([&](const CoverageInterval& interval) {
+                    cerr << " " << interval << endl;
+                });
+            cerr << "." << endl;
+#endif
+        }        
     }
     
     coverage_map.clear();
@@ -347,6 +409,8 @@ void paf_split(const string& input_paf_path,
 
         // parse the paf columns
         string& query_name = toks[0];
+        int64_t query_start = stol(toks[2]);
+        int64_t query_end = stol(toks[3]);
         string& target_name = toks[5];
         target_set.insert(target_name);
 
@@ -355,7 +419,10 @@ void paf_split(const string& input_paf_path,
         int64_t target_reference_id = name_to_refid(target_name);
 
         assert(query_ref_map.count(query_name));
-        int64_t reference_id = query_ref_map.at(query_name);
+        CoverageIntervalTree& intervals = query_ref_map.at(query_name);
+        vector<CoverageInterval> overlaps = intervals.findOverlapping(query_start, query_end - 1);
+        assert(overlaps.size() == 1);
+        int64_t reference_id = overlaps[0].value;
         const string& reference_contig = contigs[reference_id];
 
         // do both the query and reference sequences fall in the same chromosome, and we wnat to visit that
@@ -372,7 +439,14 @@ void paf_split(const string& input_paf_path,
                     exit(1);
                 }
             }
-            *out_paf_stream << paf_line << "\n";
+            apply_paf_query_offsets(toks, overlaps[0].start, overlaps[0].stop);
+            for (size_t i = 0; i < toks.size(); ++i) {
+                if (i > 0) {
+                    *out_paf_stream << "\t";
+                }
+                *out_paf_stream << toks[i];
+            }
+            *out_paf_stream << "\n";
             // remember this query contig for future fasta splitting
             query_map[reference_id].insert(query_name);
         } 
@@ -556,4 +630,63 @@ void scan_coverage_intervals(CoverageIntervalTree& intervals, int64_t padding, f
                 fn(start, end, (end - start + 1) * coverage_density);
             }
         });
+}
+
+
+void apply_paf_query_offsets(vector<string>& paf_toks, int64_t query_fragment_start, int64_t query_fragment_end) {
+
+    int64_t query_length = stol(paf_toks[1]);
+
+    if (query_fragment_end - query_fragment_end + 1 == query_length) {
+        assert(query_fragment_start == 0);
+        // nothing to do, as the fragment spans the entire query sequence
+        return;
+    }
+
+    int64_t query_start = stol(paf_toks[2]);
+    // note, paf coordinates are 0-based end exclusive, but internally we're always using
+    // 0-based inclusive.  
+    int64_t query_end = stol(paf_toks[3]);
+
+    tuple<string, int64_t, int64_t> parsed_query_name = parse_faidx_subpath(paf_toks[0]);
+    string& query_name = get<0>(parsed_query_name);
+
+    // apply adjustments to convert back to coordinates on the original contig
+    if (get<1>(parsed_query_name) > 0) {
+        query_start += get<1>(parsed_query_name);
+        query_end += get<1>(parsed_query_name);
+    }
+
+    assert(query_fragment_start <= query_start && query_fragment_end >= query_end - 1);
+
+    int64_t delta = query_fragment_start;
+    int64_t adjusted_query_start = query_start - delta;
+    int64_t adjusted_query_end = query_end - delta;
+
+    paf_toks[0] = make_faidx_subpath(query_name, query_fragment_start, query_fragment_end);
+    paf_toks[1] = to_string(query_fragment_end - query_fragment_start + 1);
+    paf_toks[2] = to_string(adjusted_query_start);
+    paf_toks[3] = to_string(adjusted_query_end + 1);
+}
+
+// todo: harmonize with vg::Paths::parse_subpath_name
+tuple<string, int64_t, int64_t>  parse_faidx_subpath(const string& name) {
+    size_t tag_offset = name.rfind(":");
+    if (tag_offset == string::npos) {
+        return make_tuple(name, 0, -1);
+    } else {
+        string offset_str = name.substr(tag_offset + 1, name.length() - tag_offset - 2);
+        size_t sep_offset = offset_str.find("-");
+        assert(sep_offset != string::npos && sep_offset > 0);
+        int64_t start_val = stol(offset_str.substr(0, sep_offset)) - 1;
+        int64_t end_val = stol(offset_str.substr(sep_offset + 1)) - 1;
+        return make_tuple(name.substr(0, tag_offset), start_val, end_val);
+    }
+}
+
+// todo: harmonize with vg::Paths::make_subpath_name
+string make_faidx_subpath(const string& name, int64_t start, int64_t end) {
+    stringstream ss;
+    ss << name << ":" << (start + 1) << "-" << (end + 1);
+    return ss.str();    
 }
