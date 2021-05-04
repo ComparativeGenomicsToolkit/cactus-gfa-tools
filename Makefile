@@ -35,7 +35,7 @@ CXXFLAGS := -O3 -Werror=return-type -std=c++14 -ggdb -g -MMD -MP $(PARALLEL_FLAG
 LIB_FLAGS = $(LIBS)
 INC_FLAGS = -I$(CWD)
 
-all: mzgaf2paf pafcoverage rgfa-split paf2lastz rgfa2paf
+all: mzgaf2paf pafcoverage rgfa-split paf2lastz rgfa2paf pafmask
 
 mzgaf2paf: mzgaf2paf.o mzgaf2paf_main.o
 	$(CXX) $(INCLUDE_FLAGS) $(CXXFLAGS) $(CPPFLAGS) -o mzgaf2paf mzgaf2paf_main.o mzgaf2paf.o $(LIB_FLAGS)
@@ -79,6 +79,10 @@ rgfa2paf_main.o: rgfa2paf_main.cpp gfakluge.hpp pafcoverage.hpp
 rgfa2paf: rgfa2paf_main.o pafcoverage.o
 	$(CXX) $(INCLUDE_FLAGS) $(CXXFLAGS) $(CPPFLAGS) -o rgfa2paf rgfa2paf_main.o pafcoverage.o
 
+pafmask: pafmask_main.cpp rgfa-split.o pafcoverage.o
+	$(CXX) $(INCLUDE_FLAGS) $(CXXFLAGS) $(CPPFLAGS) -c pafmask_main.cpp $(INC_FLAGS)
+	$(CXX) $(INCLUDE_FLAGS) $(CXXFLAGS) $(CPPFLAGS) -o pafmask pafmask_main.o pafcoverage.o rgfa-split.o
+
 test : mzgaf2paf paf2lastz_test
 	cd test && prove -v test.t
 
@@ -96,4 +100,4 @@ scoreTest:
 	echo "OK"
 
 clean:
-	rm -rf mzgaf2paf main.o mzgaf2paf.o pafcoverage pafcoverage.o pafcoverage_main.o rgfa-split rgfa-split.o rgfa-split_main.o paf2lastz paf2lastz_main.o paf2lastz.o
+	rm -rf mzgaf2paf main.o mzgaf2paf.o pafcoverage pafcoverage.o pafcoverage_main.o rgfa-split rgfa-split.o rgfa-split_main.o paf2lastz paf2lastz_main.o paf2lastz.o pafmask pafmask_main.o
