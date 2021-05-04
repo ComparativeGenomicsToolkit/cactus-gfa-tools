@@ -201,13 +201,14 @@ void paf_split(const string& input_paf_path,
                double min_small_query_coverage,
                int64_t small_coverage_threshold,
                double min_query_uniqueness,
-               int64_t min_query_chunk,               
+               int64_t min_query_chunk,
+               bool allow_softclip,
                int64_t ambiguous_id,
                const string& reference_prefix,
                const unordered_map<string, int64_t>& mask_stats,
                int64_t max_gap_as_match,
                int64_t min_mapq,
-               ostream& log_stream) { 
+               ostream& log_stream) {
 
     // first pass, figure out which contig aligns where
     ifstream input_paf_stream(input_paf_path);
@@ -243,7 +244,7 @@ void paf_split(const string& input_paf_path,
         // add the coverage of this reference contig to this query contig
         // note: important to use matching_bases here instead of just the query interval
         //       to account for softclips which can have a big impact
-        coverage_map[query_name][reference_id].emplace_back(stol(toks[2]), stol(toks[3]) - 1, effective_coverage);
+        coverage_map[query_name][reference_id].emplace_back(stol(toks[2]), stol(toks[3]) - 1, make_pair(effective_coverage, 0));
 
         // store the query length (todo: we could save a few bytes by
         // sticking it in the coverage map somewhere)
@@ -256,7 +257,7 @@ void paf_split(const string& input_paf_path,
             auto intervals = ref_coverage.second;
             CoverageIntervalTree coverage_intervals(intervals);
             vector<CoverageInterval> merged_intervals;
-            scan_coverage_intervals(coverage_intervals, max_gap_as_match, [&](int64_t s, int64_t e, int64_t v) {
+            scan_coverage_intervals(coverage_intervals, max_gap_as_match, [&](int64_t s, int64_t e, pair<int64_t, int64_t> v) {
                     merged_intervals.emplace_back(s, e, v);
                 });
             ref_coverage.second = std::move(merged_intervals);
@@ -279,13 +280,16 @@ void paf_split(const string& input_paf_path,
             for (auto& ref_coverage : query_coverage.second) {
                 int64_t total_ref_coverage = 0;
                 for (auto& interval : ref_coverage.second) {
-                    total_ref_coverage += interval.value;
+                    total_ref_coverage += interval.value.first;
                 }
                 if (total_ref_coverage > max_coverage) {
                     next_coverage = max_coverage;
                     next_id = max_id;
                     max_id = ref_coverage.first;
                     max_coverage = total_ref_coverage;
+                } else if (total_ref_coverage > next_coverage) {
+                    next_id = ref_coverage.first;
+                    next_coverage = total_ref_coverage;
                 }
             }
             // check if it's good enough
@@ -323,7 +327,7 @@ void paf_split(const string& input_paf_path,
                 for (auto& ref_coverage : query_coverage.second) {
                     int64_t total_ref_coverage = 0;
                     for (auto& interval : ref_coverage.second) {
-                        total_ref_coverage += interval.value;
+                        total_ref_coverage += interval.value.first;
                     }            
                     log_stream << "  " << contigs[ref_coverage.first] << ": " << total_ref_coverage << endl;
                 }
@@ -331,7 +335,7 @@ void paf_split(const string& input_paf_path,
                 log_stream << "uf= infinity (vs " << min_query_uniqueness << ")" << endl;
             }
             vector<CoverageInterval> intervals;
-            intervals.emplace_back(0, query_lengths[query_coverage.first], max_id);
+            intervals.emplace_back(0, query_lengths[query_coverage.first] - 1, make_pair(max_coverage, max_id));
             CoverageIntervalTree interval_tree(intervals);
             query_ref_map[query_coverage.first] = interval_tree;
         }
@@ -341,9 +345,9 @@ void paf_split(const string& input_paf_path,
             vector<CoverageInterval> intervals;
             for (auto& ref_coverage : query_coverage.second) {
                 for (auto& interval : ref_coverage.second) {
-                    if (interval.stop - interval.start + 1 >= min_query_chunk) {
-                        intervals.emplace_back(interval.start, interval.stop, ref_coverage.first);
-                    }
+                    //if (interval.stop - interval.start + 1 >= min_query_chunk || query_lengths[query_coverage.first] < min_query_chunk) {
+                        intervals.emplace_back(interval.start, interval.stop, make_pair(interval.value.first, ref_coverage.first));
+                        //}
                 }
             }
             CoverageIntervalTree interval_tree(intervals);
@@ -351,30 +355,44 @@ void paf_split(const string& input_paf_path,
             // the rabbit hole of chopping them up to enforce constency, we just drop all but the biggest.
             vector<CoverageInterval> non_overlapping_intervals;
             interval_tree.visit_all([&](const CoverageInterval& interval) {
-                    cerr << "Visit " << interval << endl;
                     vector<CoverageInterval> overlaps = interval_tree.findOverlapping(interval.start, interval.stop);
-                    if (overlaps.size() >= 0) {
-                        cerr << "found " << overlaps.size() << " overlaps for " << interval << endl;
-                    }
                     bool keep = true;
                     for (CoverageInterval& overlap : overlaps) {
                         if (overlap.stop - overlap.start > interval.stop - interval.start) {
-                            cerr << "Dropping PAF line as it overlaps larger query range that maps to different contig: "
-                                 << query_coverage.first << "\t" << interval.start << "\t" << (interval.stop + 1) << "\t"
-                                 << contigs[interval.value] << endl;                        
+                            log_stream << "Dropping PAF line as it overlaps larger query range that maps to different contig: "
+                                       << query_coverage.first << "\t" << interval.start << "\t" << (interval.stop + 1) << "\t"
+                                       << contigs[interval.value.second] << endl;                        
                             keep = false;
                             break;
                         }
                     }
                     if (keep) {
                         non_overlapping_intervals.push_back(interval);
-                    }
-                    
+                    } 
                 });
-        
-            if (non_overlapping_intervals.size() < intervals.size()) {
-                interval_tree = CoverageIntervalTree(non_overlapping_intervals);
+            int64_t query_length = query_lengths[query_coverage.first];
+            double min_coverage = min_query_coverage;
+            int64_t masked_bases = 0;
+            if (mask_stats.count(query_coverage.first)) {
+                // factor in the masking stats by subtracting from denominator
+                masked_bases = mask_stats.at(query_coverage.first);
+                assert(masked_bases <= query_length);
+                // avoid degenerate cases by making sure at least half of query contig is unmasked
+                // before applying correction
+                if (masked_bases >= query_length / 2) {
+                    masked_bases = 0;
+                }
             }
+
+            if (small_coverage_threshold > 0 && query_lengths[query_coverage.first] < small_coverage_threshold) {
+                min_coverage = min_small_query_coverage;
+            }
+            smooth_query_intervals(query_coverage.first, query_length, masked_bases,
+                                   non_overlapping_intervals, min_coverage, min_query_uniqueness, min_query_chunk,
+                                   contigs, allow_softclip, log_stream);
+            
+            interval_tree = CoverageIntervalTree(non_overlapping_intervals);
+            
             query_ref_map[query_coverage.first] = interval_tree;
         }
         // add in complement intervals as ambiguous
@@ -396,7 +414,7 @@ void paf_split(const string& input_paf_path,
                     start = i;
                 } else if ((covered[i] || i == covered.size() -1) && start >=0) {
                     int64_t stop = covered[i] ? i - 1: i;
-                    intervals.emplace_back(start, stop, ambiguous_id);
+                    intervals.emplace_back(start, stop, make_pair(0, ambiguous_id));
                     start = -1;
                 }
             }
@@ -456,7 +474,7 @@ void paf_split(const string& input_paf_path,
             continue;
         }
         assert(overlaps.size() == 1);
-        int64_t reference_id = overlaps[0].value;
+        int64_t reference_id = overlaps[0].value.second;
         const string& reference_contig = contigs[reference_id];
 
         // do both the query and reference sequences fall in the same chromosome, and we wnat to visit that
@@ -629,7 +647,7 @@ int64_t count_small_gap_bases(const vector<string>& toks, int64_t max_gap_as_mat
     return total_gap;
 }
 
-void scan_coverage_intervals(CoverageIntervalTree& interval_tree, int64_t padding, function<void(int64_t, int64_t, int64_t)> fn) {
+void scan_coverage_intervals(CoverageIntervalTree& interval_tree, int64_t padding, function<void(int64_t, int64_t, pair<int64_t, int64_t>)> fn) {
     unordered_set<const CoverageInterval*> visited;
     // go through every interval, and all its overlaps once
     interval_tree.visit_all([&](const CoverageInterval& interval) {
@@ -657,21 +675,192 @@ void scan_coverage_intervals(CoverageIntervalTree& interval_tree, int64_t paddin
                 for (auto& overlap_interval : overlaps) {
                     start = std::min(start, overlap_interval->start);
                     end = std::max(end, overlap_interval->stop);
-                    total_coverage_numerator += overlap_interval->value;
+                    total_coverage_numerator += overlap_interval->value.first;
                     total_coverage_denominator += overlap_interval->stop - overlap_interval->start + 1;
                 }
                 double coverage_density = (double)total_coverage_numerator / (double)total_coverage_denominator;
-                fn(start, end, (end - start + 1) * coverage_density);
+                fn(start, end, make_pair((end - start + 1) * coverage_density, 0));
             }
         });
 }
 
 
+void smooth_query_intervals(const string& query_name, int64_t query_length, int64_t masked_bases,
+                            vector<CoverageInterval>& intervals, double min_coverage, double min_uniqueness,
+                            int64_t min_chunk, const vector<string>& ref_contigs, bool allow_softclip,
+                            ostream& log_stream) {
+
+    if (intervals.empty()) {
+        return;
+    }
+    // total up coverage by reference contig
+    map<int64_t, int64_t> coverage_by_contig;
+    for (const CoverageInterval& interval : intervals) {
+        coverage_by_contig[interval.value.second] += interval.value.first;
+    }
+
+    // find the top two
+    pair<int64_t, int64_t> top(-1, -1);
+    pair<int64_t, int64_t> next(-1, -1);
+    for (const auto& cov : coverage_by_contig) {
+        if (cov.second > top.second) {
+            next = top;
+            top = cov;
+        } else if (cov.second > next.second) {
+            next = cov;
+        }
+    }
+
+    // look for regions to possibly clip out, by finding runs of consecutive
+    // mappings to non-top contigs
+    vector<vector<size_t>> clip_candidates;
+    if (min_chunk > 0) {
+        int64_t ref = -1;
+        for (size_t i = 0; i < intervals.size(); ++i) {
+            const CoverageInterval& interval = intervals[i];
+            if (interval.value.second != top.first) {
+                if (interval.value.first != ref) {
+                    clip_candidates.push_back({});
+                }
+                clip_candidates.back().push_back(i);
+            }
+            ref = interval.value.second;
+        }
+    }
+    vector<CoverageInterval> clip_intervals;
+    unordered_set<size_t> clip_set;
+    int64_t total_clip_length = 0;
+    for (size_t i = 0; i < clip_candidates.size(); ++i) {
+        int64_t min_pos = query_length;
+        int64_t max_pos = -1;
+        int64_t max_interval_length = 0;
+        int64_t total_coverage = 0;
+        for (size_t j = 0; j < clip_candidates[i].size(); ++j) {
+            const CoverageInterval& interval = intervals[clip_candidates[i][j]];
+            max_interval_length = std::max(max_interval_length, interval.stop - interval.start +1);
+            min_pos = std::min(min_pos, interval.start);
+            max_pos = std::max(max_pos, interval.stop);
+            total_coverage += interval.value.first;
+        }
+        // a candidate clip at beginning or end will have to own that sequence
+        if (clip_candidates[i][0] == 0) {
+            min_pos = 0;
+        }
+        if (clip_candidates[i].back() == intervals.size() - 1) {
+            max_pos = query_length - 1;
+        }
+        if (max_interval_length > min_chunk &&
+            (double)total_coverage / (max_pos - min_pos + 1) >= min_coverage) {
+            int64_t ref_contig = intervals[clip_candidates[i][0]].value.second;
+            assert(ref_contig != top.first);
+            clip_intervals.push_back(CoverageInterval(min_pos, max_pos, make_pair(total_coverage, ref_contig)));
+            clip_set.insert(clip_candidates[i][0]);
+            total_clip_length += max_pos - min_pos + 1;
+        }
+    }
+
+    // smooth out the intervals.
+    vector<CoverageInterval> smooth_intervals;    
+    size_t next_clip_idx = 0;
+    size_t prev_top = intervals.size();
+    for (size_t i = 0; i < intervals.size(); ++i) {
+        if (clip_set.count(i)) {
+            smooth_intervals.push_back(clip_intervals.at(next_clip_idx++));            
+        } else if (intervals[i].value.second == top.first) {
+            if (!smooth_intervals.empty() && smooth_intervals.back().value.second == top.first &&
+                (i - 1 == prev_top && intervals[i].start - intervals[prev_top].stop < min_chunk)) {
+                smooth_intervals.back().stop = intervals[i].stop;
+                smooth_intervals.back().value.first += intervals[i].value.first;
+            } else {
+                smooth_intervals.push_back(intervals[i]);
+            }
+            prev_top = i;
+        }
+    }
+
+    // filter out small bits
+    vector<CoverageInterval> filtered_intervals;
+    int64_t min_len_filter = std::min(min_chunk, int64_t(query_length * min_coverage));
+    for (size_t i = 0; i < smooth_intervals.size(); ++i) {
+        if (smooth_intervals[i].value.second != top.first || 
+            smooth_intervals[i].stop - smooth_intervals[i].start > min_len_filter) {
+            filtered_intervals.push_back(smooth_intervals[i]);
+        } else {
+            log_stream << "Unable to smooth small fragment: " << query_name << " " << smooth_intervals[i].start << "-" << smooth_intervals[i].stop << " -> "
+                       << ref_contigs[smooth_intervals[i].value.second] << endl;
+            top.second -= smooth_intervals[i].value.first;
+        }
+    }
+    smooth_intervals = filtered_intervals;
+
+    // clamp intervals to ends of query.  if allow_softclip is set, then we only do
+    // so if they are within "min_chunk" (and count as softclip otherwise)
+    int64_t softclip = 0;
+    if (!smooth_intervals.empty()) {
+        if (allow_softclip) {
+            if (smooth_intervals[0].start <= min_chunk) {
+                smooth_intervals[0].start = 0;
+            } else {
+                softclip += smooth_intervals[0].start;
+            }
+            if (smooth_intervals.back().stop > query_length - min_chunk) {
+                smooth_intervals.back().stop = query_length - 1;
+            } else {
+                softclip += query_length - smooth_intervals.back().stop -1;
+            }
+        } else {
+            smooth_intervals[0].start = 0;
+            smooth_intervals.back().stop = query_length - 1;
+        }
+    }
+    
+    for (size_t i = 0; i < smooth_intervals.size(); ++i) {
+        if (i > 0 && smooth_intervals[i].value.second == top.first && smooth_intervals[i].start != smooth_intervals[i-1].stop + 1) {
+            smooth_intervals[i].start = smooth_intervals[i-1].stop + 1;
+        }
+        if (i < smooth_intervals.size() - 1 && smooth_intervals[i].value.second == top.first && smooth_intervals[i].stop != smooth_intervals[i+1].start - 1) {
+            smooth_intervals[i].stop = smooth_intervals[i+1].start - 1;
+        }
+    }
+
+    // we are now ready to make our decision based on coverage (note that the clip candidates have already passed,
+    // but using them is dependent on the rest of the contig)
+
+    // TODO : proper logging
+#ifdef debug
+    log_stream << "adjusted coverage = " << top.second << " / max(" << query_length << " - " << masked_bases << " - " << total_clip_length << " - " << softclip << ", " << top.second << ")" << endl;
+#endif
+    double adjusted_coverage = 0;
+    if (top.second > 0) {
+        adjusted_coverage = (double)top.second / std::max(query_length - std::max(masked_bases, softclip) - total_clip_length, top.second);
+    }
+    if (adjusted_coverage > min_coverage) {
+        log_stream << "Assigning contig " << query_name << " with adjusted covarege " << adjusted_coverage << " vs " << min_coverage << " " << query_name << " to:\n";
+        for (const auto& interval : smooth_intervals) {
+            log_stream << interval.start << "-" << interval.stop << " -> " << ref_contigs[interval.value.second] << "(" << interval.value.first << ")" << endl;
+        }
+        swap(intervals, smooth_intervals);
+    } else {
+        log_stream << "Leaving " << query_name << " as ambigious with adjusted covarege " << adjusted_coverage << " vs " << min_coverage << " " << endl;
+#ifdef debug
+        log_stream << "input" << endl;
+        for (const auto& interval : intervals) {
+            log_stream << interval.start << "-" << interval.stop << " -> " << ref_contigs[interval.value.second] << "(" << interval.value.first << ")" << endl;
+        }        
+        log_stream << "smooth" << endl;
+        for (const auto& interval : smooth_intervals) {
+            log_stream << interval.start << "-" << interval.stop << " -> " << ref_contigs[interval.value.second] << "(" << interval.value.first << ")" << endl;
+        }
+#endif
+        intervals.clear();
+    }
+}
+
 void apply_paf_query_offsets(vector<string>& paf_toks, int64_t query_fragment_start, int64_t query_fragment_end) {
 
     int64_t query_length = stol(paf_toks[1]);
 
-    if (query_fragment_end - query_fragment_end + 1 == query_length) {
+    if (query_fragment_end - query_fragment_start + 1 == query_length) {
         assert(query_fragment_start == 0);
         // nothing to do, as the fragment spans the entire query sequence
         return;
@@ -696,6 +885,7 @@ void apply_paf_query_offsets(vector<string>& paf_toks, int64_t query_fragment_st
     int64_t delta = query_fragment_start;
     int64_t adjusted_query_start = query_start - delta;
     int64_t adjusted_query_end = query_end - delta;
+
 
     paf_toks[0] = make_faidx_subpath(query_name, query_fragment_start, query_fragment_end);
     paf_toks[1] = to_string(query_fragment_end - query_fragment_start + 1);

@@ -48,6 +48,7 @@ void paf_split(const string& input_paf_path,
                int64_t small_coverage_threshold,
                double min_query_uniqueness,
                int64_t min_query_chunk,
+               bool allow_softclip,
                int64_t ambiguous_id,
                const string& reference_prefix,
                const unordered_map<string, int64_t>& mask_stats,
@@ -80,12 +81,23 @@ int64_t count_small_gap_bases(const vector<string>& toks, int64_t max_gap_as_mat
 
 /**
  * Keep track of PAF coverage by remembering intervals (generalizes previous logic that
- * just counted bases 
+ * just counted bases.  The value here is pair<int64_t, int64_t> = <aligned bases, reference contig>
  */
-typedef IntervalTree<int64_t, int64_t> CoverageIntervalTree;
+typedef IntervalTree<int64_t, pair<int64_t, int64_t>> CoverageIntervalTree;
 typedef CoverageIntervalTree::interval CoverageInterval;
-void scan_coverage_intervals(CoverageIntervalTree& interval_tree, int64_t padding, function<void(int64_t, int64_t, int64_t)> fn);
+inline ostream& operator<<(ostream& os, pair<int64_t, int64_t> v) {
+    os << "(" << v.first << ", " << v.second << ")";
+    return os;
+}
+void scan_coverage_intervals(CoverageIntervalTree& interval_tree, int64_t padding, function<void(int64_t, int64_t, pair<int64_t, int64_t>)> fn);
 
+/**
+ * Smooth out the individual paf interval mappings from a given query to try to come up with some kind of consensus assignment
+ * 
+ */
+void smooth_query_intervals(const string& query_name, int64_t query_length, int64_t masked_bases,
+                            vector<CoverageInterval> & intervals, double min_coverage, double min_uniqueness,
+                            int64_t min_chunk, const vector<string>& ref_contigs, bool allow_softclip, ostream& log_stream);
 
 /**
  * Rename the query contig to a sub-fragment in order to reflect the fact that it will be cut in the output

@@ -34,6 +34,7 @@ void help(char** argv) {
        << "    -T, --small-coverage-threshold N        Used to toggle between the two coverage thresholds (-n and -N)" << endl
        << "    -Q, --min-query-uniqueness FLOAT        The ratio of the number of query bases aligned to the chosen ref contig vs the next best ref contig must exceed this threshold to not be considered ambigious" << endl
        << "    -u, --min-query-chunk N                 I a query interval of >= N bp aligns to a reference with sufficient coverage, cut it out.  Disabled when 0. [0]" << endl
+       << "    -s, --allow-softclip                    Allow softclipping with -u" << endl
        << "    -P, --max-gap N                         Count cigar gaps of length <= N towards coverage" << endl
        << "    -a, --ambiguous-name NAME               All query contigs that do not meet min coverage (-n) assigned to single reference with name NAME" << endl
        << "    -A, --min-mapq N                        Don't count PAF lines with MAPQ<N towards coverage" << endl
@@ -67,6 +68,7 @@ int main(int argc, char** argv) {
     double small_coverage_threshold = 0;
     double min_query_uniqueness = 0;
     int64_t min_query_chunk = 0;
+    bool allow_softclip = false;
     int64_t max_gap = 0;
     string ambiguous_name;
     string reference_prefix;
@@ -94,7 +96,8 @@ int main(int argc, char** argv) {
             {"min-small-query-coverage", required_argument, 0, 'N'},
             {"small-coverage-threshold", required_argument, 0, 'T'},
             {"min-query-uniqueness", required_argument, 0, 'Q'},
-            {"min-query-chunk", required_argument, 0, 'u'},            
+            {"min-query-chunk", required_argument, 0, 'u'},
+            {"allow-softlicp", no_argument, 0, 's'},            
             {"max-gap", required_argument, 0, 'P'},
             {"ambiguous-name", required_argument, 0, 'a'},
             {"min-mapq", required_argument, 0, 'A'},
@@ -105,7 +108,7 @@ int main(int argc, char** argv) {
 
         int option_index = 0;
 
-        c = getopt_long (argc, argv, "hg:m:p:B:b:M:Gq:c:C:o:n:N:T:Q:u:P:a:A:r:L:",
+        c = getopt_long (argc, argv, "hg:m:p:B:b:M:Gq:c:C:o:n:N:T:Q:u:sP:a:A:r:L:",
                          long_options, &option_index);
 
         // Detect the end of the options.
@@ -161,6 +164,9 @@ int main(int argc, char** argv) {
             break;
         case 'u':
             min_query_chunk = stol(optarg);
+            break;
+        case 's':
+            allow_softclip = true;
             break;
         case 'P':
             max_gap = stol(optarg);
@@ -360,7 +366,7 @@ int main(int argc, char** argv) {
         }
         paf_split(input_paf_path, name_to_refid, partition.second, visit_contig, output_prefix,
                   min_query_coverage, min_small_query_coverage, small_coverage_threshold, min_query_uniqueness,
-                  min_query_chunk,
+                  min_query_chunk, allow_softclip,
                   ambiguous_id, reference_prefix, query_mask_stats, max_gap, min_mapq, log_stream);
     }
 
