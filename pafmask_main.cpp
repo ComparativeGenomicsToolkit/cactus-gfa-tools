@@ -2,6 +2,7 @@
 #include <getopt.h>
 #include <fstream>
 #include <iostream>
+#include <sstream>
 
 #include "pafcoverage.hpp"
 #include "rgfa-split.hpp"
@@ -244,5 +245,105 @@ void interval_subtract(CoverageInterval& interval_a, CoverageInterval& interval_
 
 static void clip_paf(const vector<string>& toks, const string& query_name, int64_t query_length, int64_t query_start, int64_t query_end,
                      CoverageInterval& interval, int64_t min_length) {
+#ifdef debug
     cerr << "Clipping " << interval << " out of " << query_name << " " << query_length << " " << query_start << " " << query_end << endl;
+#endif
+    if (interval.stop - interval.start + 1 < min_length) {
+        return;
+    }
+
+    int64_t target_start = stol(toks[7]);
+    int64_t target_end = stol(toks[8]);
+
+    int64_t start_delta = interval.start - query_start;
+    int64_t new_length = interval.stop - interval.start + 1; 
+
+    // do the cigar
+    int64_t query_offset = 0; // where we are in the cigar (in query coordinates)
+    int64_t query_len = 0; // how much cigar we've written (in query coordinates)
+    int64_t target_offset = 0; // where we are in the cigar (in target coordinates)
+    int64_t target_len = 0; // how much cigar we've written (in target coordinates)
+    int64_t target_start_offset = -1;
+        
+    stringstream new_cigar;   
+    int64_t new_match_len = 0;
+    int64_t new_total_len = 0;
+    bool in_range = false;
+    for (int i = 12; i < toks.size(); ++i) {
+        if (toks[i].substr(0, 5) == "cg:Z:") {
+            new_cigar << "cg:Z:";
+            // todo: quadratic alert: we are scanning the full cigar here
+            for_each_cg(toks[i], [&](const string& val, const string& cat) {
+                    int64_t len = stol(val);
+
+                    if (cat == "M" || cat == "I") {
+                        in_range = query_offset >= start_delta && query_len < new_length;
+                    
+                        int64_t left_clip = 0;
+                        if (in_range && query_offset + len > start_delta && query_offset < start_delta) {
+                            // we need to start this cigar on a cut
+                            left_clip = query_offset + len - start_delta;
+                        }
+
+                        int64_t right_clip = 0;
+                        if (in_range && query_len + len > new_length) {
+                            // we need to end this cigar on a cut
+                            right_clip = query_len + len - new_length;
+                        }
+
+                        if (in_range) {
+                            // emit the adjusted cigar
+                            int64_t adj_len = len - left_clip - right_clip;
+                            new_cigar << adj_len << cat;
+                            // add bases the the query length
+                            query_len += adj_len;
+                            // add the match bases
+                            if (cat == "M") {
+                                new_match_len += adj_len;
+                            }
+                            // add the total bases
+                            new_total_len += adj_len;
+                            // advance the query
+                            query_offset += len;
+                            // also need to adjust the target for a match
+                            if (cat == "M") {
+                                target_len += adj_len;
+                            }
+                            if (target_start_offset == -1) {
+                                target_start_offset = target_offset + left_clip;
+                            }
+                        }
+                        // advance offsets
+                        if (cat == "M") {
+                            target_offset += len;
+                        }
+                        query_offset += len;
+                        
+                    } else if (cat == "D") {
+                        if (in_range) {
+                            new_cigar << len << "D";
+                            target_len += len;
+                            if (target_start_offset == -1) {
+                                target_start_offset = target_offset;
+                            }
+                        }
+                        target_offset += len;                        
+                    } else {
+                        assert(false);
+                    }
+                });
+        }
+    }
+    
+    if (toks[4] != "-") {
+        // on the reverse strand, we don't need to shift
+        assert(target_start_offset >= 0);
+        target_start += target_start_offset;
+    }
+    target_end = target_start + target_len;
+    
+    cout << query_name << "\t" << query_length << "\t" << interval.start << "\t" << (interval.stop + 1) << "\t"
+         << toks[4] << "\t" << toks[5] << "\t" << toks[6] << "\t" << target_start << "\t" << target_end
+         << "\t" << new_match_len << "\t" << new_total_len << "\t" << toks[11] << "\t" << new_cigar.str() << "\n";
+
 }
