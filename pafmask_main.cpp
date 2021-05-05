@@ -409,6 +409,7 @@ static void clip_paf(const vector<string>& toks, const string& query_name, int64
     cout << out_stream.str();
 
     if (validate) {
+        // todo: this is wrong
         validate_paf(toks, out_stream.str());
     }
 
@@ -427,30 +428,44 @@ void validate_paf(const vector<string>& toks, const string& fragment_paf) {
         int64_t target_start = stol(paf_toks[7]);
         int64_t target_end = stol(paf_toks[8]) - 1;
         int64_t target_offset = 0;
-        
+
+        vector<pair<int64_t, char>> cigar_toks;    
         for (int i = 12; i < paf_toks.size(); ++i) {
             if (paf_toks[i].substr(0, 5) == "cg:Z:") {
+                // todo: quadratic alert: we are scanning the full cigar here
                 for_each_cg(paf_toks[i], [&](const string& val, const string& cat) {
-                        int64_t len = stol(val);
-                        if (cat == "I") {
-                            query_pos += len;
-                        } else if (cat == "D") {
-                            target_offset += len;
-                        } else if (cat == "M") {
-                            for (int64_t j = 0; j < len; ++j) {
-                                if (paf_toks[4] == "+") {
-                                    homos[query_pos + j] = target_start + target_offset + j;
-                                } else {
-                                    assert(paf_toks[4] == "-");
-                                    homos[query_pos + j] = target_end - (target_offset + j); 
-                                }
-                            }
-                            query_pos += len;
-                            target_offset += len;
-                        } else {
-                            assert(false);
-                        }
+                        assert(cat == "M" || cat == "I" || cat =="D");
+                        cigar_toks.push_back(make_pair(stol(val), cat[0]));
                     });
+                break;
+            }
+        }
+        
+        // cigars are backwards if reverse strand
+        if (paf_toks[4] == "-") {
+            std::reverse(cigar_toks.begin(), cigar_toks.end());
+        }
+
+        for (pair<int64_t, char>& cigar_tok : cigar_toks) {
+            int64_t len = cigar_tok.first;
+            char cat = cigar_tok.second;
+            if (cat == 'I') {
+                query_pos += len;
+            } else if (cat == 'D') {
+                target_offset += len;
+            } else if (cat == 'M') {
+                for (int64_t j = 0; j < len; ++j) {
+                    if (paf_toks[4] == "+") {
+                        homos[query_pos + j] = target_start + target_offset + j;
+                    } else {
+                        assert(paf_toks[4] == "-");
+                        homos[query_pos + j] = target_end - (target_offset + j); 
+                    }
+                }
+                query_pos += len;
+                target_offset += len;
+            } else {
+                assert(false);
             }
         }
         return homos;
