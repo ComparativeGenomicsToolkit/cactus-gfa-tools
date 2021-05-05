@@ -279,18 +279,21 @@ static void clip_paf(const vector<string>& toks, const string& query_name, int64
                     int64_t len = stol(val);
 
                     if (cat == "M" || cat == "I") {
-                        in_range = query_offset >= start_delta && query_len < new_length;
+                        in_range = query_offset + len > start_delta && query_len < new_length;
                     
                         int64_t left_clip = 0;
                         if (in_range && query_offset + len > start_delta && query_offset < start_delta) {
                             // we need to start this cigar on a cut
-                            left_clip = query_offset + len - start_delta;
+                            left_clip = start_delta - query_offset;
+                            cerr << "left clip " << left_clip << " qo = " << query_offset << " len = " << len << " start-delta = " << start_delta << endl;
+                            
                         }
 
                         int64_t right_clip = 0;
-                        if (in_range && query_len + len > new_length) {
-                            // we need to end this cigar on a cut
-                            right_clip = query_len + len - new_length;
+                        if (in_range && query_len + len - left_clip > new_length) {
+                            // we need to end this cigar on a cut                            
+                            right_clip = query_len + len - left_clip - new_length;
+                            cerr << "right clip " << right_clip << endl;
                         }
 
                         if (in_range) {
@@ -312,7 +315,7 @@ static void clip_paf(const vector<string>& toks, const string& query_name, int64
                                 target_len += adj_len;
                             }
                             if (target_start_offset == -1) {
-                                target_start_offset = target_offset + left_clip;
+                                target_start_offset = target_offset + (cat == "M" ? left_clip : 0);
                             }
                         }
                         // advance offsets
@@ -325,11 +328,11 @@ static void clip_paf(const vector<string>& toks, const string& query_name, int64
                         if (in_range) {
                             new_cigar << len << "D";
                             target_len += len;
-                            if (target_start_offset == -1) {
-                                target_start_offset = target_offset;
-                            }
+                            //if (target_start_offset == -1) {
+                            //    target_start_offset = target_offset;
+                            //}
                         }
-                        target_offset += len;                        
+                        target_offset += len;
                     } else {
                         assert(false);
                     }
@@ -367,11 +370,11 @@ static void clip_paf(const vector<string>& toks, const string& query_name, int64
 // should be sufficient to catch glaring bugs (ie with reverse strand)
 void validate(const vector<string>& toks, const string& fragment_paf) {
 
-    function<unordered_map<int64_t, int64_t>(const vector<string>&)> extract_homologies = [&](const vector<string>& paf_toks) {
+    function<unordered_map<int64_t, int64_t>(const vector<string>&)> extract_homologies = [](const vector<string>& paf_toks) {
         unordered_map<int64_t, int64_t> homos;
-        int64_t query_pos = stol(toks[2]);
-        int64_t target_pos = stol(toks[7]);
-        int64_t target_end = stol(toks[8]) - 1;
+        int64_t query_pos = stol(paf_toks[2]);
+        int64_t target_pos = stol(paf_toks[7]);
+        int64_t target_end = stol(paf_toks[8]) - 1;
         
         for (int i = 12; i < paf_toks.size(); ++i) {
             if (paf_toks[i].substr(0, 5) == "cg:Z:") {
@@ -383,10 +386,10 @@ void validate(const vector<string>& toks, const string& fragment_paf) {
                             target_pos += len;
                         } else if (cat == "M") {
                             for (int64_t i = 0; i < len; ++i) {
-                                if (toks[4] == "+") {
+                                if (paf_toks[4] == "+") {
                                     homos[query_pos + i] = target_pos +i;
                                 } else {
-                                    assert(toks[4] == "-");
+                                    assert(paf_toks[4] == "-");
                                     homos[query_pos + i] = target_end - (target_pos +i); 
                                 }
                             }
@@ -408,21 +411,29 @@ void validate(const vector<string>& toks, const string& fragment_paf) {
     unordered_map<int64_t, int64_t> homologies = extract_homologies(toks);
     unordered_map<int64_t, int64_t> frag_homologies = extract_homologies(frag_toks);
 
-    bool oops = false;
-    for (auto fh : frag_homologies) {
+    int64_t frag_query_start = stol(frag_toks[2]);
+    int64_t frag_query_end = stol(frag_toks[3]) - 1;
+
+    bool good = true;
+    for (int64_t q = frag_query_start; q < frag_query_end; ++q) {
+        int64_t frag_tgt = frag_homologies.count(q) ? frag_homologies[q] : -1;
+        int64_t orig_tgt = homologies.count(q) ? homologies[q] : -1;
 #ifdef debug
-        cerr << "checking frag[" << fh.first << "]==" << fh.second << flush;
-        cerr << " found " << (!homologies.count(fh.first) ? -1 : homologies[fh.first]) << endl;
-#endif        
-        //assert(homologies.count(fh.first) && homologies[fh.first] == fh.second);
-        oops = oops || !(homologies.count(fh.first) && homologies[fh.first] == fh.second);
+        cerr << "query pos " << q << " -> frag: " << frag_tgt << " orig: " << orig_tgt << endl;
+#endif
+        //assert(frag_tgt == orig_tgt);
+        if (frag_tgt != orig_tgt) {
+            good = false;
+        }
     }
     /*
-    if (oops) {
-        for (auto h : homologies) {
-            cerr << "homo[" << h.first << "]=" << h.second << endl;
+    if (!good) {
+        cerr << "frag map" << endl;
+        for (auto xx : frag_homologies) {
+            cerr << xx.first << " -- " << xx.second << endl;
         }
     }
     */
-    assert(!oops);
+    //assert(good);
+    if (!good) cout << " BAD^^" << endl;
 }
