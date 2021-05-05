@@ -26,6 +26,8 @@ static void mask_paf_line(const string& paf_line, int64_t min_length, const unor
 static void clip_paf(const vector<string>& toks, const string& query_name, int64_t query_length, int64_t query_start, int64_t query_end,
                      CoverageInterval& interval, int64_t min_length);
 
+// make sure every homology in the fragment_paf corresponds to a homology in toks
+static void validate(const vector<string>& toks, const string& fragment_paf);
 
 void help(char** argv) {
   cerr << "usage: " << argv[0] << " [options] <paf> <bed>" << endl
@@ -335,15 +337,92 @@ static void clip_paf(const vector<string>& toks, const string& query_name, int64
         }
     }
     
-    if (toks[4] != "-") {
+    if (toks[4] == "+" && target_start_offset >= 0) {
         // on the reverse strand, we don't need to shift
         assert(target_start_offset >= 0);
         target_start += target_start_offset;
     }
-    target_end = target_start + target_len;
-    
-    cout << query_name << "\t" << query_length << "\t" << interval.start << "\t" << (interval.stop + 1) << "\t"
-         << toks[4] << "\t" << toks[5] << "\t" << toks[6] << "\t" << target_start << "\t" << target_end
-         << "\t" << new_match_len << "\t" << new_total_len << "\t" << toks[11] << "\t" << new_cigar.str() << "\n";
+    //target_end = target_start + target_len;
 
+    stringstream out_stream;
+#ifdef debug
+    cerr << "Orig\n";
+    for (const string& tok : toks) {
+        cerr << tok << "\t";
+    }
+    cerr << endl;
+#endif
+    out_stream << query_name << "\t" << query_length << "\t" << interval.start << "\t" << (interval.stop + 1) << "\t"
+               << toks[4] << "\t" << toks[5] << "\t" << toks[6] << "\t" << target_start << "\t" << target_end
+               << "\t" << new_match_len << "\t" << new_total_len << "\t" << toks[11] << "\t" << new_cigar.str() << "\n";
+
+    cout << out_stream.str();
+
+    validate(toks, out_stream.str());
+
+}
+
+// make sure every homology in the fragment_paf corresponds to a homology in toks
+// this doesn't check for homolodies in toks that *should* be in fragment_paf, but it
+// should be sufficient to catch glaring bugs (ie with reverse strand)
+void validate(const vector<string>& toks, const string& fragment_paf) {
+
+    function<unordered_map<int64_t, int64_t>(const vector<string>&)> extract_homologies = [&](const vector<string>& paf_toks) {
+        unordered_map<int64_t, int64_t> homos;
+        int64_t query_pos = stol(toks[2]);
+        int64_t target_pos = stol(toks[7]);
+        int64_t target_end = stol(toks[8]) - 1;
+        
+        for (int i = 12; i < paf_toks.size(); ++i) {
+            if (paf_toks[i].substr(0, 5) == "cg:Z:") {
+                for_each_cg(paf_toks[i], [&](const string& val, const string& cat) {
+                        int64_t len = stol(val);
+                        if (cat == "I") {
+                            query_pos += len;
+                        } else if (cat == "D") {
+                            target_pos += len;
+                        } else if (cat == "M") {
+                            for (int64_t i = 0; i < len; ++i) {
+                                if (toks[4] == "+") {
+                                    homos[query_pos + i] = target_pos +i;
+                                } else {
+                                    assert(toks[4] == "-");
+                                    homos[query_pos + i] = target_end - (target_pos +i); 
+                                }
+                            }
+                            query_pos += len;
+                            target_pos += len;
+                        } else {
+                            assert(false);
+                        }
+                    });
+            }
+        }
+        return homos;
+    };
+
+    vector<string> frag_toks;
+    split_delims(fragment_paf, "\t\n", frag_toks);
+    assert(frag_toks.size() >= 12);
+
+    unordered_map<int64_t, int64_t> homologies = extract_homologies(toks);
+    unordered_map<int64_t, int64_t> frag_homologies = extract_homologies(frag_toks);
+
+    bool oops = false;
+    for (auto fh : frag_homologies) {
+#ifdef debug
+        cerr << "checking frag[" << fh.first << "]==" << fh.second << flush;
+        cerr << " found " << (!homologies.count(fh.first) ? -1 : homologies[fh.first]) << endl;
+#endif        
+        //assert(homologies.count(fh.first) && homologies[fh.first] == fh.second);
+        oops = oops || !(homologies.count(fh.first) && homologies[fh.first] == fh.second);
+    }
+    /*
+    if (oops) {
+        for (auto h : homologies) {
+            cerr << "homo[" << h.first << "]=" << h.second << endl;
+        }
+    }
+    */
+    assert(!oops);
 }
