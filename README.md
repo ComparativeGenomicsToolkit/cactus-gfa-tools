@@ -50,7 +50,7 @@ where `a.paf` was created by, for example, `minimap2 -c`
 
 ### mzgaf2paf
 
-Convert [minigraph](https://github.com/lh3/minigraph) output from GAF to PAF, where PAF records represent pairwise aligments between the target and nodes in the graph.  The output alignments have cigar strings, and are based on the minimizer offsets obtained when using `minigraph -S --write-mz`.
+Convert [minigraph](https://github.com/lh3/minigraph) output from GAF to PAF, where PAF records represent pairwise aligments between the query and nodes in the graph.  The output alignments have cigar strings, and are based on the minimizer offsets obtained when using `minigraph -S --write-mz`.
 
 The use case is that a set of such alignments can be used as anchors by [Cactus](https://github.com/ComparativeGenomicsToolkit/cactus) to form its initial graph. 
 
@@ -92,3 +92,8 @@ Filters are provided to only assign contigs if they pass specificity and uniquen
 ### rgfa2paf
 
 Generate a PAF from the rank-0 [rGFA tags](https://github.com/lh3/gfatools/blob/master/doc/rGFA.md) in the given rGFA file. Each PAF line will represent an exact alignment between the contig range from the tags to the given node.  Note that the query lengths are inferred from the rGFA and will be wrong unless the file is complete.
+
+
+### pafmask
+
+Clip out query intervals supplied in a BED file from a given PAF file, updating cg cigars appropriately.  Intervals can by glommed together with `-p` and small fragments filtered out with `-m`.  This can be used, for example, to prevent homologies within centromeric regions from making it into the graph.  In some cases, this works better than masking out the centromeres before generating the paf with minigraph or minimap2: by aligning through the centromeres, the regions nearby end up with better alignments.   

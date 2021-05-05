@@ -83,7 +83,7 @@ pafmask: pafmask_main.cpp rgfa-split.o pafcoverage.o
 	$(CXX) $(INCLUDE_FLAGS) $(CXXFLAGS) $(CPPFLAGS) -c pafmask_main.cpp $(INC_FLAGS)
 	$(CXX) $(INCLUDE_FLAGS) $(CXXFLAGS) $(CPPFLAGS) -o pafmask pafmask_main.o pafcoverage.o rgfa-split.o
 
-test : mzgaf2paf paf2lastz_test
+test : mzgaf2paf paf2lastz_test pafmask_test
 	cd test && prove -v test.t
 
 paf2lastz_test: mapqTest scoreTest
@@ -97,6 +97,12 @@ mapqTest:
 scoreTest:
 	./paf2lastz test/paf2lastz/evolver_rat.paf > test/paf2lastz/out_score
 	diff test/paf2lastz/out_score test/paf2lastz/evolver_rat_score.cigar
+	echo "OK"
+
+pafmask_test:
+	gzip -dc test/pafmask/chr20.bed.gz > test/chr20.bed
+	gzip -dc test/pafmask/chr20.paf.gz | ./pafmask - test/chr20.bed -v > /dev/null
+	rm -f test/chr20.bed
 	echo "OK"
 
 clean:

@@ -7,7 +7,7 @@
 #include "pafcoverage.hpp"
 #include "rgfa-split.hpp"
 
-#define debug
+//#define debug
 
 using namespace std;
 
@@ -17,17 +17,19 @@ static unordered_map<string, CoverageIntervalTree> load_bed(istream& bed_stream,
 
 // cut interval_b out of interval_a, any peices of a that remain get added to out_fragments
 // the number of such pieces is 0 (a in b), 1 (b overlaps one end of a) or 2 (b in a)
-static void interval_subtract(CoverageInterval& interval_a, CoverageInterval& interval_b, vector<CoverageInterval>& out_fragments);
+static void interval_subtract(CoverageInterval& interval_a, CoverageInterval& interval_b,
+                              vector<CoverageInterval>& out_fragments);
 
 // subtract all masked intervals from a paf line and output what's left
-static void mask_paf_line(const string& paf_line, int64_t min_length, const unordered_map<string, CoverageIntervalTree>& ref_to_intervals);
+static void mask_paf_line(const string& paf_line, int64_t min_length, const unordered_map<string,
+                          CoverageIntervalTree>& ref_to_intervals, bool validate);
 
 // output paf line(s) corresponding to given sub-interval of the original paf line
 static void clip_paf(const vector<string>& toks, const string& query_name, int64_t query_length, int64_t query_start, int64_t query_end,
-                     CoverageInterval& interval, int64_t min_length);
+                     CoverageInterval& interval, int64_t min_length, bool validate);
 
 // make sure every homology in the fragment_paf corresponds to a homology in toks
-static void validate(const vector<string>& toks, const string& fragment_paf);
+static void validate_paf(const vector<string>& toks, const string& fragment_paf);
 
 void help(char** argv) {
   cerr << "usage: " << argv[0] << " [options] <paf> <bed>" << endl
@@ -35,13 +37,15 @@ void help(char** argv) {
        << endl
        << "options: " << endl
        << "    -m, --min-length N           Remove any remaining intervals less than N bp" << endl
-       << "    -p, --padding N              Merge up bed intervals close than this [100]" << endl;
+       << "    -p, --padding N              Merge up bed intervals close than this [100]" << endl
+       << "    -v, --validate               Validate every cigar to make sure it's consistent with input" << endl;
 }    
 
 int main(int argc, char** argv) {
 
     int64_t min_length = 1;
     int64_t padding = 100;
+    bool validate = false;
     int c;
     optind = 1; 
     while (true) {
@@ -49,13 +53,14 @@ int main(int argc, char** argv) {
         static const struct option long_options[] = {
             {"help", no_argument, 0, 'h'},
             {"min-length", required_argument, 0, 'm'},
-            {"padding", required_argument, 0, 'p'},            
+            {"padding", required_argument, 0, 'p'},
+            {"validate", no_argument, 0, 'v'},            
             {0, 0, 0, 0}
         };
 
         int option_index = 0;
 
-        c = getopt_long (argc, argv, "hm:p:",
+        c = getopt_long (argc, argv, "hm:p:v",
                          long_options, &option_index);
 
         // Detect the end of the options.
@@ -69,6 +74,9 @@ int main(int argc, char** argv) {
             break;
         case 'p':
             padding = stol(optarg);
+            break;
+        case 'v':
+            validate = true;
             break;
         case 'h':
         case '?':
@@ -126,7 +134,7 @@ int main(int argc, char** argv) {
 
     string buffer;
     while (getline(*in_paf, buffer)) {
-        mask_paf_line(buffer, min_length, ref_to_intervals);
+        mask_paf_line(buffer, min_length, ref_to_intervals, validate);
     }
 
     return 0;
@@ -162,7 +170,8 @@ unordered_map<string, CoverageIntervalTree> load_bed(istream& bed_stream, int64_
     return trees;
 }
 
-void mask_paf_line(const string& paf_line, int64_t min_length, const unordered_map<string, CoverageIntervalTree>& ref_to_intervals) {
+void mask_paf_line(const string& paf_line, int64_t min_length, const unordered_map<string,
+                   CoverageIntervalTree>& ref_to_intervals, bool validate) {
     // split into array of tokens
     vector<string> toks;
     split_delims(paf_line, "\t\n", toks);
@@ -191,6 +200,11 @@ void mask_paf_line(const string& paf_line, int64_t min_length, const unordered_m
     if (overlapping_intervals.empty()) {
         // nothing to mask
         cout << paf_line << "\n";
+#ifndef debug
+        // no need to proceed, but it is a sanity check to clip nothing out and get something valid
+        // so leave it in when debugging.
+        return;
+#endif
     }
 
     vector<CoverageInterval> remaining_intervals;
@@ -213,7 +227,7 @@ void mask_paf_line(const string& paf_line, int64_t min_length, const unordered_m
         });
 
     for (CoverageInterval& remaining_interval : remaining_intervals) {
-        clip_paf(toks, query_name, query_length, query_start, query_end, remaining_interval, min_length);        
+        clip_paf(toks, query_name, query_length, query_start, query_end, remaining_interval, min_length, validate);        
     }
 }
 
@@ -246,7 +260,7 @@ void interval_subtract(CoverageInterval& interval_a, CoverageInterval& interval_
 }
 
 static void clip_paf(const vector<string>& toks, const string& query_name, int64_t query_length, int64_t query_start, int64_t query_end,
-                     CoverageInterval& interval, int64_t min_length) {
+                     CoverageInterval& interval, int64_t min_length, bool validate) {
 #ifdef debug
     cerr << "Clipping " << interval << " out of " << query_name << " " << query_length << " " << query_start << " " << query_end << endl;
 #endif
@@ -257,7 +271,8 @@ static void clip_paf(const vector<string>& toks, const string& query_name, int64
     int64_t target_start = stol(toks[7]);
     int64_t target_end = stol(toks[8]);
 
-    int64_t start_delta = toks[4] == "+" ? interval.start - query_start : query_end - interval.stop;
+    //int64_t start_delta = toks[4] == "+" ? interval.start - query_start : query_end - interval.stop;
+    int64_t start_delta = interval.start - query_start;
     int64_t new_length = interval.stop - interval.start + 1; 
 
     // do the cigar
@@ -284,16 +299,13 @@ static void clip_paf(const vector<string>& toks, const string& query_name, int64
                         int64_t left_clip = 0;
                         if (in_range && query_offset + len > start_delta && query_offset < start_delta) {
                             // we need to start this cigar on a cut
-                            left_clip = start_delta - query_offset;
-                            cerr << "left clip " << left_clip << " qo = " << query_offset << " len = " << len << " start-delta = " << start_delta << endl;
-                            
+                            left_clip = start_delta - query_offset;                            
                         }
 
                         int64_t right_clip = 0;
                         if (in_range && query_len + len - left_clip > new_length) {
                             // we need to end this cigar on a cut                            
                             right_clip = query_len + len - left_clip - new_length;
-                            cerr << "right clip " << right_clip << endl;
                         }
 
                         if (in_range) {
@@ -323,14 +335,15 @@ static void clip_paf(const vector<string>& toks, const string& query_name, int64
                             target_offset += len;
                         }
                         query_offset += len;
+
+                        if (in_range) {
+                            in_range = query_len < new_length;
+                        }
                         
                     } else if (cat == "D") {
                         if (in_range) {
                             new_cigar << len << "D";
                             target_len += len;
-                            //if (target_start_offset == -1) {
-                            //    target_start_offset = target_offset;
-                            //}
                         }
                         target_offset += len;
                     } else {
@@ -340,11 +353,26 @@ static void clip_paf(const vector<string>& toks, const string& query_name, int64
         }
     }
     
-    // on the reverse strand, we don't need to shift
     assert(target_start_offset >= 0);
-    target_start += target_start_offset;
-    target_end = target_start + target_len;
-
+    if (toks[4] == "+") {
+#ifdef debug      
+        cerr << "target_start = " << target_start << " + " << target_start_offset << endl;
+#endif
+        target_start += target_start_offset;
+#ifdef debug
+        cerr << "target_end = " << target_start << " + " << target_len << endl;
+#endif
+        target_end = target_start + target_len;
+    } else {
+#ifdef debug
+        cerr << "target_end = " << target_end << " - " << target_start_offset << endl;
+#endif
+        target_end = target_end - target_start_offset;
+#ifdef debug
+        cerr << "target_start = " << target_end << " - 1 - " << target_len << endl;
+#endif
+        target_start = target_end - 1 - target_len;
+    }
     stringstream out_stream;
 #ifdef debug
     cerr << "Orig\n";
@@ -359,14 +387,16 @@ static void clip_paf(const vector<string>& toks, const string& query_name, int64
 
     cout << out_stream.str();
 
-    validate(toks, out_stream.str());
+    if (validate) {
+        validate_paf(toks, out_stream.str());
+    }
 
 }
 
 // make sure every homology in the fragment_paf corresponds to a homology in toks
 // this doesn't check for homolodies in toks that *should* be in fragment_paf, but it
 // should be sufficient to catch glaring bugs (ie with reverse strand)
-void validate(const vector<string>& toks, const string& fragment_paf) {
+void validate_paf(const vector<string>& toks, const string& fragment_paf) {
 
     function<unordered_map<int64_t, int64_t>(const vector<string>&)> extract_homologies = [](const vector<string>& paf_toks) {
         unordered_map<int64_t, int64_t> homos;
@@ -421,18 +451,5 @@ void validate(const vector<string>& toks, const string& fragment_paf) {
         cerr << "query pos " << q << " -> frag: " << frag_tgt << " orig: " << orig_tgt << endl;
 #endif
         assert(frag_tgt == orig_tgt);
-        if (frag_tgt != orig_tgt) {
-            good = false;
-        }
     }
-    /*
-    if (!good) {
-        cerr << "frag map" << endl;
-        for (auto xx : frag_homologies) {
-            cerr << xx.first << " -- " << xx.second << endl;
-        }
-    }
-    */
-    assert(good);
-    if (!good) cout << " BAD^^" << endl;
 }
