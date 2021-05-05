@@ -100,10 +100,7 @@ scoreTest:
 	echo "OK"
 
 pafmask_test:
-	gzip -dc test/pafmask/chr20.bed.gz > test/chr20.bed
-	gzip -dc test/pafmask/chr20.paf.gz | ./pafmask - test/chr20.bed -v > /dev/null
-	rm -f test/chr20.bed
-	echo "OK"
+	cd test && prove -v pafmask.t
 
 clean:
 	rm -rf mzgaf2paf main.o mzgaf2paf.o pafcoverage pafcoverage.o pafcoverage_main.o rgfa-split rgfa-split.o rgfa-split_main.o paf2lastz paf2lastz_main.o paf2lastz.o pafmask pafmask_main.o

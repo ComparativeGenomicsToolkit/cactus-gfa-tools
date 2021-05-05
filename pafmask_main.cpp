@@ -440,8 +440,13 @@ void validate_paf(const vector<string>& toks, const string& fragment_paf) {
     unordered_map<int64_t, int64_t> homologies = extract_homologies(toks);
     unordered_map<int64_t, int64_t> frag_homologies = extract_homologies(frag_toks);
 
+    int64_t frag_query_length = stol(frag_toks[1]);
     int64_t frag_query_start = stol(frag_toks[2]);
     int64_t frag_query_end = stol(frag_toks[3]) - 1;
+
+    int64_t frag_target_length = stol(frag_toks[6]);
+    int64_t frag_target_start = stol(frag_toks[7]);
+    int64_t frag_target_end = stol(frag_toks[8]) -1;
 
     bool good = true;
     for (int64_t q = frag_query_start; q < frag_query_end; ++q) {
@@ -451,5 +456,13 @@ void validate_paf(const vector<string>& toks, const string& fragment_paf) {
         cerr << "query pos " << q << " -> frag: " << frag_tgt << " orig: " << orig_tgt << endl;
 #endif
         assert(frag_tgt == orig_tgt);
+
+        if (frag_tgt != -1) {
+            assert(frag_tgt >= 0);
+            assert(frag_tgt >= frag_target_start);
+            assert(frag_tgt <= frag_target_end);
+            assert(frag_tgt < frag_target_length);
+            assert(q < frag_query_length);
+        }
     }
 }
