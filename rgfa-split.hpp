@@ -7,6 +7,7 @@
 #include <vector>
 #include <unordered_map>
 #include <functional>
+#include "IntervalTree.h"
 
 using namespace std;
 
@@ -46,6 +47,8 @@ void paf_split(const string& input_paf_path,
                double min_small_query_coverage,
                int64_t small_coverage_threshold,
                double min_query_uniqueness,
+               int64_t min_query_chunk,
+               bool allow_softclip,
                int64_t ambiguous_id,
                const string& reference_prefix,
                const unordered_map<string, int64_t>& mask_stats,
@@ -76,3 +79,41 @@ inline int64_t node_id(const string& rgfa_id) {
  */
 int64_t count_small_gap_bases(const vector<string>& toks, int64_t max_gap_as_match);
 
+/**
+ * Keep track of PAF coverage by remembering intervals (generalizes previous logic that
+ * just counted bases.  The value here is pair<int64_t, int64_t> = <aligned bases, reference contig>
+ */
+typedef IntervalTree<int64_t, pair<int64_t, int64_t>> CoverageIntervalTree;
+typedef CoverageIntervalTree::interval CoverageInterval;
+inline ostream& operator<<(ostream& os, pair<int64_t, int64_t> v) {
+    os << "(" << v.first << ", " << v.second << ")";
+    return os;
+}
+void scan_coverage_intervals(CoverageIntervalTree& interval_tree, int64_t padding, function<void(int64_t, int64_t, pair<int64_t, int64_t>)> fn);
+
+/**
+ * Smooth out the individual paf interval mappings from a given query to try to come up with some kind of consensus assignment
+ * 
+ */
+void smooth_query_intervals(const string& query_name, int64_t query_length, int64_t masked_bases,
+                            vector<CoverageInterval> & intervals, double min_coverage, double min_uniqueness,
+                            int64_t min_chunk, const vector<string>& ref_contigs, bool allow_softclip, ostream& log_stream);
+
+/**
+ * Rename the query contig to a sub-fragment in order to reflect the fact that it will be cut in the output
+ */
+void apply_paf_query_offsets(vector<string>& paf_toks, int64_t query_fragment_start, int64_t query_fragment_end); 
+
+
+// TODO: make consisten with vg's naming scheme (requires change in grpahmap-split that would postprocess faidx output)
+
+/**
+ * Turn chr1:10-100 into <"chr1", 9, 99>
+ */
+tuple<string, int64_t, int64_t>  parse_faidx_subpath(const string& name);
+
+
+/**
+ * Turn <"chr1", 9, 99> into chr1:10-100
+ */
+string make_faidx_subpath(const string& name, int64_t start, int64_t end);
