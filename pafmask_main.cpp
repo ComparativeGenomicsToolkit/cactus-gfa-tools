@@ -282,75 +282,92 @@ static void clip_paf(const vector<string>& toks, const string& query_name, int64
     int64_t target_len = 0; // how much cigar we've written (in target coordinates)
     int64_t target_start_offset = -1;
         
-    stringstream new_cigar;   
+    vector<string> new_cigar_toks;
     int64_t new_match_len = 0;
     int64_t new_total_len = 0;
     bool in_range = false;
+
+    vector<pair<int64_t, char>> cigar_toks;    
     for (int i = 12; i < toks.size(); ++i) {
         if (toks[i].substr(0, 5) == "cg:Z:") {
-            new_cigar << "cg:Z:";
             // todo: quadratic alert: we are scanning the full cigar here
             for_each_cg(toks[i], [&](const string& val, const string& cat) {
-                    int64_t len = stol(val);
-
-                    if (cat == "M" || cat == "I") {
-                        in_range = query_offset + len > start_delta && query_len < new_length;
-                    
-                        int64_t left_clip = 0;
-                        if (in_range && query_offset + len > start_delta && query_offset < start_delta) {
-                            // we need to start this cigar on a cut
-                            left_clip = start_delta - query_offset;                            
-                        }
-
-                        int64_t right_clip = 0;
-                        if (in_range && query_len + len - left_clip > new_length) {
-                            // we need to end this cigar on a cut                            
-                            right_clip = query_len + len - left_clip - new_length;
-                        }
-
-                        if (in_range) {
-                            // emit the adjusted cigar
-                            int64_t adj_len = len - left_clip - right_clip;
-                            new_cigar << adj_len << cat;
-                            // add bases the the query length
-                            query_len += adj_len;
-                            // add the match bases
-                            if (cat == "M") {
-                                new_match_len += adj_len;
-                            }
-                            // add the total bases
-                            new_total_len += adj_len;
-                            // advance the query
-                            query_offset += len;
-                            // also need to adjust the target for a match
-                            if (cat == "M") {
-                                target_len += adj_len;
-                            }
-                            if (target_start_offset == -1) {
-                                target_start_offset = target_offset + (cat == "M" ? left_clip : 0);
-                            }
-                        }
-                        // advance offsets
-                        if (cat == "M") {
-                            target_offset += len;
-                        }
-                        query_offset += len;
-
-                        if (in_range) {
-                            in_range = query_len < new_length;
-                        }
-                        
-                    } else if (cat == "D") {
-                        if (in_range) {
-                            new_cigar << len << "D";
-                            target_len += len;
-                        }
-                        target_offset += len;
-                    } else {
-                        assert(false);
-                    }
+                    assert(cat == "M" || cat == "I" || cat =="D");
+                    cigar_toks.push_back(make_pair(stol(val), cat[0]));
                 });
+            break;
         }
+    }
+
+    // cigars are backwards if reverse strand
+    if (toks[4] == "-") {
+        std::reverse(cigar_toks.begin(), cigar_toks.end());
+    }
+
+    for (pair<int64_t, char>& cigar_tok : cigar_toks) {
+        int64_t len = cigar_tok.first;
+        char cat = cigar_tok.second;
+        if (cat == 'M' || cat == 'I') {
+            in_range = query_offset + len > start_delta && query_len < new_length;
+                    
+            int64_t left_clip = 0;
+            if (in_range && query_offset + len > start_delta && query_offset < start_delta) {
+                // we need to start this cigar on a cut
+                left_clip = start_delta - query_offset;                            
+            }
+
+            int64_t right_clip = 0;
+            if (in_range && query_len + len - left_clip > new_length) {
+                // we need to end this cigar on a cut                            
+                right_clip = query_len + len - left_clip - new_length;
+            }
+
+            if (in_range) {
+                // emit the adjusted cigar
+                int64_t adj_len = len - left_clip - right_clip;
+                new_cigar_toks.push_back(to_string(adj_len) + string(1, cat));
+                // add bases the the query length
+                query_len += adj_len;
+                // add the match bases
+                if (cat == 'M') {
+                    new_match_len += adj_len;
+                }
+                // add the total bases
+                new_total_len += adj_len;
+                // advance the query
+                query_offset += len;
+                // also need to adjust the target for a match
+                if (cat == 'M') {
+                    target_len += adj_len;
+                }
+                if (target_start_offset == -1) {
+                    target_start_offset = target_offset + (cat == 'M' ? left_clip : 0);
+                }
+            }
+            // advance offsets
+            if (cat == 'M') {
+                target_offset += len;
+            }
+            query_offset += len;
+
+            if (in_range) {
+                in_range = query_len < new_length;
+            }
+                        
+        } else if (cat == 'D') {
+            if (in_range) {
+                new_cigar_toks.push_back(to_string(len) + "D");
+                target_len += len;
+            }
+            target_offset += len;
+        } else {
+            assert(false);
+        }
+    }
+
+    // cigars are backwards if reverse strand
+    if (toks[4] == "-") {
+        std::reverse(new_cigar_toks.begin(), new_cigar_toks.end());
     }
     
     assert(target_start_offset >= 0);
@@ -371,7 +388,7 @@ static void clip_paf(const vector<string>& toks, const string& query_name, int64
 #ifdef debug
         cerr << "target_start = " << target_end << " - 1 - " << target_len << endl;
 #endif
-        target_start = target_end - 1 - target_len;
+        target_start = target_end - target_len;
     }
     stringstream out_stream;
 #ifdef debug
@@ -383,7 +400,11 @@ static void clip_paf(const vector<string>& toks, const string& query_name, int64
 #endif
     out_stream << query_name << "\t" << query_length << "\t" << interval.start << "\t" << (interval.stop + 1) << "\t"
                << toks[4] << "\t" << toks[5] << "\t" << toks[6] << "\t" << target_start << "\t" << target_end
-               << "\t" << new_match_len << "\t" << new_total_len << "\t" << toks[11] << "\t" << new_cigar.str() << "\n";
+               << "\t" << new_match_len << "\t" << new_total_len << "\t" << toks[11] << "\t" << "cg:Z:";
+    for (const auto& new_cigar_tok : new_cigar_toks) {
+        out_stream << new_cigar_tok;
+    }
+    out_stream << "\n";
 
     cout << out_stream.str();
 
