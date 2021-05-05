@@ -32,7 +32,7 @@ python ./verify_matches.py CHM13.paf CHM13.fa hpp-20-2M.gfa.fa
 is $? 0 "paf checks out for very simple forward alignment"
 
 # clip it with pafmask
-pafmask CHM13.paf chr20.bed > CHM13.mask.paf
+pafmask CHM13.paf chr20.bed -v > CHM13.mask.paf
 python ./verify_matches.py CHM13.mask.paf CHM13.fa hpp-20-2M.gfa.fa
 is $? 0 "masked paf checks out for very simple forward alignment"
 
@@ -57,7 +57,7 @@ python ./verify_matches.py hg38.paf hg38.fa hpp-20-2M.gfa.fa
 is $? 0 "paf checks out for hg38 alignment"
 
 # clip it with pafmask
-pafmask hg38.paf chr20.bed > hg38.mask.paf
+pafmask hg38.paf chr20.bed -v > hg38.mask.paf
 python ./verify_matches.py hg38.mask.paf hg38.fa hpp-20-2M.gfa.fa
 is $? 0 "masked paf checks out for hg38 alignment"
 

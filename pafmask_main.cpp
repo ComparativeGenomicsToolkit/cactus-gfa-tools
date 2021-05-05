@@ -417,6 +417,8 @@ static void clip_paf(const vector<string>& toks, const string& query_name, int64
 // make sure every homology in the fragment_paf corresponds to a homology in toks
 // this doesn't check for homolodies in toks that *should* be in fragment_paf, but it
 // should be sufficient to catch glaring bugs (ie with reverse strand)
+
+// update: this catches some stuff but verify_paf.py is better (and now used in tests)
 void validate_paf(const vector<string>& toks, const string& fragment_paf) {
 
     function<unordered_map<int64_t, int64_t>(const vector<string>&)> extract_homologies = [](const vector<string>& paf_toks) {

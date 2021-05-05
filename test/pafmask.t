@@ -6,7 +6,7 @@ BASH_TAP_ROOT=./bash-tap
 PATH=../bin:$PATH
 PATH=../deps/hal:$PATH
 
-plan tests 3
+plan tests 7
 
 gzip -dc pafmask/chr20.bed.gz > chr20.bed
 
@@ -43,3 +43,4 @@ pafmask mp.paf mp2.bed > mp2.mask.paf
 python ./verify_matches.py mp2.mask.paf pafmask/pm1.fa pafmask/pm2.fa
 is $? 0 "reverse strand clip 2 produces valid paf"
 
+rm -f pm.paf pm1.bed pm1.mask.paf pm2.bed  pm2.mask.paf mp.paf mp1.bed mp1.mask.paf mp2.bed mp2.mask.paf
