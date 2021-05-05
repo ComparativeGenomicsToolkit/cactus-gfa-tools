@@ -227,7 +227,7 @@ void interval_subtract(CoverageInterval& interval_a, CoverageInterval& interval_
         return;
     }
 
-    if (interval_b.start >= interval_a.start && interval_b.start < interval_a.stop) {
+    if (interval_b.start > interval_a.start && interval_b.start < interval_a.stop) {
         // b overlaps to the right
         out_fragments.emplace_back(interval_a.start, interval_b.start - 1, make_pair(0, 0));
 #ifdef debug
@@ -257,7 +257,7 @@ static void clip_paf(const vector<string>& toks, const string& query_name, int64
     int64_t target_start = stol(toks[7]);
     int64_t target_end = stol(toks[8]);
 
-    int64_t start_delta = interval.start - query_start;
+    int64_t start_delta = toks[4] == "+" ? interval.start - query_start : query_end - interval.stop;
     int64_t new_length = interval.stop - interval.start + 1; 
 
     // do the cigar
@@ -340,12 +340,10 @@ static void clip_paf(const vector<string>& toks, const string& query_name, int64
         }
     }
     
-    if (toks[4] == "+" && target_start_offset >= 0) {
-        // on the reverse strand, we don't need to shift
-        assert(target_start_offset >= 0);
-        target_start += target_start_offset;
-    }
-    //target_end = target_start + target_len;
+    // on the reverse strand, we don't need to shift
+    assert(target_start_offset >= 0);
+    target_start += target_start_offset;
+    target_end = target_start + target_len;
 
     stringstream out_stream;
 #ifdef debug
@@ -373,8 +371,9 @@ void validate(const vector<string>& toks, const string& fragment_paf) {
     function<unordered_map<int64_t, int64_t>(const vector<string>&)> extract_homologies = [](const vector<string>& paf_toks) {
         unordered_map<int64_t, int64_t> homos;
         int64_t query_pos = stol(paf_toks[2]);
-        int64_t target_pos = stol(paf_toks[7]);
+        int64_t target_start = stol(paf_toks[7]);
         int64_t target_end = stol(paf_toks[8]) - 1;
+        int64_t target_offset = 0;
         
         for (int i = 12; i < paf_toks.size(); ++i) {
             if (paf_toks[i].substr(0, 5) == "cg:Z:") {
@@ -383,18 +382,18 @@ void validate(const vector<string>& toks, const string& fragment_paf) {
                         if (cat == "I") {
                             query_pos += len;
                         } else if (cat == "D") {
-                            target_pos += len;
+                            target_offset += len;
                         } else if (cat == "M") {
-                            for (int64_t i = 0; i < len; ++i) {
+                            for (int64_t j = 0; j < len; ++j) {
                                 if (paf_toks[4] == "+") {
-                                    homos[query_pos + i] = target_pos +i;
+                                    homos[query_pos + j] = target_start + target_offset + j;
                                 } else {
                                     assert(paf_toks[4] == "-");
-                                    homos[query_pos + i] = target_end - (target_pos +i); 
+                                    homos[query_pos + j] = target_end - (target_offset + j); 
                                 }
                             }
                             query_pos += len;
-                            target_pos += len;
+                            target_offset += len;
                         } else {
                             assert(false);
                         }
@@ -421,7 +420,7 @@ void validate(const vector<string>& toks, const string& fragment_paf) {
 #ifdef debug
         cerr << "query pos " << q << " -> frag: " << frag_tgt << " orig: " << orig_tgt << endl;
 #endif
-        //assert(frag_tgt == orig_tgt);
+        assert(frag_tgt == orig_tgt);
         if (frag_tgt != orig_tgt) {
             good = false;
         }
@@ -434,6 +433,6 @@ void validate(const vector<string>& toks, const string& fragment_paf) {
         }
     }
     */
-    //assert(good);
+    assert(good);
     if (!good) cout << " BAD^^" << endl;
 }
