@@ -719,7 +719,7 @@ void smooth_query_intervals(const string& query_name, int64_t query_length, int6
         for (size_t i = 0; i < intervals.size(); ++i) {
             const CoverageInterval& interval = intervals[i];
             if (interval.value.second != top.first) {
-                if (interval.value.first != ref) {
+                if (interval.value.first != ref || clip_candidates.empty()) {
                     clip_candidates.push_back({});
                 }
                 clip_candidates.back().push_back(i);
