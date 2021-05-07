@@ -21,7 +21,7 @@ static void interval_subtract(CoverageInterval& interval_a, CoverageInterval& in
                               vector<CoverageInterval>& out_fragments);
 
 // subtract all masked intervals from a paf line and output what's left
-static void mask_paf_line(const string& paf_line, int64_t min_length, const unordered_map<string,
+static size_t mask_paf_line(const string& paf_line, int64_t min_length, const unordered_map<string,
                           CoverageIntervalTree>& ref_to_intervals, bool validate);
 
 // output paf line(s) corresponding to given sub-interval of the original paf line
@@ -133,9 +133,12 @@ int main(int argc, char** argv) {
     unordered_map<string, CoverageIntervalTree> ref_to_intervals = load_bed(in_bed_file, padding);
 
     string buffer;
+    size_t masked_bases = 0;
     while (getline(*in_paf, buffer)) {
-        mask_paf_line(buffer, min_length, ref_to_intervals, validate);
+        masked_bases += mask_paf_line(buffer, min_length, ref_to_intervals, validate);
     }
+
+    cerr << "[pafmask]: clipped out: " << masked_bases << " bp" << endl;
 
     return 0;
 }
@@ -170,7 +173,7 @@ unordered_map<string, CoverageIntervalTree> load_bed(istream& bed_stream, int64_
     return trees;
 }
 
-void mask_paf_line(const string& paf_line, int64_t min_length, const unordered_map<string,
+size_t mask_paf_line(const string& paf_line, int64_t min_length, const unordered_map<string,
                    CoverageIntervalTree>& ref_to_intervals, bool validate) {
     // split into array of tokens
     vector<string> toks;
@@ -203,7 +206,7 @@ void mask_paf_line(const string& paf_line, int64_t min_length, const unordered_m
 #ifndef debug
         // no need to proceed, but it is a sanity check to clip nothing out and get something valid
         // so leave it in when debugging.
-        return;
+        return 0;
 #endif
     }
 
@@ -226,9 +229,15 @@ void mask_paf_line(const string& paf_line, int64_t min_length, const unordered_m
             return a.start < b.start;
         });
 
+    size_t remaining_bases = 0;
     for (CoverageInterval& remaining_interval : remaining_intervals) {
-        clip_paf(toks, query_name, query_length, query_start, query_end, remaining_interval, min_length, validate);        
+        if (remaining_interval.stop - remaining_interval.start + 1 >= min_length) {
+            clip_paf(toks, query_name, query_length, query_start, query_end, remaining_interval, min_length, validate);
+            remaining_bases += remaining_interval.stop - remaining_interval.start + 1;
+        }
     }
+    assert(remaining_bases <= query_end - query_start + 1);
+    return query_end - query_start + 1 - remaining_bases;
 }
 
 void interval_subtract(CoverageInterval& interval_a, CoverageInterval& interval_b, vector<CoverageInterval>& out_fragments) {
@@ -264,9 +273,6 @@ static void clip_paf(const vector<string>& toks, const string& query_name, int64
 #ifdef debug
     cerr << "Clipping " << interval << " out of " << query_name << " " << query_length << " " << query_start << " " << query_end << endl;
 #endif
-    if (interval.stop - interval.start + 1 < min_length) {
-        return;
-    }
 
     int64_t target_start = stol(toks[7]);
     int64_t target_end = stol(toks[8]);
