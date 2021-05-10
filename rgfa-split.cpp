@@ -466,6 +466,9 @@ void paf_split(const string& input_paf_path,
     // keep track of every unique taret
     unordered_set<string> target_set;
 
+    // keep track of pafs written (pad out with empty files to help downstream scripts)
+    vector<bool> pafs_written(contigs.size(), false);
+
     while (getline(input_paf_stream, paf_line)) {
         vector<string> toks;
         split_delims(paf_line, "\t\n", toks);
@@ -503,6 +506,7 @@ void paf_split(const string& input_paf_path,
             if (out_paf_stream == nullptr) {
                 string out_paf_path = output_prefix + reference_contig + ".paf";
                 out_paf_stream = new ofstream(out_paf_path);
+                pafs_written[reference_id] = true;
                 assert(out_files.size() < 100);
                 if (!(*out_paf_stream)) {
                     cerr << "error: unable to open output paf file: " << out_paf_path << endl;
@@ -521,6 +525,14 @@ void paf_split(const string& input_paf_path,
             query_map[reference_id].insert(query_name);
         } 
         
+    }
+
+    // write some empty pafs
+    for (size_t i = 0; i < pafs_written.size(); ++i) {
+        if (!pafs_written[i]) {
+            string out_paf_path = output_prefix + contigs[i] + ".paf";
+            ofstream empty_paf(out_paf_path);
+        }
     }
 
     // clean up the files
