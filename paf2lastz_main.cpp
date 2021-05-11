@@ -114,10 +114,12 @@ int main(int argc, char** argv) {
         string buffer;
         while (getline(*in_stream, buffer)) {
             pair<string, bool> lastz_record = paf2lastz(buffer, mapq_score);
-            if (lastz_record.second == true && !secondary_path.empty()) {
-                secondary_file << lastz_record.first << "\n";
-            } else {
-                cout << lastz_record.first << "\n";
+            if (!lastz_record.first.empty()) {
+                if (lastz_record.second == true && !secondary_path.empty()) {
+                    secondary_file << lastz_record.first << "\n";
+                } else {
+                    cout << lastz_record.first << "\n";
+                }
             }
         }
     }
