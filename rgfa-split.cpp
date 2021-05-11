@@ -920,7 +920,7 @@ void apply_paf_query_offsets(vector<string>& paf_toks, int64_t query_fragment_st
     paf_toks[0] = make_faidx_subpath(query_name, query_fragment_start, query_fragment_end);
     paf_toks[1] = to_string(query_fragment_end - query_fragment_start + 1);
     paf_toks[2] = to_string(adjusted_query_start);
-    paf_toks[3] = to_string(adjusted_query_end + 1);
+    paf_toks[3] = to_string(adjusted_query_end);
 }
 
 // todo: harmonize with vg::Paths::parse_subpath_name
