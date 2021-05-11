@@ -179,8 +179,13 @@ size_t mask_paf_line(const string& paf_line, int64_t min_length, const unordered
     vector<string> toks;
     split_delims(paf_line, "\t\n", toks);
 
+    // handle empty line
+    if (toks.size() == 0) {
+        return 0;
+    }
+
     if (toks.size() < 12) {
-        throw runtime_error("too few tokens in PAF line: " + paf_line);
+        throw runtime_error("[pafmask] error: too few tokens in PAF line: " + paf_line);
     }
 
     string& query_name = toks[0];

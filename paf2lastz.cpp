@@ -43,8 +43,13 @@ pair<std::string, bool> paf2lastz(const std::string& paf_line, bool use_mapq) {
     vector<string> toks;
     split_delims(paf_line, "\t\n", toks);
 
+    // handle empty line
+    if (toks.size() == 0) {
+        return make_pair("", false);
+    }
+    
     if (toks.size() < 12) {
-        throw runtime_error("too few tokens in PAF line: " + paf_line);
+        throw runtime_error("[paf2lastz] error: too few tokens in PAF line: " + paf_line);
     }
 
     // use PAF mapq as the lastz score
