@@ -865,7 +865,8 @@ void smooth_query_intervals(const string& query_name, int64_t query_length, int6
         adjusted_coverage = (double)top.second / std::max(query_length - std::max(masked_bases, softclip) - total_clip_length, top.second);
     }
     if (adjusted_coverage > min_coverage) {
-        log_stream << "Assigning contig " << query_name << " with adjusted covarege " << adjusted_coverage << " vs " << min_coverage << " " << query_name << " to:\n";
+        log_stream << "Assigning contig " << query_name << " with adjusted covarege " << adjusted_coverage << " vs " << min_coverage << " " << query_name
+                   << " to " << smooth_intervals.size() << " contigs:\n";
         for (const auto& interval : smooth_intervals) {
             log_stream << interval.start << "-" << interval.stop << " -> " << ref_contigs[interval.value.second] << "(" << interval.value.first << ")" << endl;
         }
