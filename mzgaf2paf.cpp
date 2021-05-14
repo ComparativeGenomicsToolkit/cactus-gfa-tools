@@ -156,14 +156,17 @@ size_t mzgaf2paf(const MzGafRecord& gaf_record,
     int64_t total_deletions = 0;
     int64_t total_insertions = 0;
 
-    // todo: kind of silly to start cigar with an indel -- should just clip
+    // don't allow cigars to start on indel, as sometimes they can really inflate block
+    // lengths (big softclips can come when hardmasking centromeres going into minigraph)
+    int64_t leading_insertions = 0;
+    int64_t leading_deletions = 0;
     if (!matches.empty() && matches[0].query_start > 0) {
-        cigar.push_back(std::to_string(matches[0].query_start) + "I");
         total_insertions += matches[0].query_start;
+        leading_insertions = matches[0].query_start;
     }
     if (!matches.empty() && matches[0].target_start > 0) {
-        cigar.push_back(std::to_string(matches[0].target_start) + "D");
         total_deletions += matches[0].target_start;
+        leading_deletions = matches[0].target_start; 
     }
     
     for (size_t i = 0; i < matches.size(); ++i) {
@@ -186,33 +189,36 @@ size_t mzgaf2paf(const MzGafRecord& gaf_record,
         }
     }
 
-    // todo: kind of silly to end cigar with an indel -- should just clip
+    // don't allow cigars to end on indel, as sometimes they can really inflate block
+    // lengths (big softclips can come when hardmasking centromeres going into minigraph)    
     int64_t query_length = gaf_record.query_end - gaf_record.query_start;
     int64_t leftover_insertions = query_length - (total_insertions + total_matches);
     if (leftover_insertions) {
         assert(matches.empty() || matches.back().query_end + leftover_insertions == query_length);
-        cigar.push_back(std::to_string(leftover_insertions) + "I");
     }
     int64_t target_length = gaf_record.target_end - gaf_record.target_start;
     int64_t leftover_deletions = target_length - (total_deletions + total_matches);
     if (leftover_deletions) {
         assert(matches.empty() || matches.back().target_end + leftover_deletions == target_length);
-        cigar.push_back(std::to_string(leftover_deletions) + "D");
+    }
+    assert(leftover_insertions >= 0 && leftover_deletions >= 0);
+    if (gaf_record.is_reverse) {
+        swap(leading_deletions, leftover_deletions);
     }
 
     if (!matches.empty()) {
         // output the paf columns
         paf_stream << parent_record.query_name << "\t"
                    << parent_record.query_length << "\t"
-                   << gaf_record.query_start << "\t"
-                   << gaf_record.query_end << "\t"
+                   << (gaf_record.query_start + leading_insertions) << "\t"
+                   << (gaf_record.query_end - leftover_insertions) << "\t"
                    << (gaf_record.is_reverse ? "-" : "+") << "\t"
                    << target_prefix << gaf_record.target_name << "\t"
                    << gaf_record.target_length << "\t"
-                   << paf_target_start << "\t"
-                   << paf_target_end << "\t"
+                   << (paf_target_start + leading_deletions) << "\t"
+                   << (paf_target_end - leftover_deletions) << "\t"
                    << total_matches << "\t"
-                   << (gaf_record.target_end - gaf_record.target_start) << "\t" // fudged
+                   << (gaf_record.target_end - gaf_record.target_start - leftover_deletions - leading_deletions) << "\t" // fudged
                    << parent_record.mapq << "\t" << "cg:Z:";
 
         // and the cigar
