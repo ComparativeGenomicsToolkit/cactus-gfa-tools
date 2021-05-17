@@ -35,6 +35,14 @@ void set_other_contig(unordered_map<int64_t, int64_t>& contig_map,
                       function<bool(const string&)> visit_contig,
                       const string& other_name);
 
+/*
+ * Like above, but working on the shim structures used when using minimap (instead of minigraph) output
+ */
+void set_other_contig_paf(unordered_map<string, int64_t>& target_to_id,
+                          vector<string>& contigs,
+                          function<bool(const string&)> visit_contig,
+                          const string& other_name);
+
 /**
  * Use contigs identified above to split PAF
  */

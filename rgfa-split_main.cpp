@@ -321,7 +321,11 @@ int main(int argc, char** argv) {
 
     // lump unselected contigs into the "other" category if desired
     if (!other_name.empty()) {
-        set_other_contig(partition.first, partition.second, visit_contig, other_name);
+        if (target_to_id.empty()) {
+            set_other_contig(partition.first, partition.second, visit_contig, other_name);
+        } else {
+            set_other_contig_paf(target_to_id, partition.second, visit_contig, other_name);
+        }
         visit_contig = [&](const string&) -> bool {
             return true;
         };

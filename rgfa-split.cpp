@@ -189,6 +189,24 @@ void set_other_contig(unordered_map<int64_t, int64_t>& contig_map,
     }    
 }
 
+void set_other_contig_paf(unordered_map<string, int64_t>& target_to_id,
+                          vector<string>& contigs,
+                          function<bool(const string&)> visit_contig,
+                          const string& other_name) {
+
+    // add the other contig
+    int64_t other_idx = contigs.size();
+    contigs.push_back(other_name);
+
+    // change the mapping of all unselected contigs to point to it
+    for (auto& target_id : target_to_id) {
+        const string& ref_contig = target_id.first;
+        if (!visit_contig(ref_contig)) {
+            target_id.second = other_idx;
+        }
+    }    
+}
+
 /**
  * Use contigs identified above to split PAF
  */
@@ -448,6 +466,9 @@ void paf_split(const string& input_paf_path,
     // keep track of every unique taret
     unordered_set<string> target_set;
 
+    // keep track of pafs written (pad out with empty files to help downstream scripts)
+    vector<bool> pafs_written(contigs.size(), false);
+
     while (getline(input_paf_stream, paf_line)) {
         vector<string> toks;
         split_delims(paf_line, "\t\n", toks);
@@ -485,6 +506,7 @@ void paf_split(const string& input_paf_path,
             if (out_paf_stream == nullptr) {
                 string out_paf_path = output_prefix + reference_contig + ".paf";
                 out_paf_stream = new ofstream(out_paf_path);
+                pafs_written[reference_id] = true;
                 assert(out_files.size() < 100);
                 if (!(*out_paf_stream)) {
                     cerr << "error: unable to open output paf file: " << out_paf_path << endl;
@@ -503,6 +525,14 @@ void paf_split(const string& input_paf_path,
             query_map[reference_id].insert(query_name);
         } 
         
+    }
+
+    // write some empty pafs
+    for (size_t i = 0; i < pafs_written.size(); ++i) {
+        if (!pafs_written[i]) {
+            string out_paf_path = output_prefix + contigs[i] + ".paf";
+            ofstream empty_paf(out_paf_path);
+        }
     }
 
     // clean up the files
@@ -719,7 +749,7 @@ void smooth_query_intervals(const string& query_name, int64_t query_length, int6
         for (size_t i = 0; i < intervals.size(); ++i) {
             const CoverageInterval& interval = intervals[i];
             if (interval.value.second != top.first) {
-                if (interval.value.first != ref) {
+                if (interval.value.first != ref || clip_candidates.empty()) {
                     clip_candidates.push_back({});
                 }
                 clip_candidates.back().push_back(i);
@@ -813,13 +843,25 @@ void smooth_query_intervals(const string& query_name, int64_t query_length, int6
             smooth_intervals.back().stop = query_length - 1;
         }
     }
-    
+
+    // expand top intervals to fill out empty spaces (except at ends which are handled above)
     for (size_t i = 0; i < smooth_intervals.size(); ++i) {
         if (i > 0 && smooth_intervals[i].value.second == top.first && smooth_intervals[i].start != smooth_intervals[i-1].stop + 1) {
             smooth_intervals[i].start = smooth_intervals[i-1].stop + 1;
         }
         if (i < smooth_intervals.size() - 1 && smooth_intervals[i].value.second == top.first && smooth_intervals[i].stop != smooth_intervals[i+1].start - 1) {
             smooth_intervals[i].stop = smooth_intervals[i+1].start - 1;
+        }
+    }
+
+    // todo: this really ought to happen in one of the previous loops
+    vector<CoverageInterval> merged_intervals;
+    for (size_t i = 0; i < smooth_intervals.size(); ++i) {
+        if (i > 0 && smooth_intervals[i].value.second == smooth_intervals[i-1].value.second && smooth_intervals[i].start == smooth_intervals[i-1].stop + 1) {
+            merged_intervals.back().stop = smooth_intervals[i].stop;
+            merged_intervals.back().value.first += smooth_intervals[i].value.first;
+        } else {
+            merged_intervals.push_back(smooth_intervals[i]);
         }
     }
 
@@ -835,11 +877,16 @@ void smooth_query_intervals(const string& query_name, int64_t query_length, int6
         adjusted_coverage = (double)top.second / std::max(query_length - std::max(masked_bases, softclip) - total_clip_length, top.second);
     }
     if (adjusted_coverage > min_coverage) {
-        log_stream << "Assigning contig " << query_name << " with adjusted covarege " << adjusted_coverage << " vs " << min_coverage << " " << query_name << " to:\n";
-        for (const auto& interval : smooth_intervals) {
+        log_stream << "Assigning contig " << query_name << " with adjusted covarege " << adjusted_coverage << " vs " << min_coverage << " " << query_name
+                   << " to ";
+        if (merged_intervals.size() > 1) {
+            log_stream << "multiple (" << merged_intervals.size() << ") ";
+        }
+        log_stream << "contigs:\n";
+        for (const auto& interval : merged_intervals) {
             log_stream << interval.start << "-" << interval.stop << " -> " << ref_contigs[interval.value.second] << "(" << interval.value.first << ")" << endl;
         }
-        swap(intervals, smooth_intervals);
+        swap(intervals, merged_intervals);
     } else {
         log_stream << "Leaving " << query_name << " as ambigious with adjusted covarege " << adjusted_coverage << " vs " << min_coverage << " " << endl;
 #ifdef debug
@@ -848,7 +895,7 @@ void smooth_query_intervals(const string& query_name, int64_t query_length, int6
             log_stream << interval.start << "-" << interval.stop << " -> " << ref_contigs[interval.value.second] << "(" << interval.value.first << ")" << endl;
         }        
         log_stream << "smooth" << endl;
-        for (const auto& interval : smooth_intervals) {
+        for (const auto& interval : merged_intervals) {
             log_stream << interval.start << "-" << interval.stop << " -> " << ref_contigs[interval.value.second] << "(" << interval.value.first << ")" << endl;
         }
 #endif
@@ -890,7 +937,7 @@ void apply_paf_query_offsets(vector<string>& paf_toks, int64_t query_fragment_st
     paf_toks[0] = make_faidx_subpath(query_name, query_fragment_start, query_fragment_end);
     paf_toks[1] = to_string(query_fragment_end - query_fragment_start + 1);
     paf_toks[2] = to_string(adjusted_query_start);
-    paf_toks[3] = to_string(adjusted_query_end + 1);
+    paf_toks[3] = to_string(adjusted_query_end);
 }
 
 // todo: harmonize with vg::Paths::parse_subpath_name
