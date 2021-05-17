@@ -843,13 +843,25 @@ void smooth_query_intervals(const string& query_name, int64_t query_length, int6
             smooth_intervals.back().stop = query_length - 1;
         }
     }
-    
+
+    // expand top intervals to fill out empty spaces (except at ends which are handled above)
     for (size_t i = 0; i < smooth_intervals.size(); ++i) {
         if (i > 0 && smooth_intervals[i].value.second == top.first && smooth_intervals[i].start != smooth_intervals[i-1].stop + 1) {
             smooth_intervals[i].start = smooth_intervals[i-1].stop + 1;
         }
         if (i < smooth_intervals.size() - 1 && smooth_intervals[i].value.second == top.first && smooth_intervals[i].stop != smooth_intervals[i+1].start - 1) {
             smooth_intervals[i].stop = smooth_intervals[i+1].start - 1;
+        }
+    }
+
+    // todo: this really ought to happen in one of the previous loops
+    vector<CoverageInterval> merged_intervals;
+    for (size_t i = 0; i < smooth_intervals.size(); ++i) {
+        if (i > 0 && smooth_intervals[i].value.second == smooth_intervals[i-1].value.second && smooth_intervals[i].start == smooth_intervals[i-1].stop + 1) {
+            merged_intervals.back().stop = smooth_intervals[i].stop;
+            merged_intervals.back().value.first += smooth_intervals[i].value.first;
+        } else {
+            merged_intervals.push_back(smooth_intervals[i]);
         }
     }
 
@@ -867,14 +879,14 @@ void smooth_query_intervals(const string& query_name, int64_t query_length, int6
     if (adjusted_coverage > min_coverage) {
         log_stream << "Assigning contig " << query_name << " with adjusted covarege " << adjusted_coverage << " vs " << min_coverage << " " << query_name
                    << " to ";
-        if (smooth_intervals.size() > 1) {
-            log_stream << "multiple (" << smooth_intervals.size() << ") ";
+        if (merged_intervals.size() > 1) {
+            log_stream << "multiple (" << merged_intervals.size() << ") ";
         }
         log_stream << "contigs:\n";
-        for (const auto& interval : smooth_intervals) {
+        for (const auto& interval : merged_intervals) {
             log_stream << interval.start << "-" << interval.stop << " -> " << ref_contigs[interval.value.second] << "(" << interval.value.first << ")" << endl;
         }
-        swap(intervals, smooth_intervals);
+        swap(intervals, merged_intervals);
     } else {
         log_stream << "Leaving " << query_name << " as ambigious with adjusted covarege " << adjusted_coverage << " vs " << min_coverage << " " << endl;
 #ifdef debug
@@ -883,7 +895,7 @@ void smooth_query_intervals(const string& query_name, int64_t query_length, int6
             log_stream << interval.start << "-" << interval.stop << " -> " << ref_contigs[interval.value.second] << "(" << interval.value.first << ")" << endl;
         }        
         log_stream << "smooth" << endl;
-        for (const auto& interval : smooth_intervals) {
+        for (const auto& interval : merged_intervals) {
             log_stream << interval.start << "-" << interval.stop << " -> " << ref_contigs[interval.value.second] << "(" << interval.value.first << ")" << endl;
         }
 #endif
