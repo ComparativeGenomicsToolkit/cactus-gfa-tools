@@ -186,6 +186,11 @@ inline void scan_mzgaf(istream& in_stream, function<void(MzGafRecord& gaf_record
             }
             // we move forward in the path by the length (second column of the mz line)
             step_offset += mz_record.target_length;
+#ifdef debug
+            cerr << "added " << mz_record.target_length << " to get " << step_offset;            
+            cerr << " our current contig size is " << gaf_record.path[step_no].end << " with step no " << step_no << endl;
+#endif
+            assert(mz_record.target_end - mz_record.target_start <=  mz_record.target_length);
             if (gaf_record.path[step_no].start + step_offset == gaf_record.path[step_no].end) {
                 // if we're off the step, advance
                 ++step_no;
@@ -198,6 +203,7 @@ inline void scan_mzgaf(istream& in_stream, function<void(MzGafRecord& gaf_record
                 assert (step_offset < gaf_record.path[step_no].end);
             }
         } else {
+            step_offset = 0;
             if (step_no > 0) {
                 assert(step_no == gaf_record.path.size());
             }
