@@ -6,12 +6,13 @@ BASH_TAP_ROOT=./bash-tap
 PATH=../bin:$PATH
 PATH=../deps/hal:$PATH
 
-plan tests 22
+plan tests 24
 
 gzip -dc  hpp-20-2M/CHM13.fa.gz > CHM13.fa
 gzip -dc  hpp-20-2M/hg38.fa.gz > hg38.fa
 gzip -dc  hpp-20-2M/hg38-rev.fa.gz > hg38-rev.fa
 gzip -dc pafmask/chr20.bed.gz > chr20.bed
+gzip -dc hpp-20-2M/CHM13.fa.gz hpp-20-2M/hg38.fa.gz hpp-20-2M/hg38-rev.fa.gz hpp-20-2M/HG003.fa.gz hpp-20-2M/HG004.fa.gz > all.fa
 
 # validate the validator
 minimap2 hpp-20-2M/CHM13.fa.gz hpp-20-2M/hg38.fa.gz -c -A 30 -B 10 > CHM13_hg38.paf
@@ -31,12 +32,18 @@ is $? 0 "mzgaf2paf doesn't crash on simple forward alignment"
 python ./verify_matches.py CHM13.paf CHM13.fa hpp-20-2M.gfa.fa
 is $? 0 "paf checks out for very simple forward alignment"
 
+# do the same thing in stable coordiantes
+mzgaf2paf CHM13.gaf -L hpp-20-2M/contig_table.tsv | sed -e 's/id=[a-z,A-Z,0-9]*|//g' > CHM13_stable.paf
+is $? 0 "mzgaf2paf stable doesn't crash on simple forward alignment"
+python ./verify_matches.py CHM13_stable.paf CHM13.fa all.fa
+is $? 0 "paf checks out for very simple stable forward alignment"
+
 # clip it with pafmask
 pafmask CHM13.paf chr20.bed -v > CHM13.mask.paf
 python ./verify_matches.py CHM13.mask.paf CHM13.fa hpp-20-2M.gfa.fa
 is $? 0 "masked paf checks out for very simple forward alignment"
 
-rm -f  CHM13.paf CHM13.mask.paf
+rm -f  CHM13.paf CHM13.mask.paf CHM13_stable.paf
 
 # extract the PAF with rgfa2paf
 rgfa2paf hpp-20-2M.gfa > hpp-20-2M.paf
@@ -56,12 +63,18 @@ is $? 0 "mzgaf2paf doesn't crash on hg38 alignment"
 python ./verify_matches.py hg38.paf hg38.fa hpp-20-2M.gfa.fa
 is $? 0 "paf checks out for hg38 alignment"
 
+# same thing with stable coordinates
+mzgaf2paf hg38.gaf -L hpp-20-2M/contig_table.tsv | sed -e 's/id=[a-z,A-Z,0-9]*|//g' > hg38_stable.paf
+is $? 0 "mzgaf2paf doesn't crash on stable hg38 alignment"
+python ./verify_matches.py hg38_stable.paf hg38.fa all.fa
+is $? 0 "paf checks out for stable hg38 alignment"
+
 # clip it with pafmask
 pafmask hg38.paf chr20.bed -v > hg38.mask.paf
 python ./verify_matches.py hg38.mask.paf hg38.fa hpp-20-2M.gfa.fa
 is $? 0 "masked paf checks out for hg38 alignment"
 
-rm -f  hg38.paf hg38.mask.paf
+rm -f  hg38.paf hg38.mask.paf hg38_stable.paf
 
 # repeat without gap filter
 mzgaf2paf CHM13.gaf -g 0 > CHM13.paf
@@ -123,8 +136,8 @@ cat CHM13.fa hg38.fa > CHM13_hg38.fa
 python ./verify_matches.py CHM13_hg38_u1.paf CHM13_hg38.fa hpp-20-2M.gfa.fa
 is $? 0 "universal filter produces valid paf"
 
-rm -f CHM13_hg38.gaf CHM13_hg38_u0.paf CHM13_hg38_u1.paf CHM13_hg38.fa
+rm -f CHM13_hg38.gaf CHM13_hg38_u0.paf CHM13_hg38_u1.paf CHM13_hg38.fa 
 
-rm -f hpp-20-2M.gfa hpp-20-2M.gfa.fa CHM13.fa hg38.fa hg38-rev.fa CHM13.gaf hg38.gaf chr20.bed
+rm -f hpp-20-2M.gfa hpp-20-2M.gfa.fa CHM13.fa hg38.fa hg38-rev.fa CHM13.gaf hg38.gaf chr20.bed all.fa
 
 
