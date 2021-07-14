@@ -171,25 +171,19 @@ inline void scan_mzgaf(istream& in_stream, function<void(MzGafRecord& gaf_record
                 mz_record.target_length = get<2>(table_it->second);
                 if (mz_record.is_reverse && mz_record.num_minimizers > 0) {
                     // convert to forward coordinate on minigraph node
-                    cerr << "STEP " << step_no << endl;
-                    cerr << "IN COORD " << mz_record.target_start << " " << mz_record.target_end << " len=" << mz_record.target_length << endl;
                     mz_record.target_start = mz_copy.target_length - mz_copy.target_end;
                     mz_record.target_end = mz_copy.target_length - mz_copy.target_start;
-                    cerr << "REVLOCL COORD " << mz_record.target_start << " " << mz_record.target_end << " len=" << mz_record.target_length << endl;
-                    cerr << "target start (" << mz_record.target_start << ") += " << gaf_record.path[step_no].start << " + " << step_offset << endl;
                     mz_record.target_start += (gaf_record.path[step_no].end - mz_copy.target_length - step_offset);
                 } else {
                     mz_record.target_start += gaf_record.path[step_no].start + step_offset;
                 }
                 mz_record.target_end = mz_record.target_start + (mz_copy.target_end - mz_copy.target_start);
-                cerr << "REVGLOBAL COORD " << mz_record.target_start << " " << mz_record.target_end << " len=" << mz_record.target_length <<  " offset was " << step_offset << endl;
                 if (mz_record.is_reverse && mz_record.num_minimizers > 0) {
                     // convert to reverse coordinate on stable sequence
                     int64_t reverse_start = mz_record.target_length - mz_record.target_end;
                     int64_t reverse_end = mz_record.target_length - mz_record.target_start;
                     mz_record.target_start = reverse_start;
                     mz_record.target_end = reverse_end;
-                    cerr << "GLOBAL COORD " << mz_record.target_start << " " << mz_record.target_end << " len=" << mz_record.target_length << endl;
                 }
                 assert(mz_record.target_start <= mz_record.target_end);
                 assert(mz_record.target_start >= 0);
