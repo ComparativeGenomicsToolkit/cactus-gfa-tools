@@ -177,7 +177,7 @@ inline void scan_mzgaf(istream& in_stream, function<void(MzGafRecord& gaf_record
                     mz_record.target_end = mz_copy.target_length - mz_copy.target_start;
                     cerr << "REVLOCL COORD " << mz_record.target_start << " " << mz_record.target_end << " len=" << mz_record.target_length << endl;
                     cerr << "target start (" << mz_record.target_start << ") += " << gaf_record.path[step_no].start << " + " << step_offset << endl;
-                    mz_record.target_start += (gaf_record.path[step_no].end - mz_copy.target_length + step_offset);
+                    mz_record.target_start += (gaf_record.path[step_no].end - mz_copy.target_length - step_offset);
                 } else {
                     mz_record.target_start += gaf_record.path[step_no].start + step_offset;
                 }
