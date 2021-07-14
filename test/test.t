@@ -6,7 +6,7 @@ BASH_TAP_ROOT=./bash-tap
 PATH=../bin:$PATH
 PATH=../deps/hal:$PATH
 
-plan tests 24
+plan tests 27
 
 gzip -dc  hpp-20-2M/CHM13.fa.gz > CHM13.fa
 gzip -dc  hpp-20-2M/hg38.fa.gz > hg38.fa
@@ -74,7 +74,12 @@ pafmask hg38.paf chr20.bed -v > hg38.mask.paf
 python ./verify_matches.py hg38.mask.paf hg38.fa hpp-20-2M.gfa.fa
 is $? 0 "masked paf checks out for hg38 alignment"
 
-rm -f  hg38.paf hg38.mask.paf hg38_stable.paf
+# clip the stable one with pafmask
+pafmask hg38_stable.paf chr20.bed -v > hg38_stable.mask.paf
+python ./verify_matches.py hg38_stable.mask.paf hg38.fa all.fa
+is $? 0 "masked paf checks out for stable hg38 alignment"
+
+rm -f  hg38.paf hg38.mask.paf hg38_stable.paf hg38_stable.mask.paf
 
 # repeat without gap filter
 mzgaf2paf CHM13.gaf -g 0 > CHM13.paf
