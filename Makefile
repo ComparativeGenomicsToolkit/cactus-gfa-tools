@@ -37,7 +37,7 @@ INC_FLAGS = -I$(CWD)
 
 all: mzgaf2paf pafcoverage rgfa-split paf2lastz rgfa2paf pafmask
 
-mzgaf2paf: mzgaf2paf.o mzgaf2paf_main.o
+mzgaf2paf: mzgaf2paf.o mzgaf2paf_main.o pafcoverage.o
 	$(CXX) $(INCLUDE_FLAGS) $(CXXFLAGS) $(CPPFLAGS) -o mzgaf2paf mzgaf2paf_main.o mzgaf2paf.o pafcoverage.o $(LIB_FLAGS)
 
 mzgaf2paf_main.o:$(LIB_DEPS) mzgaf2paf_main.cpp mzgaf2paf.hpp mzgaf.hpp gafkluge.hpp pafcoverage.hpp
@@ -83,7 +83,7 @@ pafmask: pafmask_main.cpp rgfa-split.o pafcoverage.o
 	$(CXX) $(INCLUDE_FLAGS) $(CXXFLAGS) $(CPPFLAGS) -c pafmask_main.cpp $(INC_FLAGS)
 	$(CXX) $(INCLUDE_FLAGS) $(CXXFLAGS) $(CPPFLAGS) -o pafmask pafmask_main.o pafcoverage.o rgfa-split.o
 
-test : mzgaf2paf paf2lastz_test pafmask_test
+test : all paf2lastz_test pafmask_test
 	cd test && prove -v test.t
 
 paf2lastz_test: mapqTest scoreTest
