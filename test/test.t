@@ -6,7 +6,7 @@ BASH_TAP_ROOT=./bash-tap
 PATH=../bin:$PATH
 PATH=../deps/hal:$PATH
 
-plan tests 27
+plan tests 28
 
 gzip -dc  hpp-20-2M/CHM13.fa.gz > CHM13.fa
 gzip -dc  hpp-20-2M/hg38.fa.gz > hg38.fa
@@ -55,6 +55,15 @@ python ./verify_matches.py hpp-20-2M.paf.q CHM13.fa hpp-20-2M.gfa.fa
 is $? 0 "paf checks out when extracted from reference contig using rgfa2paf and fai for query lengths"
 
 rm -f  hpp-20-2M.paf CHM13.fa.fai hpp-20-2M.paf.q
+
+# now try a simple reverse case with stable coordinates
+minigraph -xggs -l10k hg38-rev.fa hpp-20-2M/CHM13.fa.gz hpp-20-2M/HG003.fa.gz hpp-20-2M/HG004.fa.gz > hg38-rev.gfa
+minigraph -xasm -t $(nproc) -K4g --inv=no -S --write-mz hg38-rev.gfa hg38.fa > hg38-rev.gaf
+mzgaf2paf hg38-rev.gaf -L hpp-20-2M/contig_table.tsv | sed -e 's/id=[a-z,A-Z,0-9,-]*|//g' > hg38-rev.paf
+python ./verify_matches.py hg38-rev.paf CHM13.fa all.fa
+is $? 0 "paf checks out for another reverse strand stable case"
+
+rm -f hg38-rev.gfa hg38-rev.gaf  hg38-rev.paf
 
 # align a new sequence (hg38) to it
 minigraph -xasm -t $(nproc) -K4g --inv=no -S --write-mz hpp-20-2M.gfa hpp-20-2M/hg38.fa.gz > hg38.gaf
