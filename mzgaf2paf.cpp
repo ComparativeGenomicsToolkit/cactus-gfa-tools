@@ -360,7 +360,6 @@ void update_query_coverage(const gafkluge::GafRecord& parent_record,
 
 unordered_map<string, tuple<string, int64_t, int64_t>> build_stable_lookup(const string& fa_table_path,
                                                                            const string& rgfa_path) {
-    cerr << "building" << endl;
     // load in the fasta header table: original contig name -> (cut contig name, event, length)
     unordered_map<string, tuple<string, string, size_t>> fa_header_table;
     if (!fa_table_path.empty()) {
