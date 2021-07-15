@@ -5,7 +5,10 @@
 
 #include "mzgaf2paf.hpp"
 #include "mzgaf.hpp"
+#include "pafcoverage.hpp"
+#include "gfakluge.hpp"
 #include <limits>
+#include <fstream>
 
 //#define debug
 
@@ -28,7 +31,8 @@ size_t mzgaf2paf(const MzGafRecord& gaf_record,
                  double universal_filter,
                  QueryCoverage& query_coverage,
                  int64_t min_overlap_len,                 
-                 const string& target_prefix) {
+                 const string& target_prefix,
+                 unordered_map<string, tuple<string, int64_t, int64_t>>& stable_lookup) {
 
     // paf coordinates are always on forward strand. but the mz output coordinates for the target
     // can apparently be on the reverse strand, so we flip them as needed
@@ -206,6 +210,17 @@ size_t mzgaf2paf(const MzGafRecord& gaf_record,
         swap(leading_deletions, leftover_deletions);
     }
 
+    // optional stable coordinate conversion
+    string stable_target_name = gaf_record.target_name;
+    int64_t stable_target_length = gaf_record.target_length;
+    int64_t stable_offset = 0;    
+    if (!stable_lookup.empty()) {
+        tuple<string, int64_t, int64_t>& stable_info = stable_lookup.at(gaf_record.target_name);
+        stable_target_name = get<0>(stable_info);
+        stable_target_length = get<2>(stable_info);
+        stable_offset =  get<1>(stable_info);
+    }
+
     if (!matches.empty()) {
         // output the paf columns
         paf_stream << parent_record.query_name << "\t"
@@ -213,10 +228,10 @@ size_t mzgaf2paf(const MzGafRecord& gaf_record,
                    << (gaf_record.query_start + leading_insertions) << "\t"
                    << (gaf_record.query_end - leftover_insertions) << "\t"
                    << (gaf_record.is_reverse ? "-" : "+") << "\t"
-                   << target_prefix << gaf_record.target_name << "\t"
-                   << gaf_record.target_length << "\t"
-                   << (paf_target_start + leading_deletions) << "\t"
-                   << (paf_target_end - leftover_deletions) << "\t"
+                   << target_prefix << stable_target_name << "\t"
+                   << stable_target_length << "\t"
+                   << (paf_target_start + leading_deletions + stable_offset) << "\t"
+                   << (paf_target_end - leftover_deletions + stable_offset) << "\t"
                    << total_matches << "\t"
                    << (gaf_record.target_end - gaf_record.target_start - leftover_deletions - leading_deletions) << "\t" // fudged
                    << parent_record.mapq << "\t" << "cg:Z:";
@@ -341,4 +356,75 @@ void update_query_coverage(const gafkluge::GafRecord& parent_record,
     for (size_t i = parent_record.query_start; i < parent_record.query_end; ++i) {
         cov_vec.increment(i);
     }
+}
+
+unordered_map<string, tuple<string, int64_t, int64_t>> build_stable_lookup(const string& fa_table_path,
+                                                                           const string& rgfa_path) {
+    cerr << "building" << endl;
+    // load in the fasta header table: original contig name -> (cut contig name, event, length)
+    unordered_map<string, tuple<string, string, size_t>> fa_header_table;
+    if (!fa_table_path.empty()) {
+        string buffer;
+        ifstream fa_lengths_stream(fa_table_path);
+        if (!fa_lengths_stream) {
+            cerr << "[mzgaf2paf] error: unable to open input lengths: " << fa_table_path << endl;
+            exit(1);
+        }
+        while (getline(fa_lengths_stream, buffer)) {
+            vector<string> toks;
+            split_delims(buffer, "\t\n", toks);
+            if (toks.size() == 4) {
+                assert(fa_header_table.count(toks[0]) == 0);
+                fa_header_table[toks[0]] = make_tuple(toks[1], toks[2], stol(toks[3]));
+            } else if (!toks.empty()) {
+                cerr << "[mzgaf2paf] error: Unable to parse fasta header table line: " << buffer << endl;
+                exit(1);
+            }
+        }
+        assert(!fa_header_table.empty());
+    }
+
+    // load in the rgfa information
+    unordered_map<string, tuple<string, int64_t, int64_t>> lookup_table;
+    function<void(const gfak::sequence_elem&)> visit_seq = [&](const gfak::sequence_elem& gfa_seq) {
+        bool found_SN = false;
+        bool found_SR = false;
+        bool found_SO = false;
+        int64_t rank;
+        int64_t offset;
+        string contig;
+        // parse the SN (contig) and SR (rank) optional tags
+        for (const gfak::opt_elem& oe : gfa_seq.opt_fields) {
+            if (oe.key == "SN") {
+                assert(found_SN == false);
+                contig = oe.val;
+                found_SN = true;
+            } else if (oe.key == "SR") {
+                assert(found_SR == false);
+                rank = stol(oe.val);
+                assert(rank >= 0);                               
+                found_SR = true;
+            }  else if (oe.key == "SO") {
+                assert(found_SO == false);
+                offset = stol(oe.val);
+                assert(offset >= 0);                               
+                found_SO = true;
+            }
+        }
+        assert(found_SN);
+        assert(found_SR);
+        assert(found_SO);
+
+        auto& header_info = fa_header_table.at(contig);
+        string cactus_name = "id=" + get<1>(header_info) + "|" + get<0>(header_info);        
+        
+        lookup_table[gfa_seq.name] = make_tuple(cactus_name, offset, get<2>(header_info));
+    };
+
+    // load the GFA
+    gfak::GFAKluge kluge;
+    kluge.for_each_sequence_line_in_file(rgfa_path.c_str(), visit_seq);
+
+    assert(!lookup_table.empty());
+    return lookup_table;
 }

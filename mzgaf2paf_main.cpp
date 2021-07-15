@@ -4,7 +4,6 @@
 #include <fstream>
 
 #include "mzgaf2paf.hpp"
-#include "pafcoverage.hpp"
 
 using namespace std;
 using namespace gafkluge;
@@ -24,7 +23,9 @@ void help(char** argv) {
        << "    -s, --min-node-length N             Ignore minimizers on GAF nodes of length < N [0]" << endl
        << "    -i, --strict-unversal               Count mapq and block length filters against universal (instead of ignoring)" << endl
        << "    -o, --min-overlap-length N          If >= query regions with size >= N overlap, ignore the query region.  If 1 query region with size >= N overlaps any regions of size <= N, ignore the smaller ones only. (0 = disable) [0]" << endl
-       << "    -L, --fa-header-table FILE          Table of contig informat (from cactus-preprocess --fastaHeaderTable). Allows stable coordinates to be used for PAF targets" << endl;
+       << "    -L, --fa-header-table FILE          Table of contig informat (from cactus-preprocess --fastaHeaderTable). Allows stable coordinates to be used for PAF targets" << endl
+       << "    -G, --rgfa FILE                     rGFA file used in conjunction with fa-header-table to produce stable coordinates" << endl;
+       
 }    
 
 int main(int argc, char** argv) {
@@ -43,6 +44,7 @@ int main(int argc, char** argv) {
     bool strict_universal = false;
     int64_t min_overlap_len = 0;
     string fa_table_path;
+    string rgfa_path;
        
     int c;
     optind = 1; 
@@ -61,13 +63,14 @@ int main(int argc, char** argv) {
             {"min-node-length", required_argument, 0, 's'},
             {"strict-unversal", no_argument, 0, 'i'},
             {"min-overlap-length", required_argument, 0, 'o'},
-            {"fa-lengths", no_argument, 0, 'L'},
+            {"fa-header-table", no_argument, 0, 'L'},
+            {"rgfa", required_argument, 0, 'G'},
             {0, 0, 0, 0}
         };
 
         int option_index = 0;
 
-        c = getopt_long (argc, argv, "hp:b:q:g:m:u:ns:io:L:",
+        c = getopt_long (argc, argv, "hp:b:q:g:m:u:ns:io:L:G:",
                          long_options, &option_index);
 
         // Detect the end of the options.
@@ -108,6 +111,9 @@ int main(int argc, char** argv) {
             break;
         case 'L':
             fa_table_path = optarg;
+            break;
+        case 'G':
+            rgfa_path = optarg;
             break;
         case 'h':
         case '?':
@@ -156,6 +162,18 @@ int main(int argc, char** argv) {
         return 1;
     }
 
+    if (fa_table_path.empty() != rgfa_path.empty()) {
+        cerr << "[mzgaf2paf] error: -L and -G must always be used together" << endl;
+        return 1;
+    }
+
+    // load up the stable coordinate lookup
+    unordered_map<string, tuple<string, int64_t, int64_t>> stable_lookup;
+    if (!fa_table_path.empty() && !rgfa_path.empty()) {
+        stable_lookup = build_stable_lookup(fa_table_path, rgfa_path);
+        assert(!stable_lookup.empty());
+    }
+
     // keep global counts of minimizers (used only for the universal filter)
     MZMap mz_map;
 
@@ -165,29 +183,6 @@ int main(int argc, char** argv) {
     size_t total_match_length = 0;
     size_t total_target_block_length = 0;
     size_t total_records = 0;
-
-    // load in the fasta header table: original contig name -> (cut contig name, event, length)
-    unordered_map<string, tuple<string, string, size_t>> fa_header_table;
-    if (!fa_table_path.empty()) {
-        string buffer;
-        ifstream fa_lengths_stream(fa_table_path);
-        if (!fa_lengths_stream) {
-            cerr << "[mzgaf2paf] error: unable to open input lengths: " << fa_table_path << endl;
-            return 1;
-        }
-        while (getline(fa_lengths_stream, buffer)) {
-            vector<string> toks;
-            split_delims(buffer, "\t\n", toks);
-            if (toks.size() == 4) {
-                assert(fa_header_table.count(toks[0]) == 0);
-                fa_header_table[toks[0]] = make_tuple(toks[1], toks[2], stol(toks[3]));
-            } else if (!toks.empty()) {
-                cerr << "[mzgaf2paf] error: Unable to parse fasta header table line: " << buffer << endl;
-                return 1;
-            }
-        }
-        assert(!fa_header_table.empty());
-    }
     
     for (const string& in_path : in_paths) {
 
@@ -223,8 +218,7 @@ int main(int argc, char** argv) {
                            if (min_overlap_len > 0 && parent_record.block_length >= min_overlap_len) {
                                update_query_coverage(parent_record, query_coverage);
                            }
-                       },
-                       !fa_table_path.empty() ? &fa_header_table : nullptr);
+                       });
             
             // go back to the beginning by resetting the stream
             in_stream->clear();
@@ -251,14 +245,14 @@ int main(int argc, char** argv) {
                                                     universal_filter,
                                                     query_coverage,
                                                     min_overlap_len,
-                                                    target_prefix);
+                                                    target_prefix,
+                                                    stable_lookup);
                     
                     total_target_block_length += gaf_record.target_end - gaf_record.target_start;
                     ++total_records;
                 }
             },
-            nullptr,
-            !fa_table_path.empty() ? &fa_header_table : nullptr);
+            nullptr);
     }
     
     cerr << "Converted " << total_records << " recs with " << total_match_length << " bp of cigar Matches over " << total_target_block_length

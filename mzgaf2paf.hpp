@@ -9,6 +9,8 @@
 #include <iostream>
 #include <unordered_map>
 
+using namespace std;
+
 /** offset -> <number of minimzers, number of mappings> of given target sequence
  */
 typedef vector<pair<uint16_t, uint16_t>> MZCount;
@@ -72,7 +74,8 @@ size_t mzgaf2paf(const gafkluge::MzGafRecord& gaf_record,
                  double universal_filter,
                  QueryCoverage& query_coverage,
                  int64_t min_overlap_len,
-                 const string& target_prefix = "");
+                 const string& target_prefix,
+                 unordered_map<string, tuple<string, int64_t, int64_t>>& stable_lookup_table);
 
 /* update the counts for one mapping of query to target.  if the any of the filters
  * fail, the coverage count is updated, but none of the minimizer counts.
@@ -94,3 +97,8 @@ void combine_mz_maps(MZMap& map1, MZMap& map2, bool reset_multiple_counts_to_0);
  */
 void update_query_coverage(const gafkluge::GafRecord& parent_record,
                            QueryCoverage& query_coverage);
+
+/* get the lookup needed for stable coordinates
+ */
+unordered_map<string, tuple<string, int64_t, int64_t>> build_stable_lookup(const string& fasta_header_path,
+                                                                           const string& rgfa_path);

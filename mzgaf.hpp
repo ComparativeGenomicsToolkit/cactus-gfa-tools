@@ -6,9 +6,8 @@
 
 
 #pragma once
+// copied from https://github.com/vgteam/libvgio/blob/master/include/vg/io/gafkluge.hpp
 #include <cassert>
-#include <unordered_map>
-#include <limits>
 #include "gafkluge.hpp"
 
 using namespace std;
@@ -141,102 +140,20 @@ inline void parse_mzgaf_record(const std::string& gaf_line, MzGafRecord& gaf_rec
  *  used for filtering or validation)
  */
 inline void scan_mzgaf(istream& in_stream, function<void(MzGafRecord& gaf_record, GafRecord& parent_record)> visit_fn,
-                       function<void(GafRecord& parent_record)> parent_fn = nullptr,
-                       const unordered_map<string, tuple<string, string, size_t>>* fa_header_table = nullptr) {
+                       function<void(GafRecord& parent_record)> parent_fn = nullptr) {
     string line_buffer;
     GafRecord gaf_record;
     MzGafRecord mz_record;
-    size_t step_no = 0;
-    size_t target_pos = 0;
-    bool single_contig = false; // just a single contig like "chr1"
-    size_t step_offset = 0; // where we are in the step's stable sequence
-    MzGafRecord mz_copy;
     while (getline(in_stream, line_buffer)) {
         if (line_buffer[0] == '*') {
             assert(!gaf_record.query_name.empty());
             parse_mzgaf_record(line_buffer, mz_record);
-            if (fa_header_table) {
-                // override node coordinates with stable coordinate from parent's path step
-                // this only works under the assumption that there is one step per * line
-                assert(step_no < gaf_record.path.size());
-                auto table_it = fa_header_table->find(gaf_record.path[step_no].name);
-                if (table_it == fa_header_table->end()) {
-                    throw runtime_error("Unable to find contig " + gaf_record.path[step_no].name + " in header table");
-                }
-                mz_copy.target_name = mz_record.target_name;
-                mz_copy.target_length = mz_record.target_length;
-                mz_copy.target_start = mz_record.target_start;
-                mz_copy.target_end = mz_record.target_end;
-                mz_record.target_name = "id=" + get<1>(table_it->second) + "|" + get<0>(table_it->second);
-                mz_record.target_length = get<2>(table_it->second);
-                if (mz_record.is_reverse && mz_record.num_minimizers > 0) {
-                    // convert to forward coordinate on minigraph node
-                    mz_record.target_start = mz_copy.target_length - mz_copy.target_end;
-                    mz_record.target_end = mz_copy.target_length - mz_copy.target_start;
-                    mz_record.target_start += (gaf_record.path[step_no].end - mz_copy.target_length - step_offset);
-                } else {
-                    mz_record.target_start += gaf_record.path[step_no].start + step_offset;
-                }
-                mz_record.target_end = mz_record.target_start + (mz_copy.target_end - mz_copy.target_start);
-                if (mz_record.is_reverse && mz_record.num_minimizers > 0) {
-                    // convert to reverse coordinate on stable sequence
-                    int64_t reverse_start = mz_record.target_length - mz_record.target_end;
-                    int64_t reverse_end = mz_record.target_length - mz_record.target_start;
-                    mz_record.target_start = reverse_start;
-                    mz_record.target_end = reverse_end;
-                }
-                assert(mz_record.target_start <= mz_record.target_end);
-                assert(mz_record.target_start >= 0);
-                assert(mz_record.target_start < mz_record.target_length);
-                assert(mz_record.target_end <= mz_record.target_length);
-            }
             visit_fn(mz_record, gaf_record);
-            if (fa_header_table) {
-                // put everything back to the way it was before overriding
-                mz_record.target_name = mz_copy.target_name;
-                mz_record.target_length = mz_copy.target_length;
-                mz_record.target_start = mz_copy.target_start;
-                mz_record.target_end = mz_copy.target_end;
-            }
-            // we move forward in the path by the length (second column of the mz line)
-            step_offset += mz_record.target_length;
-#ifdef debug
-            cerr << "added " << mz_record.target_length << " to get " << step_offset;            
-            cerr << " our current contig size is " << gaf_record.path[step_no].end << " with step no " << step_no << endl;
-#endif
-            assert(mz_record.target_end - mz_record.target_start <=  mz_record.target_length);
-            if (gaf_record.path[step_no].start + step_offset == gaf_record.path[step_no].end) {
-                // if we're off the step, advance
-                ++step_no;
-                if (step_no < gaf_record.path.size()) {
-                    step_offset = 0;
-                } else {
-                    step_offset = numeric_limits<size_t>::max();
-                }
-            } else if (!single_contig) {
-                assert (step_offset < gaf_record.path[step_no].end);
-            }
         } else {
-            step_offset = 0;
-            if (step_no > 0) {
-                assert(step_no == gaf_record.path.size());
-            }
             parse_gaf_record(line_buffer, gaf_record);
-            target_pos = gaf_record.path_start;
-            if (fa_header_table && gaf_record.path[0].is_stable && !gaf_record.path[0].is_interval) {
-                // hack a single-chrom contig like "chr9" to look like an interval "chr9:0-length"
-                // so no special logic needed
-                assert(gaf_record.path.size() == 1);
-                auto table_it = fa_header_table->find(gaf_record.path[0].name);
-                gaf_record.path[0].start = 0;
-                gaf_record.path[0].end = get<2>(table_it->second);
-                gaf_record.path[0].is_interval = true;                
-            }
-            single_contig = gaf_record.path.size() == 1 && gaf_record.path[0].is_stable && gaf_record.path[0].is_interval == false;
             if (parent_fn) {
                 parent_fn(gaf_record);
             }
-            step_no = 0;
         }
     }
 }

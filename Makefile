@@ -37,13 +37,13 @@ INC_FLAGS = -I$(CWD)
 
 all: mzgaf2paf pafcoverage rgfa-split paf2lastz rgfa2paf pafmask
 
-mzgaf2paf: mzgaf2paf.o mzgaf2paf_main.o pafcoverage.o
+mzgaf2paf: mzgaf2paf.o mzgaf2paf_main.o pafcoverage.o 
 	$(CXX) $(INCLUDE_FLAGS) $(CXXFLAGS) $(CPPFLAGS) -o mzgaf2paf mzgaf2paf_main.o mzgaf2paf.o pafcoverage.o $(LIB_FLAGS)
 
-mzgaf2paf_main.o:$(LIB_DEPS) mzgaf2paf_main.cpp mzgaf2paf.hpp mzgaf.hpp gafkluge.hpp pafcoverage.hpp
+mzgaf2paf_main.o:$(LIB_DEPS) mzgaf2paf_main.cpp mzgaf2paf.hpp mzgaf.hpp gafkluge.hpp
 	$(CXX) $(INCLUDE_FLAGS) $(CXXFLAGS) $(CPPFLAGS) -c mzgaf2paf_main.cpp $(INC_FLAGS)
 
-mzgaf2paf.o:$(LIB_DEPS) mzgaf2paf.cpp mzgaf2paf.hpp mzgaf.hpp gafkluge.hpp
+mzgaf2paf.o:$(LIB_DEPS) mzgaf2paf.cpp mzgaf2paf.hpp mzgaf.hpp gafkluge.hpp pafcoverage.hpp
 	$(CXX) $(INCLUDE_FLAGS) $(CXXFLAGS) $(CPPFLAGS) -c mzgaf2paf.cpp $(INC_FLAGS)
 
 pafcoverage: pafcoverage.o pafcoverage_main.o
