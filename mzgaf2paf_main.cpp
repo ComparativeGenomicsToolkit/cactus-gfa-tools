@@ -4,6 +4,7 @@
 #include <fstream>
 
 #include "mzgaf2paf.hpp"
+#include "pafcoverage.hpp"
 
 using namespace std;
 using namespace gafkluge;
@@ -22,7 +23,8 @@ void help(char** argv) {
        << "    -n, --node-based-universal          Universal computed on entire node instead of mapped region" << endl
        << "    -s, --min-node-length N             Ignore minimizers on GAF nodes of length < N [0]" << endl
        << "    -i, --strict-unversal               Count mapq and block length filters against universal (instead of ignoring)" << endl
-       << "    -o, --min-overlap-length N          If >= query regions with size >= N overlap, ignore the query region.  If 1 query region with size >= N overlaps any regions of size <= N, ignore the smaller ones only. (0 = disable) [0]" << endl;
+       << "    -o, --min-overlap-length N          If >= query regions with size >= N overlap, ignore the query region.  If 1 query region with size >= N overlaps any regions of size <= N, ignore the smaller ones only. (0 = disable) [0]" << endl
+       << "    -L, --fa-header-table FILE          Table of contig informat (from cactus-preprocess --fastaHeaderTable). Allows stable coordinates to be used for PAF targets" << endl;
 }    
 
 int main(int argc, char** argv) {
@@ -40,6 +42,7 @@ int main(int argc, char** argv) {
     int64_t min_node_len = 0;
     bool strict_universal = false;
     int64_t min_overlap_len = 0;
+    string fa_table_path;
        
     int c;
     optind = 1; 
@@ -58,12 +61,13 @@ int main(int argc, char** argv) {
             {"min-node-length", required_argument, 0, 's'},
             {"strict-unversal", no_argument, 0, 'i'},
             {"min-overlap-length", required_argument, 0, 'o'},
+            {"fa-lengths", no_argument, 0, 'L'},
             {0, 0, 0, 0}
         };
 
         int option_index = 0;
 
-        c = getopt_long (argc, argv, "hp:b:q:g:m:u:ns:io:",
+        c = getopt_long (argc, argv, "hp:b:q:g:m:u:ns:io:L:",
                          long_options, &option_index);
 
         // Detect the end of the options.
@@ -101,6 +105,9 @@ int main(int argc, char** argv) {
             break;
         case 'o':
             min_overlap_len = std::stol(optarg);
+            break;
+        case 'L':
+            fa_table_path = optarg;
             break;
         case 'h':
         case '?':
@@ -144,6 +151,11 @@ int main(int argc, char** argv) {
         return 1;
     }
 
+    if (!fa_table_path.empty() && !target_prefix.empty()) {
+        cerr << "[mzgaf2paf] error: -p and -L cannot be used together" << endl;
+        return 1;
+    }
+
     // keep global counts of minimizers (used only for the universal filter)
     MZMap mz_map;
 
@@ -154,6 +166,29 @@ int main(int argc, char** argv) {
     size_t total_target_block_length = 0;
     size_t total_records = 0;
 
+    // load in the fasta header table: original contig name -> (cut contig name, event, length)
+    unordered_map<string, tuple<string, string, size_t>> fa_header_table;
+    if (!fa_table_path.empty()) {
+        string buffer;
+        ifstream fa_lengths_stream(fa_table_path);
+        if (!fa_lengths_stream) {
+            cerr << "[mzgaf2paf] error: unable to open input lengths: " << fa_table_path << endl;
+            return 1;
+        }
+        while (getline(fa_lengths_stream, buffer)) {
+            vector<string> toks;
+            split_delims(buffer, "\t\n", toks);
+            if (toks.size() == 4) {
+                assert(fa_header_table.count(toks[0]) == 0);
+                fa_header_table[toks[0]] = make_tuple(toks[1], toks[2], stol(toks[3]));
+            } else if (!toks.empty()) {
+                cerr << "[mzgaf2paf] error: Unable to parse fasta header table line: " << buffer << endl;
+                return 1;
+            }
+        }
+        assert(!fa_header_table.empty());
+    }
+    
     for (const string& in_path : in_paths) {
 
         ifstream in_file;
@@ -188,7 +223,8 @@ int main(int argc, char** argv) {
                            if (min_overlap_len > 0 && parent_record.block_length >= min_overlap_len) {
                                update_query_coverage(parent_record, query_coverage);
                            }
-                       });
+                       },
+                       !fa_table_path.empty() ? &fa_header_table : nullptr);
             
             // go back to the beginning by resetting the stream
             in_stream->clear();
@@ -220,8 +256,9 @@ int main(int argc, char** argv) {
                     total_target_block_length += gaf_record.target_end - gaf_record.target_start;
                     ++total_records;
                 }
-            });
-
+            },
+            nullptr,
+            !fa_table_path.empty() ? &fa_header_table : nullptr);
     }
     
     cerr << "Converted " << total_records << " recs with " << total_match_length << " bp of cigar Matches over " << total_target_block_length
@@ -229,3 +266,4 @@ int main(int argc, char** argv) {
     
     return 0;
 }
+

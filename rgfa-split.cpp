@@ -20,7 +20,8 @@ for each node in sorted list
    scan all edges for rank i-1 adjacencies
    build consensus contig
 */
-pair<unordered_map<int64_t, int64_t>, vector<string>> rgfa2contig(const string& gfa_path) {
+pair<unordered_map<int64_t, int64_t>, vector<string>> rgfa2contig(const string& gfa_path,
+                                                                  unordered_map<int64_t, tuple<string, int64_t, int64_t>>* node_to_rgfa_tags) {
 
     // map rank -> nodes
     map<int64_t, list<int64_t>> rank_to_nodes;
@@ -44,7 +45,9 @@ pair<unordered_map<int64_t, int64_t>, vector<string>> rgfa2contig(const string& 
         int64_t gfa_id = node_id(gfa_seq.name);
         bool found_SN = false;
         bool found_SR = false;
+        bool found_SO = false;
         int64_t rank;
+        int64_t offset;
         string contig;
         // parse the SN (contig) and SR (rank) optional tags
         for (const gfak::opt_elem& oe : gfa_seq.opt_fields) {
@@ -57,6 +60,11 @@ pair<unordered_map<int64_t, int64_t>, vector<string>> rgfa2contig(const string& 
                 rank = stol(oe.val);
                 assert(rank >= 0);                               
                 found_SR = true;
+            }  else if (oe.key == "SO") {
+                assert(found_SO == false);
+                offset = stol(oe.val);
+                assert(offset >= 0);                               
+                found_SO = true;
             }
         }
         assert(found_SN);
@@ -76,6 +84,10 @@ pair<unordered_map<int64_t, int64_t>, vector<string>> rgfa2contig(const string& 
                 contigs.push_back(contig);
             }
             node_to_contig[gfa_id] = contig_id;
+        }
+        // remember the full rgfa information (optional)
+        if (node_to_rgfa_tags) {
+            (*node_to_rgfa_tags)[gfa_id] = make_tuple(contig, offset, offset + gfa_seq.length);
         }
     };
 
@@ -148,6 +160,43 @@ pair<unordered_map<int64_t, int64_t>, vector<string>> rgfa2contig(const string& 
     return make_pair(node_to_contig, contigs);
 }
 
+unordered_map<string, RefIntervalTree> build_stable_map(const unordered_map<int64_t, int64_t>& mg_node_to_ref_contig,
+                                                        const vector<string>& ref_contig_names,
+                                                        const unordered_map<int64_t, tuple<string, int64_t, int64_t>>& mg_node_to_rgfa_tags,
+                                                        const unordered_map<string, tuple<string, string, size_t>>& fasta_header_table) {
+    unordered_map<string, vector<RefInterval>> stable_intervals;
+
+    for (const auto& id_rgfa : mg_node_to_rgfa_tags) {
+        const string& rgfa_sequence_name = get<0>(id_rgfa.second);
+        const int64_t& rgfa_sequence_start = get<1>(id_rgfa.second);
+        const int64_t& rgfa_sequence_end = get<2>(id_rgfa.second);
+        assert(fasta_header_table.count(rgfa_sequence_name));
+        auto& header_info = fasta_header_table.at(rgfa_sequence_name);
+        string cactus_name = "id=" + get<1>(header_info) + "|" + get<0>(header_info);
+        vector<RefInterval>& intervals = stable_intervals[cactus_name];
+        const int64_t& mg_node_id = id_rgfa.first;
+        int64_t ref_contig_id = mg_node_to_ref_contig.at(mg_node_id);
+        intervals.push_back(RefInterval(rgfa_sequence_start, rgfa_sequence_end - 1, ref_contig_id));
+    }
+
+    unordered_map<string, RefIntervalTree> stable_map;
+
+    for (auto& name_intervals : stable_intervals) {
+        RefIntervalTree ref_intervals(name_intervals.second);
+        stable_map[name_intervals.first] = std::move(ref_intervals);
+    }
+
+    return stable_map;
+}
+
+int64_t query_stable_map(unordered_map<string, RefIntervalTree>& stable_map,
+                         const string& contig_name, int64_t pos) {
+    assert(stable_map.count(contig_name));
+    RefIntervalTree& intervals = stable_map[contig_name];
+    vector<RefInterval> overlapping = intervals.findOverlapping(pos, pos);
+    assert(overlapping.size() == 1);
+    return overlapping[0].value;
+}
 
 pair<unordered_map<int64_t, int64_t>, vector<string>> load_contig_map(const string& contgs_path) {
     unordered_map<int64_t, int64_t> contig_map;
@@ -211,7 +260,7 @@ void set_other_contig_paf(unordered_map<string, int64_t>& target_to_id,
  * Use contigs identified above to split PAF
  */
 void paf_split(const string& input_paf_path,
-               function<int64_t(const string&)> name_to_refid,
+               function<int64_t(const string&, int64_t)> name_to_refid,
                const vector<string>& contigs,
                function<bool(const string&)> visit_contig,
                const string& output_prefix,
@@ -246,12 +295,13 @@ void paf_split(const string& input_paf_path,
         string& query_name = toks[0];
         int64_t query_length = stol(toks[1]);
         string& target_name = toks[5];
+        int64_t target_start = stol(toks[7]);
         int64_t matching_bases = stol(toks[9]);
         int64_t mapq = stol(toks[11]);
 
         // use the map to go from the target name (rgfa node id in this case) to t
         // the reference contig (ex chr20)
-        int64_t reference_id = name_to_refid(target_name);
+        int64_t reference_id = name_to_refid(target_name, target_start);
         
         // also count tiny indels between matches
         int64_t small_gap_bases = count_small_gap_bases(toks, max_gap_as_match);
@@ -478,11 +528,12 @@ void paf_split(const string& input_paf_path,
         int64_t query_start = stol(toks[2]);
         int64_t query_end = stol(toks[3]);
         string& target_name = toks[5];
+        int64_t target_start = stol(toks[7]);
         target_set.insert(target_name);
 
         // use the map to go from the target name (rgfa node id in this case) to
         // the reference contig (ex chr20)
-        int64_t target_reference_id = name_to_refid(target_name);
+        int64_t target_reference_id = name_to_refid(target_name, target_start);
 
         assert(query_ref_map.count(query_name));
         CoverageIntervalTree& intervals = query_ref_map.at(query_name);
@@ -564,13 +615,13 @@ void paf_split(const string& input_paf_path,
         mg_contigs.push_back(target_name);
     }
     std::sort(mg_contigs.begin(), mg_contigs.end(), [&](const string& a, const string& b) {
-            return contigs[name_to_refid(a)] < contigs[name_to_refid(b)];
+            return contigs[name_to_refid(a, 0)] < contigs[name_to_refid(b, 0)];
         });
     int64_t prev_ref_contig_id = -1;
     ofstream out_contigs_stream;
     for (const auto& target_name : mg_contigs) {
-        int64_t reference_contig_id = name_to_refid(target_name);
-        const string& reference_contig = contigs[name_to_refid(target_name)];
+        int64_t reference_contig_id = name_to_refid(target_name, 0);
+        const string& reference_contig = contigs[name_to_refid(target_name, 0)];
         if (visit_contig(reference_contig) ||
             (ambiguous_id >= 0 && reference_contig == contigs[ambiguous_id])) {  
             if (reference_contig_id != prev_ref_contig_id) {
