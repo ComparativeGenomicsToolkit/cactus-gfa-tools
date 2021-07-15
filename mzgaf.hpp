@@ -196,7 +196,7 @@ inline void scan_mzgaf(istream& in_stream, function<void(MzGafRecord& gaf_record
                 mz_record.target_name = mz_copy.target_name;
                 mz_record.target_length = mz_copy.target_length;
                 mz_record.target_start = mz_copy.target_start;
-                mz_record.target_end = mz_copy.target_end;                
+                mz_record.target_end = mz_copy.target_end;
             }
             // we move forward in the path by the length (second column of the mz line)
             step_offset += mz_record.target_length;
@@ -223,6 +223,15 @@ inline void scan_mzgaf(istream& in_stream, function<void(MzGafRecord& gaf_record
             }
             parse_gaf_record(line_buffer, gaf_record);
             target_pos = gaf_record.path_start;
+            if (fa_header_table && gaf_record.path[0].is_stable && !gaf_record.path[0].is_interval) {
+                // hack a single-chrom contig like "chr9" to look like an interval "chr9:0-length"
+                // so no special logic needed
+                assert(gaf_record.path.size() == 1);
+                auto table_it = fa_header_table->find(gaf_record.path[0].name);
+                gaf_record.path[0].start = 0;
+                gaf_record.path[0].end = get<2>(table_it->second);
+                gaf_record.path[0].is_interval = true;                
+            }
             single_contig = gaf_record.path.size() == 1 && gaf_record.path[0].is_stable && gaf_record.path[0].is_interval == false;
             if (parent_fn) {
                 parent_fn(gaf_record);
