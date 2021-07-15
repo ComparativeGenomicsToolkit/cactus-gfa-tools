@@ -19,6 +19,7 @@ void help(char** argv) {
        << "    -m, --input-contig-map FILE             Use tsv map (computed with -M) instead of rGFA" << endl
        << "    -p, --paf FILE                          PAF file to split" << endl
        << "    -B, --bed FILE                          BED file.  Used to subtract out softmasked regions when computing coverage (multiple allowed)" << endl
+       << "    -L, --fa-header-table FILE              Table of contig informat (from cactus-preprocess --fastaHeaderTable). Allows stable coordinates to be used for PAF targets" << endl
        << "output options: " << endl 
        << "    -b, --output-prefix PREFIX              All output files will be of the form <PREFIX><contig>.paf/.fa_contigs" << endl
        << "    -M, --output-contig-map FILE            Output rgfa node -> contig map to this file" << endl
@@ -39,7 +40,7 @@ void help(char** argv) {
        << "    -a, --ambiguous-name NAME               All query contigs that do not meet min coverage (-n) assigned to single reference with name NAME" << endl
        << "    -A, --min-mapq N                        Don't count PAF lines with MAPQ<N towards coverage" << endl
        << "    -r, --reference-prefix PREFIX           Don't apply ambiguity filters to query contigs with this prefix" << endl
-       << "    -L, --log FILE                          Keep track of filtered and assigned contigs in given file [stderr]" << endl;
+       << "    -l, --log FILE                          Keep track of filtered and assigned contigs in given file [stderr]" << endl;
 }    
 
 int main(int argc, char** argv) {
@@ -49,7 +50,8 @@ int main(int argc, char** argv) {
     string input_contig_map_path;
     string input_paf_path;
     string bed_path;
-
+    string fa_table_path;
+    
     // output
     string output_prefix;
     string output_contig_map_path;
@@ -85,6 +87,7 @@ int main(int argc, char** argv) {
             {"input-contig-map", required_argument, 0, 'm'},
             {"paf", required_argument, 0, 'p'},
             {"bed", required_argument, 0, 'B'},
+            {"fa-header-table", no_argument, 0, 'L'},            
             {"output-prefix", required_argument, 0, 'b'},
             {"output-contig-map", required_argument, 0, 'M'},
             {"split-gfa", no_argument, 0, 'G'},
@@ -102,13 +105,13 @@ int main(int argc, char** argv) {
             {"ambiguous-name", required_argument, 0, 'a'},
             {"min-mapq", required_argument, 0, 'A'},
             {"reference-prefix", required_argument, 0, 'r'},
-            {"log", required_argument, 0, 'L'},
+            {"log", required_argument, 0, 'l'},
             {0, 0, 0, 0}
         };
 
         int option_index = 0;
 
-        c = getopt_long (argc, argv, "hg:m:p:B:b:M:Gq:c:C:o:n:N:T:Q:u:sP:a:A:r:L:",
+        c = getopt_long (argc, argv, "hg:m:p:B:b:M:Gq:c:C:o:n:N:T:Q:u:sP:a:A:r:l:",
                          long_options, &option_index);
 
         // Detect the end of the options.
@@ -131,6 +134,9 @@ int main(int argc, char** argv) {
             break;
         case 'b':
             output_prefix = optarg;
+            break;
+        case 'L':
+            fa_table_path = optarg;
             break;
         case 'M':
             output_contig_map_path = optarg;
@@ -180,7 +186,7 @@ int main(int argc, char** argv) {
         case 'r':
             reference_prefix = optarg;
             break;
-        case 'L':
+        case 'l':
             log_path = optarg;
             break;
         case 'h':
@@ -252,6 +258,26 @@ int main(int argc, char** argv) {
             exit(1);
         }
     };
+
+    // load in the fasta header table: original contig name -> (cut contig name, event, length)
+    unordered_map<string, tuple<string, string, size_t>> fa_header_table;
+    if (!fa_table_path.empty()) {
+        check_ifile(fa_table_path);         
+        string buffer;
+        ifstream fa_lengths_stream(fa_table_path);
+        while (getline(fa_lengths_stream, buffer)) {
+            vector<string> toks;
+            split_delims(buffer, "\t\n", toks);
+            if (toks.size() == 4) {
+                assert(fa_header_table.count(toks[0]) == 0);
+                fa_header_table[toks[0]] = make_tuple(toks[1], toks[2], stol(toks[3]));
+            } else if (!toks.empty()) {
+                throw("error: Unable to parse fasta header table line: " + buffer);
+            }
+        }
+        assert(!fa_header_table.empty());
+    }
+    unordered_map<int64_t, tuple<string, int64_t, int64_t>> node_to_rgfa_tags;
     
     // get the partition of GFA nodes -> reference contig
     pair<unordered_map<int64_t, int64_t>, vector<string>> partition;
@@ -259,7 +285,7 @@ int main(int argc, char** argv) {
     if (!rgfa_path.empty()) {
         // compute from minigraph output
         check_ifile(rgfa_path);
-        partition = rgfa2contig(rgfa_path);
+        partition = rgfa2contig(rgfa_path, !fa_table_path.empty() ? &node_to_rgfa_tags : nullptr);
     } else if (!input_contig_map_path.empty()) {
         // load table
         check_ifile(input_contig_map_path);
@@ -277,6 +303,12 @@ int main(int argc, char** argv) {
                 partition.second.push_back(toks[5]);
             }
         }   
+    }
+
+    // get the stable map that can map targets of form id=HG00436.1|JAGYVO010000001.1 back to chr1
+    unordered_map<string, RefIntervalTree> stable_map;
+    if (!fa_table_path.empty()) {
+        stable_map = build_stable_map(partition.first, partition.second, node_to_rgfa_tags, fa_header_table);
     }
     
     // output the contig map if path given
@@ -351,18 +383,24 @@ int main(int argc, char** argv) {
     if (!input_paf_path.empty()) {
         check_ifile(input_paf_path);
         // toggle how we want to handle target names, depending if the PAF comes from minigraph or minimap2
-        function<int64_t(const string&)> name_to_refid;
+        function<int64_t(const string&, int64_t)> name_to_refid;
         if (!rgfa_path.empty()) {
-            name_to_refid = [&](const string& target_name) {
-                // use the map to go from the target name (rgfa node id in this case) to t
-                // the reference contig (ex chr20)
-                int64_t target_id = node_id(target_name);
-                assert(partition.first.count(target_id));
-                int64_t reference_id = partition.first.at(target_id);
-                return reference_id;
-            };
+            if (!fa_table_path.empty()) {
+                name_to_refid = [&](const string& target_name, int64_t target_pos) {
+                    return query_stable_map(stable_map, target_name, target_pos);
+                };
+            } else {
+                name_to_refid = [&](const string& target_name, int64_t) {
+                    // use the map to go from the target name (rgfa node id in this case) to t
+                    // the reference contig (ex chr20)
+                    int64_t target_id = node_id(target_name);
+                    assert(partition.first.count(target_id));
+                    int64_t reference_id = partition.first.at(target_id);
+                    return reference_id;
+                };
+            }
         } else {
-            name_to_refid = [&](const string& target_name) {
+            name_to_refid = [&](const string& target_name, int64_t) {
                 // just use a trivial map expeting the contig names from minimap2
                 assert(target_to_id.count(target_name));
                 return target_to_id[target_name];

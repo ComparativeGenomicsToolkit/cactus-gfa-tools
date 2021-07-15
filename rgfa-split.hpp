@@ -14,8 +14,30 @@ using namespace std;
 /**
  * Returns a map from node-id (string, ex S1) to reference contig id (int32_t)
  * as well as a map of reference contig id to reference contig name (ex chr2) (vector<string>)
+ *
+ * If specified, the rgfa tag information will be saved in node_to_rgfa_tags.  This is a hack
+ * in order to extend support to PAFs with stable sequence names (instead of minigraph node ids) as targets
+ * 
  */
-pair<unordered_map<int64_t, int64_t>, vector<string>> rgfa2contig(const string& gfa_path);
+pair<unordered_map<int64_t, int64_t>, vector<string>> rgfa2contig(const string& gfa_path,
+                                                                  unordered_map<int64_t, tuple<string, int64_t, int64_t>>* node_to_rgfa_tags = nullptr);
+
+/**
+ * Builds a map from global positions to REFOFFSET (ref_contig id as position in ref_contig_names)
+ * First, the interval tree is looked up using cactus-style contig name: id=EVENT|CONTIG
+ * Then the position is queried in the interval tree to return the ref id
+ */
+typedef IntervalTree<int64_t, int64_t> RefIntervalTree;
+typedef RefIntervalTree::interval RefInterval;
+unordered_map<string, RefIntervalTree> build_stable_map(const unordered_map<int64_t, int64_t>& mg_node_to_ref_contig,
+                                                        const vector<string>& ref_contig_names,
+                                                        const unordered_map<int64_t, tuple<string, int64_t, int64_t>>& mg_node_to_rgfa_tags,
+                                                        const unordered_map<string, tuple<string, string, size_t>>& fasta_header_table);
+/**
+ * Queries the above map.  Ex:  Input contig_name = id=HG01891.1|JAGYVO010000001.1  pos=1366287, returns idx of chr1
+ */
+int64_t query_stable_map(unordered_map<string, RefIntervalTree>& stable_map,
+                         const string& contig_name, int64_t pos);
 
 /*
  * Load table (2 column tsv) of above data
@@ -47,7 +69,7 @@ void set_other_contig_paf(unordered_map<string, int64_t>& target_to_id,
  * Use contigs identified above to split PAF
  */
 void paf_split(const string& input_paf_path,
-               function<int64_t(const string&)> name_to_refid,
+               function<int64_t(const string&, int64_t)> name_to_refid,
                const vector<string>& contigs,
                function<bool(const string&)> visit_contig,
                const string& output_prefix,
