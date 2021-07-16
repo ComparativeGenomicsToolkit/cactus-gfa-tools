@@ -19,6 +19,7 @@ void help(char** argv) {
        << "    -q, --query-lengths FILE            Tab-separated file listing query contig lengths" << endl
        << "    -T, --target-prefix STRING          Prefix all target (reference) contig names with STRING" << endl
        << "    -P, --query-prefix STRING           Prefix all query contig names with STRING" << endl
+       << "    -s, --stable                        Write stable coordinates (trivial alignment between query and self)" << endl
        << endl;
 }    
 
@@ -29,6 +30,7 @@ int main(int argc, char** argv) {
     string query_lengths_path;
     string query_prefix;
     string target_prefix;
+    bool stable = false;
     
     int c;
     optind = 1; 
@@ -40,12 +42,13 @@ int main(int argc, char** argv) {
             {"query-lengths", required_argument, 0, 'q'},
             {"target-prefix", required_argument, 0, 'T'},
             {"query-prefix", required_argument, 0, 'P'},
+            {"stable", no_argument, 0, 's'},
             {0, 0, 0, 0}
         };
 
         int option_index = 0;
 
-        c = getopt_long (argc, argv, "hr:q:T:P:",
+        c = getopt_long (argc, argv, "hr:q:T:P:s",
                          long_options, &option_index);
 
         // Detect the end of the options.
@@ -65,6 +68,9 @@ int main(int argc, char** argv) {
             break;
         case 'P':
             query_prefix = optarg;
+            break;
+        case 's':
+            stable = true;
             break;
         case 'h':
         case '?':
@@ -194,12 +200,19 @@ int main(int argc, char** argv) {
                  << query_lengths[contig] << "\t"
                  << offset << "\t"
                  << offset + gfa_seq.sequence.length() << "\t"
-                 << "+" << "\t"
-                 << (target_prefix + gfa_seq.name) << "\t"
-                 << gfa_seq.sequence.length() << "\t"
-                 << "0" << "\t"
-                 << gfa_seq.sequence.length()  << "\t"
-                 << gfa_seq.sequence.length() << "\t"
+                 << "+" << "\t";
+            if (stable) {
+                cout << (query_prefix + contig) << "\t"
+                     << query_lengths[contig] << "\t"
+                     << offset << "\t"
+                     << offset + gfa_seq.sequence.length() << "\t";
+            } else {
+                cout << (target_prefix + gfa_seq.name) << "\t"
+                     << gfa_seq.sequence.length() << "\t"
+                     << "0" << "\t"
+                     << gfa_seq.sequence.length()  << "\t";
+                    }
+            cout << gfa_seq.sequence.length() << "\t"
                  << gfa_seq.sequence.length() << "\t"
                  << "60" << "\t"
                  << "cg:Z:" << gfa_seq.sequence.length() << "M"
