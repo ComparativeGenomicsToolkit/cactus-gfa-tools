@@ -177,6 +177,8 @@ unordered_map<string, RefIntervalTree> build_stable_map(const unordered_map<int6
         const int64_t& mg_node_id = id_rgfa.first;
         int64_t ref_contig_id = mg_node_to_ref_contig.at(mg_node_id);
         intervals.push_back(RefInterval(rgfa_sequence_start, rgfa_sequence_end - 1, ref_contig_id));
+
+        cerr << "ADDING INTERVAL " << cactus_name << " : " << rgfa_sequence_start << "-" << rgfa_sequence_end << " --> " << ref_contig_id << endl;
     }
 
     unordered_map<string, RefIntervalTree> stable_map;
@@ -275,7 +277,8 @@ void paf_split(const string& input_paf_path,
                const unordered_map<string, int64_t>& mask_stats,
                int64_t max_gap_as_match,
                int64_t min_mapq,
-               ostream& log_stream) {
+               ostream& log_stream,
+               bool stable_mode) {
 
     // first pass, figure out which contig aligns where
     ifstream input_paf_stream(input_paf_path);
@@ -607,36 +610,38 @@ void paf_split(const string& input_paf_path,
         out_contigs_stream.close();
     }
 
-    // write the target contigs
-    // start by sorting by reference contig
-    vector<string> mg_contigs;
-    mg_contigs.reserve(target_set.size());
-    for (const auto& target_name : target_set) {
-        mg_contigs.push_back(target_name);
-    }
-    std::sort(mg_contigs.begin(), mg_contigs.end(), [&](const string& a, const string& b) {
-            return contigs[name_to_refid(a, 0)] < contigs[name_to_refid(b, 0)];
-        });
-    int64_t prev_ref_contig_id = -1;
-    ofstream out_contigs_stream;
-    for (const auto& target_name : mg_contigs) {
-        int64_t reference_contig_id = name_to_refid(target_name, 0);
-        const string& reference_contig = contigs[name_to_refid(target_name, 0)];
-        if (visit_contig(reference_contig) ||
-            (ambiguous_id >= 0 && reference_contig == contigs[ambiguous_id])) {  
-            if (reference_contig_id != prev_ref_contig_id) {
-                string out_contigs_path = output_prefix + reference_contig + ".fa_contigs";
-                if (out_contigs_stream.is_open()) {
-                    out_contigs_stream.close();
+    if (!stable_mode) {
+        // write the target contigs
+        // start by sorting by reference contig
+        vector<string> mg_contigs;
+        mg_contigs.reserve(target_set.size());
+        for (const auto& target_name : target_set) {
+            mg_contigs.push_back(target_name);
+        }
+        std::sort(mg_contigs.begin(), mg_contigs.end(), [&](const string& a, const string& b) {
+                return contigs[name_to_refid(a, 0)] < contigs[name_to_refid(b, 0)];
+            });
+        int64_t prev_ref_contig_id = -1;
+        ofstream out_contigs_stream;
+        for (const auto& target_name : mg_contigs) {
+            int64_t reference_contig_id = name_to_refid(target_name, 0);
+            const string& reference_contig = contigs[name_to_refid(target_name, 0)];
+            if (visit_contig(reference_contig) ||
+                (ambiguous_id >= 0 && reference_contig == contigs[ambiguous_id])) {  
+                if (reference_contig_id != prev_ref_contig_id) {
+                    string out_contigs_path = output_prefix + reference_contig + ".fa_contigs";
+                    if (out_contigs_stream.is_open()) {
+                        out_contigs_stream.close();
+                    }
+                    out_contigs_stream.open(out_contigs_path, std::ios_base::app);
+                    if (!out_contigs_stream) {
+                        cerr << "error: unable to open output contigs path: " << out_contigs_path << endl;
+                        exit(1);
+                    }
+                    prev_ref_contig_id = reference_contig_id;
                 }
-                out_contigs_stream.open(out_contigs_path, std::ios_base::app);
-                if (!out_contigs_stream) {
-                    cerr << "error: unable to open output contigs path: " << out_contigs_path << endl;
-                    exit(1);
-                }
-                prev_ref_contig_id = reference_contig_id;
+                out_contigs_stream << target_name << endl;
             }
-            out_contigs_stream << target_name << endl;
         }
     }
 }

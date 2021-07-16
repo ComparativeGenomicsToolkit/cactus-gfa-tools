@@ -111,7 +111,7 @@ int main(int argc, char** argv) {
 
         int option_index = 0;
 
-        c = getopt_long (argc, argv, "hg:m:p:B:b:M:Gq:c:C:o:n:N:T:Q:u:sP:a:A:r:l:",
+        c = getopt_long (argc, argv, "hg:m:p:B:L:b:M:Gq:c:C:o:n:N:T:Q:u:sP:a:A:r:l:",
                          long_options, &option_index);
 
         // Detect the end of the options.
@@ -409,7 +409,8 @@ int main(int argc, char** argv) {
         paf_split(input_paf_path, name_to_refid, partition.second, visit_contig, output_prefix,
                   min_query_coverage, min_small_query_coverage, small_coverage_threshold, min_query_uniqueness,
                   min_query_chunk, allow_softclip,
-                  ambiguous_id, reference_prefix, query_mask_stats, max_gap, min_mapq, log_stream);
+                  ambiguous_id, reference_prefix, query_mask_stats, max_gap, min_mapq, log_stream,
+                  !fa_table_path.empty());
     }
 
     // split the gfa
