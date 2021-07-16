@@ -304,12 +304,6 @@ int main(int argc, char** argv) {
             }
         }   
     }
-
-    // get the stable map that can map targets of form id=HG00436.1|JAGYVO010000001.1 back to chr1
-    unordered_map<string, RefIntervalTree> stable_map;
-    if (!fa_table_path.empty()) {
-        stable_map = build_stable_map(partition.first, partition.second, node_to_rgfa_tags, fa_header_table);
-    }
     
     // output the contig map if path given
     if (!output_contig_map_path.empty()) {
@@ -361,6 +355,13 @@ int main(int argc, char** argv) {
         visit_contig = [&](const string&) -> bool {
             return true;
         };
+    }
+
+    // get the stable map that can map targets of form id=HG00436.1|JAGYVO010000001.1 back to chr1
+    // (important to do this after set_other_contig)
+    unordered_map<string, RefIntervalTree> stable_map;
+    if (!fa_table_path.empty()) {
+        stable_map = build_stable_map(partition.first, partition.second, node_to_rgfa_tags, fa_header_table);
     }
     
     // set the ambigious name

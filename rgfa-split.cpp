@@ -177,8 +177,6 @@ unordered_map<string, RefIntervalTree> build_stable_map(const unordered_map<int6
         const int64_t& mg_node_id = id_rgfa.first;
         int64_t ref_contig_id = mg_node_to_ref_contig.at(mg_node_id);
         intervals.push_back(RefInterval(rgfa_sequence_start, rgfa_sequence_end - 1, ref_contig_id));
-
-        cerr << "ADDING INTERVAL " << cactus_name << " : " << rgfa_sequence_start << "-" << rgfa_sequence_end << " --> " << ref_contig_id << endl;
     }
 
     unordered_map<string, RefIntervalTree> stable_map;
