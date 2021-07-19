@@ -35,7 +35,7 @@ CXXFLAGS := -O3 -Werror=return-type -std=c++14 -ggdb -g -MMD -MP $(PARALLEL_FLAG
 LIB_FLAGS = $(LIBS)
 INC_FLAGS = -I$(CWD)
 
-all: mzgaf2paf pafcoverage rgfa-split paf2lastz rgfa2paf pafmask
+all: mzgaf2paf pafcoverage rgfa-split paf2lastz rgfa2paf pafmask paf2stable
 
 mzgaf2paf: mzgaf2paf.o mzgaf2paf_main.o
 	$(CXX) $(INCLUDE_FLAGS) $(CXXFLAGS) $(CPPFLAGS) -o mzgaf2paf mzgaf2paf_main.o mzgaf2paf.o $(LIB_FLAGS)
@@ -83,7 +83,13 @@ pafmask: pafmask_main.cpp rgfa-split.o pafcoverage.o
 	$(CXX) $(INCLUDE_FLAGS) $(CXXFLAGS) $(CPPFLAGS) -c pafmask_main.cpp $(INC_FLAGS)
 	$(CXX) $(INCLUDE_FLAGS) $(CXXFLAGS) $(CPPFLAGS) -o pafmask pafmask_main.o pafcoverage.o rgfa-split.o
 
-test : mzgaf2paf paf2lastz_test pafmask_test
+paf2stable: paf2stable_main.o mzgaf2paf.o pafcoverage.o
+	$(CXX) $(INCLUDE_FLAGS) $(CXXFLAGS) $(CPPFLAGS) -o paf2stable paf2stable_main.o mzgaf2paf.o pafcoverage.o
+
+paf2stable_main.o: paf2stable_main.cpp mzgaf2paf.hpp pafcoverage.hpp
+	$(CXX) $(INCLUDE_FLAGS) $(CXXFLAGS) $(CPPFLAGS) -c paf2stable_main.cpp $(INC_FLAGS)
+
+test : all paf2lastz_test pafmask_test
 	cd test && prove -v test.t
 
 paf2lastz_test: mapqTest scoreTest

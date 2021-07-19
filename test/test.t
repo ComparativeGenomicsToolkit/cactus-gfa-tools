@@ -6,7 +6,7 @@ BASH_TAP_ROOT=./bash-tap
 PATH=../bin:$PATH
 PATH=../deps/hal:$PATH
 
-plan tests 22
+plan tests 27
 
 gzip -dc  hpp-20-2M/CHM13.fa.gz > CHM13.fa
 gzip -dc  hpp-20-2M/hg38.fa.gz > hg38.fa
@@ -31,12 +31,18 @@ is $? 0 "mzgaf2paf doesn't crash on simple forward alignment"
 python ./verify_matches.py CHM13.paf CHM13.fa hpp-20-2M.gfa.fa
 is $? 0 "paf checks out for very simple forward alignment"
 
+# do the same thing in stable coordiantes
+paf2stable hpp-20-2M.gfa hpp-20-2M/contig_table.tsv CHM13.paf | sed -e 's/id=[a-z,A-Z,0-9]*|//g' > CHM13_stable.paf
+is $? 0 "paf2stable doesn't crash on simple forward alignment"
+python ./verify_matches.py CHM13_stable.paf CHM13.fa all.fa
+is $? 0 "paf checks out for very simple stable forward alignment via paf2stable"
+
 # clip it with pafmask
 pafmask CHM13.paf chr20.bed -v > CHM13.mask.paf
 python ./verify_matches.py CHM13.mask.paf CHM13.fa hpp-20-2M.gfa.fa
 is $? 0 "masked paf checks out for very simple forward alignment"
 
-rm -f  CHM13.paf CHM13.mask.paf
+rm -f  CHM13.paf CHM13.mask.paf CHM13_stable.paf
 
 # extract the PAF with rgfa2paf
 rgfa2paf hpp-20-2M.gfa > hpp-20-2M.paf
@@ -49,6 +55,16 @@ is $? 0 "paf checks out when extracted from reference contig using rgfa2paf and 
 
 rm -f  hpp-20-2M.paf CHM13.fa.fai hpp-20-2M.paf.q
 
+# now try a simple reverse case with stable coordinates
+minigraph -xggs -l10k hg38-rev.fa hpp-20-2M/CHM13.fa.gz hpp-20-2M/HG003.fa.gz hpp-20-2M/HG004.fa.gz > hg38-rev.gfa
+minigraph -xasm -t $(nproc) -K4g --inv=no -S --write-mz hg38-rev.gfa hg38.fa > hg38-rev.gaf
+mzgaf2paf hg38-rev.gaf -G hg38-rev.gfa  > hg38-rev.paf
+paf2stable  hg38-rev.gfa hpp-20-2M/contig_table.tsv hg38-rev.paf | sed -e 's/id=[a-z,A-Z,0-9,-]*|//g' > hg38-rev-p2s.paf
+python ./verify_matches.py hg38-rev.paf CHM13.fa all.fa
+is $? 0 "paf checks out for another reverse strand stable case with paf2stable"
+
+rm -f hg38-rev.gfa hg38-rev.gaf  hg38-rev.paf hg38-rev-p2s.paf
+
 # align a new sequence (hg38) to it
 minigraph -xasm -t $(nproc) -K4g --inv=no -S --write-mz hpp-20-2M.gfa hpp-20-2M/hg38.fa.gz > hg38.gaf
 mzgaf2paf hg38.gaf > hg38.paf
@@ -56,12 +72,23 @@ is $? 0 "mzgaf2paf doesn't crash on hg38 alignment"
 python ./verify_matches.py hg38.paf hg38.fa hpp-20-2M.gfa.fa
 is $? 0 "paf checks out for hg38 alignment"
 
+# same thing with stable coordinates
+paf2stable hpp-20-2M.gfa hpp-20-2M/contig_table.tsv hg38.paf | sed -e 's/id=[a-z,A-Z,0-9]*|//g' > hg38_stable.paf
+is $? 0 "paf2stable doesn't crash on stable hg38 alignment"
+python ./verify_matches.py hg38_stable.paf hg38.fa all.fa
+is $? 0 "paf2stable paf checks out for stable hg38 alignment"
+
 # clip it with pafmask
 pafmask hg38.paf chr20.bed -v > hg38.mask.paf
 python ./verify_matches.py hg38.mask.paf hg38.fa hpp-20-2M.gfa.fa
 is $? 0 "masked paf checks out for hg38 alignment"
 
-rm -f  hg38.paf hg38.mask.paf
+# clip the stable one with pafmask
+pafmask hg38_stable.paf chr20.bed -v > hg38_stable.mask.paf
+python ./verify_matches.py hg38_stable.mask.paf hg38.fa all.fa
+is $? 0 "masked paf checks out for stable hg38 alignment"
+
+rm -f  hg38.paf hg38.mask.paf hg38_stable.paf hg38_stable.mask.paf hg38_stable.paf
 
 # repeat without gap filter
 mzgaf2paf CHM13.gaf -g 0 > CHM13.paf
