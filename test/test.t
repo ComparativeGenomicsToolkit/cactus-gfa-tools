@@ -39,7 +39,7 @@ python ./verify_matches.py CHM13_stable.paf CHM13.fa all.fa
 is $? 0 "paf checks out for very simple stable forward alignment"
 
 # do the same thing in stable coordiantes from paf2stable
-paf2stable hpp-20-2M.gfa hpp-20-2M/contig_table.tsv CHM13.paf | sed -e 's/id=[a-z,A-Z,0-9]*|//g' > CHM13_stable2.paf
+paf2stable hpp-20-2M.gfa hpp-20-2M/contig_table.tsv CHM13.paf -o | sed -e 's/id=[a-z,A-Z,0-9]*|//g' > CHM13_stable2.paf
 is $? 0 "paf2stable doesn't crash on simple forward alignment"
 python ./verify_matches.py CHM13_stable2.paf CHM13.fa all.fa
 is $? 0 "paf checks out for very simple stable forward alignment via paf2stable"
@@ -72,7 +72,7 @@ is $? 0 "paf checks out for another reverse strand stable case"
 # try the same but with paf2stable
 rm -f hg38-rev.paf
 mzgaf2paf hg38-rev.gaf -G hg38-rev.gfa  > hg38-rev.paf
-paf2stable  hg38-rev.gfa hpp-20-2M/contig_table.tsv hg38-rev.paf | sed -e 's/id=[a-z,A-Z,0-9,-]*|//g' > hg38-rev-p2s.paf
+paf2stable  hg38-rev.gfa hpp-20-2M/contig_table.tsv hg38-rev.paf -o | sed -e 's/id=[a-z,A-Z,0-9,-]*|//g' > hg38-rev-p2s.paf
 python ./verify_matches.py hg38-rev.paf CHM13.fa all.fa
 is $? 0 "paf checks out for another reverse strand stable case with paf2stable"
 
@@ -92,7 +92,7 @@ python ./verify_matches.py hg38_stable.paf hg38.fa all.fa
 is $? 0 "paf checks out for stable hg38 alignment"
 
 # same thing with paf2stable coordinates
-paf2stable hpp-20-2M.gfa hpp-20-2M/contig_table.tsv hg38.paf | sed -e 's/id=[a-z,A-Z,0-9]*|//g' > hg38_stable2.paf
+paf2stable hpp-20-2M.gfa hpp-20-2M/contig_table.tsv hg38.paf -o | sed -e 's/id=[a-z,A-Z,0-9]*|//g' > hg38_stable2.paf
 is $? 0 "paf2stable doesn't crash on stable hg38 alignment"
 python ./verify_matches.py hg38_stable2.paf hg38.fa all.fa
 is $? 0 "paf2stable paf checks out for stable hg38 alignment"
