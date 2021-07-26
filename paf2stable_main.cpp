@@ -61,7 +61,7 @@ int main(int argc, char** argv) {
 
     // Parse the positional arguments
     if (optind >= argc ) {
-        cerr << "[mask] error: too few arguments" << endl;
+        cerr << "[paf2stable] error: too few arguments" << endl;
         help(argv);
         return 1;
     }
@@ -69,7 +69,7 @@ int main(int argc, char** argv) {
     string in_paf_path = argv[optind++];
 
     if (optind < argc - 1) {
-        cerr << "[pafmask] error: too many arguments" << endl;
+        cerr << "[paf2stable] error: too many arguments" << endl;
         help(argv);
         return 1;
     }
