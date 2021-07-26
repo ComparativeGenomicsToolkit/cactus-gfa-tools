@@ -24,9 +24,9 @@ void interval_subtract(CoverageInterval& interval_a, CoverageInterval& interval_
 size_t mask_paf_line(const string& paf_line, int64_t min_length, const unordered_map<string,
                           CoverageIntervalTree>& ref_to_intervals, bool validate);
 
-// output paf line(s) corresponding to given sub-interval of the original paf line
-void clip_paf(const vector<string>& toks, const string& query_name, int64_t query_length, int64_t query_start, int64_t query_end,
-                     CoverageInterval& interval, int64_t min_length, bool validate);
+// return paf line(s) corresponding to given sub-interval of the original paf line
+string clip_paf(const vector<string>& toks, const string& query_name, int64_t query_length, int64_t query_start, int64_t query_end,
+                        CoverageInterval& interval, int64_t min_length, bool validate);
 
 // make sure every homology in the fragment_paf corresponds to a homology in toks
 void validate_paf(const vector<string>& toks, const string& fragment_paf);

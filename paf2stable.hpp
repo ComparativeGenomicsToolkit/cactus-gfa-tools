@@ -32,9 +32,18 @@ unordered_map<string, StableIntervalTree> create_interval_trees(unordered_map<st
 // apply the interval map to a PAF line to rewrite it as a series of query-to-query mappings
 // output PAF line(s) prtined to cout
 void paf_to_stable(const vector<string>& paf_toks,
-                   const unordered_map<string, int64_t>& query_name_to_id,
                    const vector<pair<string, int64_t>>& query_id_to_info,
                    const unordered_map<string, StableIntervalTree> target_to_interval_tree);
+
+// write a new paf line (in stable coordinates) for a given sub-interval of a match block
+void make_paf_line_for_interval(const vector<string>& paf_toks,
+                                const vector<pair<string, int64_t>>& query_id_to_info,
+                                int64_t query_pos,
+                                int64_t target_pos,
+                                int64_t match_length,
+                                const StableInterval& overlapping_interval,
+                                int64_t target_start, 
+                                int64_t target_stop);
 
 // for debugging
 inline ostream& operator<<(ostream& os, const tuple<int64_t, int64_t, bool>& triple) {

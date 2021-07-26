@@ -110,7 +110,7 @@ int main(int argc, char** argv) {
         vector<string> toks;
         split_delims(buffer, "\t\n", toks);        
 
-        paf_to_stable(toks, query_name_to_id, query_id_to_info, target_to_interval_tree);
+        paf_to_stable(toks, query_id_to_info, target_to_interval_tree);
     }
     
     return 0;

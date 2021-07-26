@@ -94,7 +94,7 @@ size_t mask_paf_line(const string& paf_line, int64_t min_length, const unordered
     size_t remaining_bases = 0;
     for (CoverageInterval& remaining_interval : remaining_intervals) {
         if (remaining_interval.stop - remaining_interval.start + 1 >= min_length) {
-            clip_paf(toks, query_name, query_length, query_start, query_end, remaining_interval, min_length, validate);
+            cout << clip_paf(toks, query_name, query_length, query_start, query_end, remaining_interval, min_length, validate);
             remaining_bases += remaining_interval.stop - remaining_interval.start + 1;
         }
     }
@@ -130,8 +130,8 @@ void interval_subtract(CoverageInterval& interval_a, CoverageInterval& interval_
 
 }
 
-void clip_paf(const vector<string>& toks, const string& query_name, int64_t query_length, int64_t query_start, int64_t query_end,
-              CoverageInterval& interval, int64_t min_length, bool validate) {
+string clip_paf(const vector<string>& toks, const string& query_name, int64_t query_length, int64_t query_start, int64_t query_end,
+                CoverageInterval& interval, int64_t min_length, bool validate) {
 #ifdef debug
     cerr << "Clipping " << interval << " out of " << query_name << " " << query_length << " " << query_start << " " << query_end << endl;
 #endif
@@ -274,13 +274,12 @@ void clip_paf(const vector<string>& toks, const string& query_name, int64_t quer
     }
     out_stream << "\n";
 
-    cout << out_stream.str();
-
     if (validate) {
         // todo: this is wrong
         validate_paf(toks, out_stream.str());
     }
 
+    return out_stream.str();
 }
 
 // make sure every homology in the fragment_paf corresponds to a homology in toks
