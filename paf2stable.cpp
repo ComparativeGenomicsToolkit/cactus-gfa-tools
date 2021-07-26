@@ -30,31 +30,38 @@ void update_stable_mapping_info(const vector<string>& paf_toks,
    
     int64_t query_pos = stol(paf_toks[2]);
     int64_t target_pos = stol(paf_toks[7]);
-    
+
+    vector<pair<string, string>> cigars;
     for (int i = 12; i < paf_toks.size(); ++i) {
         if (paf_toks[i].substr(0, 5) == "cg:Z:") {
             for_each_cg(paf_toks[i], [&](const string& val, const string& cat) {
-                    int64_t len = stol(val);
-                    if (cat == "M") {
-#ifdef debug
-                        cerr << "adding interval for " << target_name << ": " << target_pos << "-" << (target_pos + len - 1)
-                             << " ==> " << query_name << ": " << query_pos << ", rev=" << is_reverse << endl;
-#endif             
-                        StableInterval interval(target_pos, target_pos + len - 1,
-                                                make_tuple(query_id, query_pos, is_reverse));
-                        target_intervals.push_back(interval);
-                    }
-                    if (cat == "M") {
-                        query_pos += len;
-                        target_pos += len;
-                    } else if (cat == "I") {
-                        query_pos += len;
-                    } else if (cat == "D") {
-                        target_pos += len;
-                    } else {
-                        assert(false);
-                    }
+                    cigars.push_back(make_pair(val, cat));
                 });
+        }
+    }
+
+    for (const auto& vc : cigars) {
+        const string& val = vc.first;
+        const string& cat = vc.second;
+        int64_t len = stol(val);
+        if (cat == "M") {
+#ifdef debug
+            cerr << "adding interval for " << target_name << ": " << target_pos << "-" << (target_pos + len - 1)
+                 << " ==> " << query_name << ": " << query_pos << ", rev=" << is_reverse << endl;
+#endif             
+            StableInterval interval(target_pos, target_pos + len - 1,
+                                    make_tuple(query_id, query_pos, is_reverse));
+            target_intervals.push_back(interval);
+        }
+        if (cat == "M") {
+            query_pos += len;
+            target_pos += len;
+        } else if (cat == "I") {
+            query_pos += len;
+        } else if (cat == "D") {
+            target_pos += len;
+        } else {
+            assert(false);
         }
     }
 }
@@ -115,43 +122,50 @@ void paf_to_stable(const vector<string>& paf_toks,
 
     int64_t query_pos = stol(paf_toks[2]);
     int64_t target_pos = stol(paf_toks[7]);
-    
+
+    vector<pair<string, string>> cigars;
     for (int i = 12; i < paf_toks.size(); ++i) {
         if (paf_toks[i].substr(0, 5) == "cg:Z:") {
             for_each_cg(paf_toks[i], [&](const string& val, const string& cat) {
-                    int64_t len = stol(val);
-                    if (cat == "M") {
-
-                        vector<StableInterval> overlapping_intervals = interval_tree.findOverlapping(target_pos, target_pos + len - 1);
-
-                        // these are the non-overlapping intervals span the target (but don't necessarily cover it completely)
-                        vector<pair<int64_t, int64_t>> target_intervals;
-                        int64_t cur_target_offset = target_start;
-                        
-                        // assumption: the overlapping intervals are returned in sorted order
-                        for (StableInterval& overlapping_interval : overlapping_intervals) {
-                            int64_t clip_start = max(overlapping_interval.start, cur_target_offset);
-                            int64_t clip_stop = min(overlapping_interval.stop, target_end - 1);
-                            if (clip_stop >= clip_start) {
-                                // write the new paf line for the subinterval
-                                make_paf_line_for_interval(paf_toks, query_id_to_info, query_pos, target_pos, len,
-                                                           overlapping_interval, clip_start, clip_stop);
-                                cur_target_offset = clip_stop;
-                            }
-                        }
-
-                    }
-                    if (cat == "M") {
-                        query_pos += len;
-                        target_pos += len;
-                    } else if (cat == "I") {
-                        query_pos += len;
-                    } else if (cat == "D") {
-                        target_pos += len;
-                    } else {
-                        assert(false);
-                    }
+                    cigars.push_back(make_pair(val, cat));
                 });
+        }
+    }
+
+    for (const auto& vc : cigars) {
+        const string& val = vc.first;
+        const string& cat = vc.second;
+        int64_t len = stol(val);
+        if (cat == "M") {
+
+            vector<StableInterval> overlapping_intervals = interval_tree.findOverlapping(target_pos, target_pos + len - 1);
+
+            // these are the non-overlapping intervals span the target (but don't necessarily cover it completely)
+            vector<pair<int64_t, int64_t>> target_intervals;
+            int64_t cur_target_offset = target_start;
+                        
+            // assumption: the overlapping intervals are returned in sorted order
+            for (StableInterval& overlapping_interval : overlapping_intervals) {
+                int64_t clip_start = max(overlapping_interval.start, cur_target_offset);
+                int64_t clip_stop = min(overlapping_interval.stop, target_end - 1);
+                if (clip_stop >= clip_start) {
+                    // write the new paf line for the subinterval
+                    make_paf_line_for_interval(paf_toks, query_id_to_info, query_pos, target_pos, len,
+                                               overlapping_interval, clip_start, clip_stop);
+                    cur_target_offset = clip_stop;
+                }
+            }
+
+        }
+        if (cat == "M") {
+            query_pos += len;
+            target_pos += len;
+        } else if (cat == "I") {
+            query_pos += len;
+        } else if (cat == "D") {
+            target_pos += len;
+        } else {
+            assert(false);
         }
     }
 }
