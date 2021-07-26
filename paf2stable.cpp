@@ -25,8 +25,6 @@ void update_stable_mapping_info(const vector<string>& paf_toks,
     vector<StableInterval>& target_intervals = target_to_intervals[target_name];
 
     bool is_reverse = paf_toks[4] == "-";
-    // todo: reverse strand!!! (ugh)
-    assert(!is_reverse);
    
     int64_t query_pos = stol(paf_toks[2]);
     int64_t target_pos = stol(paf_toks[7]);
@@ -38,6 +36,10 @@ void update_stable_mapping_info(const vector<string>& paf_toks,
                     cigars.push_back(make_pair(val, cat));
                 });
         }
+    }
+
+    if (is_reverse) {
+        std::reverse(cigars.begin(), cigars.end());
     }
 
     for (const auto& vc : cigars) {
@@ -114,8 +116,6 @@ void paf_to_stable(const vector<string>& paf_toks,
     int64_t target_start = stol(paf_toks[7]);
     int64_t target_end = stol(paf_toks[8]);
     bool is_reverse = paf_toks[4] == "-";
-    // todo: reverse strand!!! (ugh)
-    assert(!is_reverse);
 
     // find the mapping of our target sequence to query sequence(s)
     const StableIntervalTree& interval_tree = target_to_interval_tree.at(target_name);
@@ -132,6 +132,10 @@ void paf_to_stable(const vector<string>& paf_toks,
         }
     }
 
+    if (is_reverse) {
+        std::reverse(cigars.begin(), cigars.end());
+    }
+    
     for (const auto& vc : cigars) {
         const string& val = vc.first;
         const string& cat = vc.second;
@@ -202,12 +206,14 @@ void make_paf_line_for_interval(const vector<string>& paf_toks,
 
     int64_t output_target_start = mapped_interval_start + delta;
     int64_t output_target_end = output_target_start + output_block_length;
+
+    bool is_reverse = mapped_interval_reversed != (paf_toks[4] == "-");
     
     cout << paf_toks[0] << "\t"
          << paf_toks[1] << "\t"
          << output_query_start << "\t"
          << output_query_end << "\t"
-         << "+" << "\t"
+         << (is_reverse ? "-" : "+") << "\t"
          << mapped_interval_info.first << "\t"
          << mapped_interval_info.second << "\t"
          << output_target_start << "\t"
