@@ -186,7 +186,7 @@ void make_paf_line_for_interval(const vector<string>& paf_toks,
     const int64_t& mapped_interval_start = get<1>(overlapping_interval.value);
     const bool& mapped_interval_reversed = get<2>(overlapping_interval.value);
 
-    int64_t output_target_start = target_start + delta;
+    int64_t output_target_start = mapped_interval_start + delta;
     int64_t output_target_end = output_target_start + output_block_length;
     
     cout << paf_toks[0] << "\t"
