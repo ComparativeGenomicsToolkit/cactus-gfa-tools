@@ -12,6 +12,7 @@ gzip -dc  hpp-20-2M/CHM13.fa.gz > CHM13.fa
 gzip -dc  hpp-20-2M/hg38.fa.gz > hg38.fa
 gzip -dc  hpp-20-2M/hg38-rev.fa.gz > hg38-rev.fa
 gzip -dc pafmask/chr20.bed.gz > chr20.bed
+gzip -dc hpp-20-2M/CHM13.fa.gz hpp-20-2M/hg38.fa.gz hpp-20-2M/hg38-rev.fa.gz hpp-20-2M/HG003.fa.gz hpp-20-2M/HG004.fa.gz > all.fa
 
 # validate the validator
 minimap2 hpp-20-2M/CHM13.fa.gz hpp-20-2M/hg38.fa.gz -c -A 30 -B 10 > CHM13_hg38.paf
