@@ -83,10 +83,13 @@ pafmask: pafmask_main.cpp rgfa-split.o pafcoverage.o
 	$(CXX) $(INCLUDE_FLAGS) $(CXXFLAGS) $(CPPFLAGS) -c pafmask_main.cpp $(INC_FLAGS)
 	$(CXX) $(INCLUDE_FLAGS) $(CXXFLAGS) $(CPPFLAGS) -o pafmask pafmask_main.o pafcoverage.o rgfa-split.o
 
-paf2stable: paf2stable_main.o mzgaf2paf.o pafcoverage.o
-	$(CXX) $(INCLUDE_FLAGS) $(CXXFLAGS) $(CPPFLAGS) -o paf2stable paf2stable_main.o mzgaf2paf.o pafcoverage.o
+paf2stable: paf2stable_main.o pafcoverage.o paf2stable.o
+	$(CXX) $(INCLUDE_FLAGS) $(CXXFLAGS) $(CPPFLAGS) -o paf2stable paf2stable_main.o paf2stable.o pafcoverage.o
 
-paf2stable_main.o: paf2stable_main.cpp mzgaf2paf.hpp pafcoverage.hpp
+paf2stable.o:$(LIB_DEPS) paf2stable.cpp paf2stable.hpp pafcoverage.hpp
+	$(CXX) $(INCLUDE_FLAGS) $(CXXFLAGS) $(CPPFLAGS) -c paf2stable.cpp $(INC_FLAGS)
+
+paf2stable_main.o: paf2stable_main.cpp paf2stable.hpp pafcoverage.hpp
 	$(CXX) $(INCLUDE_FLAGS) $(CXXFLAGS) $(CPPFLAGS) -c paf2stable_main.cpp $(INC_FLAGS)
 
 test : all paf2lastz_test pafmask_test

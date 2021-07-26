@@ -5,7 +5,7 @@
 #include <iostream>
 #include <sstream>
 
-#include "mzgaf2paf.hpp"
+#include "paf2stable.hpp"
 #include "pafcoverage.hpp"
 
 //#define debug
@@ -13,8 +13,8 @@
 using namespace std;
 
 void help(char** argv) {
-  cerr << "usage: " << argv[0] << " [options] <rgfa> <header_table> <paf>" << endl
-       << "Convert PAF from minigraph to stable coordinates using mapping in rgfa" << endl
+  cerr << "usage: " << argv[0] << " [options] <paf>" << endl
+       << "Replace every target sequence with a query sequence (preserving all transitive mappings between queries)" << endl
        << endl;
 }    
 
@@ -60,14 +60,12 @@ int main(int argc, char** argv) {
     }
 
     // Parse the positional arguments
-    if (optind >= argc + 2) {
+    if (optind >= argc ) {
         cerr << "[mask] error: too few arguments" << endl;
         help(argv);
         return 1;
     }
 
-    string in_rgfa_path = argv[optind++];
-    string in_table_path = argv[optind++];
     string in_paf_path = argv[optind++];
 
     if (optind < argc - 1) {
@@ -76,55 +74,43 @@ int main(int argc, char** argv) {
         return 1;
     }
 
-    // Buid the lookup table
-    unordered_map<string, tuple<string, int64_t, int64_t>> stable_lookup = build_stable_lookup(in_table_path, in_rgfa_path);
-
-    // open the paf
-    istream* in_paf;
-    ifstream in_paf_file;
-    if (in_paf_path == "-") {
-        in_paf = &cin;
-    } else {
-        in_paf_file.open(in_paf_path);
-        if (!in_paf_file) {
-            cerr << "[paf2stable] error: unable to open paf: " << in_paf_path << endl;
-            return 1;
-        }
-        in_paf = &in_paf_file;
+    ifstream paf_file(in_paf_path);
+    if (!paf_file) {
+        cerr << "[paf2stable] error: Unable to open input PAF file, \"" << in_paf_path << "\"" << endl;
+        return 1;
     }
 
-    // convert the PAF
+    // first pass: build the mapping table from target to query intervals
+    unordered_map<string, int64_t> query_name_to_id;
+    vector<pair<string, int64_t>> query_id_to_info;
+    unordered_map<string, vector<StableInterval>> target_to_intervals;
+
     string buffer;
-    while (getline(*in_paf, buffer)) {
+    while (getline(paf_file, buffer)) {
         // split into array of tokens
         vector<string> toks;
-        split_delims(buffer, "\t\n", toks);
+        split_delims(buffer, "\t\n", toks);        
 
         if (toks.size() < 12) {
             throw runtime_error("too few tokens in PAF line: " + buffer);
         }
 
-        string target_name = toks[5];
-        int64_t target_start = stol(toks[7]);
-        int64_t target_end = stol(toks[8]);
-        // cut off cactus_prefix
-        if (target_name.compare(0, 3, "id=") == 0) {
-            size_t bar_pos = target_name.find("|");
-            assert(bar_pos != string::npos && bar_pos < target_name.length() - 1);
-            target_name = target_name.substr(bar_pos + 1);
-        }
-        
-        tuple<string, int64_t, int64_t>& stable_info = stable_lookup.at(target_name);
-        toks[5] = get<0>(stable_info);
-        toks[6] = std::to_string(get<2>(stable_info));
-        toks[7] = std::to_string(target_start + get<1>(stable_info));
-        toks[8] = std::to_string(target_end + get<1>(stable_info));
+        update_stable_mapping_info(toks, query_name_to_id, query_id_to_info, target_to_intervals);
+    }
 
-        cout << toks[0];
-        for (size_t i = 1; i < toks.size(); ++i) {
-            cout << "\t" << toks[i];
-        }
-        cout << endl;
+    // make the interval tree from the intervals
+    unordered_map<string, StableIntervalTree> target_to_interval_tree = create_interval_trees(target_to_intervals);
+
+    // second pass: output the paf with all targets replaced by queries
+    paf_file.close();
+    paf_file.open(in_paf_path);
+    assert(paf_file);
+    while (getline(paf_file, buffer)) {
+        // split into array of tokens
+        vector<string> toks;
+        split_delims(buffer, "\t\n", toks);        
+
+        paf_to_stable(toks, query_name_to_id, query_id_to_info, target_to_interval_tree);
     }
     
     return 0;
