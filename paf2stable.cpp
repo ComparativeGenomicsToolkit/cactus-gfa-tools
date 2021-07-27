@@ -176,9 +176,9 @@ void clip_interval(const StableInterval& interval, int64_t target_size,
     for (auto& ni : new_intervals) {
         int64_t stable_offset;
         if (is_reverse) {
-            stable_offset = get<1>(interval.value) + target_size - 1 - ni.second;
+            stable_offset = get<1>(interval.value) + target_size - 1 - (ni.first - interval.start) - (ni.second - ni.first);
         } else {
-            stable_offset = get<1>(interval.value) + ni.first;
+            stable_offset = get<1>(interval.value) + (ni.first - interval.start);
         }
         clipped_intervals.emplace_back(ni.first, ni.second, make_tuple(get<0>(interval.value),
                                                                        stable_offset,
