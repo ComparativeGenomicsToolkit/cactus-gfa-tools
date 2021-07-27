@@ -10,6 +10,7 @@
 #include <unordered_map>
 #include <ostream>
 #include <functional>
+#include <set>
 #include "IntervalTree.h"
 
 using namespace std;
@@ -22,12 +23,16 @@ typedef StableIntervalTree::interval StableInterval;
 void update_stable_mapping_info(const vector<string>& paf_toks,
                                 unordered_map<string, int64_t>& query_name_to_id,
                                 vector<pair<string, int64_t>>& query_id_to_info,
-                                unordered_map<string, vector<StableInterval>>& target_to_intervals);
+                                unordered_map<string, pair<int64_t, vector<StableInterval>>>& target_to_intervals);
 
 
 // build an interval tree for each target out of the mapped intervals
 // the input map is emptied in the process
-unordered_map<string, StableIntervalTree> create_interval_trees(unordered_map<string, vector<StableInterval>>& target_to_intervals);
+unordered_map<string, StableIntervalTree> create_interval_trees(unordered_map<string, pair<int64_t, vector<StableInterval>>>& target_to_intervals);
+
+// clip out an interval against a set, updating the clipped_intervals list
+void clip_interval(const StableInterval& interval, int64_t target_size,
+                   const set<int64_t>& cut_points, vector<StableInterval>& clipped_intervals);
 
 // apply the interval map to a PAF line to rewrite it as a series of query-to-query mappings
 // output PAF line(s) prtined to cout

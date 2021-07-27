@@ -83,7 +83,7 @@ int main(int argc, char** argv) {
     // first pass: build the mapping table from target to query intervals
     unordered_map<string, int64_t> query_name_to_id;
     vector<pair<string, int64_t>> query_id_to_info;
-    unordered_map<string, vector<StableInterval>> target_to_intervals;
+    unordered_map<string, pair<int64_t, vector<StableInterval>>> target_to_intervals;
 
     string buffer;
     while (getline(paf_file, buffer)) {
