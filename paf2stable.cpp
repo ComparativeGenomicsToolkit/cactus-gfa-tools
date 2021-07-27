@@ -87,25 +87,6 @@ unordered_map<string, StableIntervalTree> create_interval_trees(unordered_map<st
         cerr << "Unique filter reduces from " << intervals.size() << " to " << unique_intervals.size() << endl;
         intervals = std::move(unique_intervals);
         
-
-        // another pass to remove nested intervals (not necessary, but will help fragmentation downstream if no merge
-        // logic used)
-        StableIntervalTree interval_tree(intervals);
-        vector<StableInterval> intervals_no_nested;
-        for (size_t i = 0; i < intervals.size(); ++i) {
-            vector<StableInterval> overlapping = interval_tree.findOverlapping(intervals[i].start, intervals[i].stop);
-            bool nested = false;
-            for (size_t j = 0; j < overlapping.size() && !nested; ++j) {
-                nested = intervals[i].start >= overlapping[j].start && intervals[i].stop <= overlapping[j].stop &&
-                    (intervals[i].start != overlapping[j].start || intervals[i].stop != overlapping[j].stop);
-            }
-            if (!nested) {
-                intervals_no_nested.push_back(intervals[i]);
-            }
-        }
-        cerr << "Nested filter reduces from " << intervals.size() << " to " << intervals_no_nested.size() << endl;
-        intervals = std::move(intervals_no_nested);
-
         // cut at all interval ends (a cut point cuts to the *right* of its position)
         set<int64_t> cut_points;
         for (StableInterval& interval : intervals) {
@@ -137,16 +118,15 @@ unordered_map<string, StableIntervalTree> create_interval_trees(unordered_map<st
         }
         intervals = std::move(unique_intervals);
 
-        target_to_interval_trees[kv.first] = StableIntervalTree(intervals);
-        intervals.clear();
-
 #ifdef debug
         cerr << "Interval Tree (" << kv.first << "):";
-        for (auto interval : intervals_no_nested) {
+        for (auto interval : intervals) {
             cerr << endl << "   " << interval;
         }
         cerr << endl;
 #endif
+        target_to_interval_trees[kv.first] = StableIntervalTree(intervals);
+        intervals.clear();
 
     }
     target_to_intervals.clear();
@@ -213,6 +193,7 @@ void paf_to_stable(const vector<string>& paf_toks,
                    const unordered_map<string, StableIntervalTree> target_to_interval_tree) {
 
     const string& target_name = paf_toks[5];
+    int64_t target_size = stol(paf_toks[6]);
     int64_t target_start = stol(paf_toks[7]);
     int64_t target_end = stol(paf_toks[8]);
     bool is_reverse = paf_toks[4] == "-";
@@ -243,6 +224,14 @@ void paf_to_stable(const vector<string>& paf_toks,
         if (cat == "M") {
 
             vector<StableInterval> overlapping_intervals = interval_tree.findOverlapping(target_pos, target_pos + len - 1);
+            // we mostly do this to make it easier to debug
+            std::sort(overlapping_intervals.begin(), overlapping_intervals.end(), StableIntervalTree::IntervalStartCmp());
+
+            // these intervals must, by definition, exactly cover the whole match block (because we built and clipped on
+            // every match block in the set
+            assert(!overlapping_intervals.empty());
+            assert(overlapping_intervals[0].start == target_pos);
+            assert(overlapping_intervals.back().stop == target_pos + len - 1);
 
             // these are the non-overlapping intervals span the target (but don't necessarily cover it completely)
             vector<pair<int64_t, int64_t>> target_intervals;
