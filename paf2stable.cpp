@@ -95,7 +95,6 @@ unordered_map<string, StableIntervalTree> create_interval_trees(unordered_map<st
                 unique_intervals.push_back(intervals.at(i));
             }
         }
-        cerr << "Unique filter reduces from " << intervals.size() << " to " << unique_intervals.size() << endl;
         intervals = std::move(unique_intervals);
         
         // cut at all interval ends (a cut point cuts to the *right* of its position)
@@ -112,7 +111,6 @@ unordered_map<string, StableIntervalTree> create_interval_trees(unordered_map<st
         for (StableInterval& interval : intervals) {
             clip_interval(interval, cut_points, clipped_intervals);
         }
-        cerr << "Clipped filter reduces from " << intervals.size() << " to " << clipped_intervals.size() << endl;
         intervals = std::move(clipped_intervals);        
 
         // take a quick pass just to remove duplicates after clipping
@@ -122,10 +120,6 @@ unordered_map<string, StableIntervalTree> create_interval_trees(unordered_map<st
             if (i == 0 || intervals[i].start != intervals[i-1].start || intervals[i].stop != intervals[i].stop) {
                 unique_intervals.push_back(intervals.at(i));
             }
-        }
-        cerr << "Unique filter2 reduces from " << intervals.size() << " to " << unique_intervals.size() << endl;
-        for (auto xx : unique_intervals) {
-            cerr << xx << endl;
         }
         intervals = std::move(unique_intervals);
 
@@ -161,7 +155,9 @@ void clip_interval(const StableInterval& interval,
     for (auto k = i; k != j; ++k) {
         cut_positions.push_back(*k);
     }
+#ifdef debug
     cerr << "query cuts on " << interval << " gives " << cut_positions.size() << " results" << endl;
+#endif
     // make sure last point is a cut point no matter what so
     // we can clip everything in a loop
     if (cut_positions.empty() || cut_positions.back() != interval.stop) {
@@ -197,7 +193,9 @@ void clip_interval(const StableInterval& interval,
                                                                        stable_offset,
                                                                        is_reverse));
         assert(clipped_intervals.back().stop >= clipped_intervals.back().start);
+#ifdef debug
         cerr << "Adding clipped " << clipped_intervals.back() << endl;
+#endif
     }
 }
 
