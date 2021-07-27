@@ -31,7 +31,7 @@ void update_stable_mapping_info(const vector<string>& paf_toks,
 unordered_map<string, StableIntervalTree> create_interval_trees(unordered_map<string, pair<int64_t, vector<StableInterval>>>& target_to_intervals);
 
 // clip out an interval against a set, updating the clipped_intervals list
-void clip_interval(const StableInterval& interval, int64_t target_size,
+void clip_interval(const StableInterval& interval,
                    const set<int64_t>& cut_points, vector<StableInterval>& clipped_intervals);
 
 // apply the interval map to a PAF line to rewrite it as a series of query-to-query mappings

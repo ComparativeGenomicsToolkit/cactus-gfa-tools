@@ -28,9 +28,10 @@ void update_stable_mapping_info(const vector<string>& paf_toks,
 
     bool is_reverse = paf_toks[4] == "-";
    
-    int64_t query_pos = stol(paf_toks[2]);
-    int64_t target_pos = stol(paf_toks[7]);
-
+    int64_t query_start = stol(paf_toks[2]);
+    int64_t target_start = stol(paf_toks[7]);
+    int64_t target_end = stol(paf_toks[8]);
+    
     vector<pair<string, string>> cigars;
     for (int i = 12; i < paf_toks.size(); ++i) {
         if (paf_toks[i].substr(0, 5) == "cg:Z:") {
@@ -44,26 +45,36 @@ void update_stable_mapping_info(const vector<string>& paf_toks,
         std::reverse(cigars.begin(), cigars.end());
     }
 
+    int64_t target_offset = 0;
+    int64_t query_offset = 0;
+    int64_t query_pos;
+    int64_t target_pos;
     for (const auto& vc : cigars) {
         const string& val = vc.first;
         const string& cat = vc.second;
         int64_t len = stol(val);
         if (cat == "M") {
+            query_pos = query_start + query_offset;
+            // if we're in reverse coordinates, we need to measure from the end
+            if (is_reverse) {
+                target_pos = target_end - len - target_offset;
+            } else {
+                target_pos = target_start + target_offset;
+            }
 #ifdef debug
             cerr << "adding interval for " << target_name << ": " << target_pos << "-" << (target_pos + len - 1)
                  << " ==> " << query_name << ": " << query_pos << ", rev=" << is_reverse << endl;
-#endif             
+#endif
             StableInterval interval(target_pos, target_pos + len - 1,
                                     make_tuple(query_id, query_pos, is_reverse));
             target_intervals.push_back(interval);
-        }
-        if (cat == "M") {
-            query_pos += len;
-            target_pos += len;
+            
+            query_offset += len;
+            target_offset += len;
         } else if (cat == "I") {
-            query_pos += len;
+            query_offset += len;
         } else if (cat == "D") {
-            target_pos += len;
+            target_offset += len;
         } else {
             assert(false);
         }
@@ -99,7 +110,7 @@ unordered_map<string, StableIntervalTree> create_interval_trees(unordered_map<st
         }
         vector<StableInterval> clipped_intervals;
         for (StableInterval& interval : intervals) {
-            clip_interval(interval, target_size, cut_points, clipped_intervals);
+            clip_interval(interval, cut_points, clipped_intervals);
         }
         cerr << "Clipped filter reduces from " << intervals.size() << " to " << clipped_intervals.size() << endl;
         intervals = std::move(clipped_intervals);        
@@ -133,7 +144,7 @@ unordered_map<string, StableIntervalTree> create_interval_trees(unordered_map<st
     return target_to_interval_trees;
 }
 
-void clip_interval(const StableInterval& interval, int64_t target_size,
+void clip_interval(const StableInterval& interval,
                    const set<int64_t>& cut_points, vector<StableInterval>& clipped_intervals) {
 
     assert(interval.stop >= interval.start);
@@ -150,7 +161,7 @@ void clip_interval(const StableInterval& interval, int64_t target_size,
     for (auto k = i; k != j; ++k) {
         cut_positions.push_back(*k);
     }
-    cerr << "qyuery cuts on " << interval << " gives " << cut_positions.size() << " results" << endl;
+    cerr << "query cuts on " << interval << " gives " << cut_positions.size() << " results" << endl;
     // make sure last point is a cut point no matter what so
     // we can clip everything in a loop
     if (cut_positions.empty() || cut_positions.back() != interval.stop) {
@@ -170,13 +181,15 @@ void clip_interval(const StableInterval& interval, int64_t target_size,
         return;
     }
 
+    int64_t interval_size = interval.stop - interval.start + 1;
+
     // make the clipped intervals
     // todo: just do this in above pass
     bool is_reverse = get<2>(interval.value);
     for (auto& ni : new_intervals) {
         int64_t stable_offset;
         if (is_reverse) {
-            stable_offset = get<1>(interval.value) + target_size - 1 - (ni.first - interval.start) - (ni.second - ni.first);
+            stable_offset = get<1>(interval.value) + interval_size - 1 - (ni.first - interval.start) - (ni.second - ni.first);
         } else {
             stable_offset = get<1>(interval.value) + (ni.first - interval.start);
         }
@@ -184,6 +197,7 @@ void clip_interval(const StableInterval& interval, int64_t target_size,
                                                                        stable_offset,
                                                                        is_reverse));
         assert(clipped_intervals.back().stop >= clipped_intervals.back().start);
+        cerr << "Adding clipped " << clipped_intervals.back() << endl;
     }
 }
 
@@ -192,6 +206,7 @@ void paf_to_stable(const vector<string>& paf_toks,
                    const vector<pair<string, int64_t>>& query_id_to_info,
                    const unordered_map<string, StableIntervalTree> target_to_interval_tree) {
 
+    int64_t query_start = stol(paf_toks[2]);
     const string& target_name = paf_toks[5];
     int64_t target_size = stol(paf_toks[6]);
     int64_t target_start = stol(paf_toks[7]);
@@ -200,9 +215,6 @@ void paf_to_stable(const vector<string>& paf_toks,
 
     // find the mapping of our target sequence to query sequence(s)
     const StableIntervalTree& interval_tree = target_to_interval_tree.at(target_name);
-
-    int64_t query_pos = stol(paf_toks[2]);
-    int64_t target_pos = target_start;
 
     vector<pair<string, string>> cigars;
     for (int i = 12; i < paf_toks.size(); ++i) {
@@ -216,12 +228,24 @@ void paf_to_stable(const vector<string>& paf_toks,
     if (is_reverse) {
         std::reverse(cigars.begin(), cigars.end());
     }
+    int64_t target_offset = 0;
+    int64_t query_offset = 0;
+    int64_t query_pos;
+    int64_t target_pos;
     for (const auto& vc : cigars) {
         const string& val = vc.first;
         const string& cat = vc.second;
         int64_t len = stol(val);
         if (cat == "M") {
 
+            query_pos = query_start + query_offset;
+            // if we're in reverse coordinates, we need to measure from the end
+            if (is_reverse) {
+                target_pos = target_end - len - target_offset;
+            } else {
+                target_pos = target_start + target_offset;
+            }
+            
             vector<StableInterval> overlapping_intervals = interval_tree.findOverlapping(target_pos, target_pos + len - 1);
             // we mostly do this to make it easier to debug
             std::sort(overlapping_intervals.begin(), overlapping_intervals.end(), StableIntervalTree::IntervalStartCmp());
@@ -232,10 +256,14 @@ void paf_to_stable(const vector<string>& paf_toks,
             assert(overlapping_intervals[0].start == target_pos);
             assert(overlapping_intervals.back().stop == target_pos + len - 1);
 
+            if (is_reverse) {
+                std::reverse(overlapping_intervals.begin(), overlapping_intervals.end());
+            }
+
             int64_t total_block_length = 0;
             for (size_t i = 0; i < overlapping_intervals.size(); ++i) {
                 StableInterval& overlapping_interval = overlapping_intervals[i];
-                if (i > 0) {
+                if (i > 0 && !is_reverse) {
                     // expect exact coverage (see above)
                     assert(overlapping_interval.start == overlapping_intervals[i-1].stop + 1);
                 }
@@ -243,12 +271,12 @@ void paf_to_stable(const vector<string>& paf_toks,
                 total_block_length += overlapping_interval.stop - overlapping_interval.start + 1;
             }
             assert(total_block_length == len);
-            query_pos += len;
-            target_pos += len;
+            query_offset += len;
+            target_offset += len;
         } else if (cat == "I") {
-            query_pos += len;
+            query_offset += len;
         } else if (cat == "D") {
-            target_pos += len;
+            target_offset += len;
         } else {
             assert(false);
         }
