@@ -85,6 +85,8 @@ int main(int argc, char** argv) {
     vector<pair<string, int64_t>> query_id_to_info;
     unordered_map<string, pair<int64_t, vector<StableInterval>>> target_to_intervals;
 
+    cerr << "[paf2stable]: Loading PAF interval mapping" << endl;
+    size_t paf_line_count = 0;
     string buffer;
     while (getline(paf_file, buffer)) {
         // split into array of tokens
@@ -96,8 +98,16 @@ int main(int argc, char** argv) {
         }
 
         update_stable_mapping_info(toks, query_name_to_id, query_id_to_info, target_to_intervals);
+        ++paf_line_count;
     }
-
+    
+    size_t total_intervals = 0;
+    for (const auto& kv : target_to_intervals) {
+        total_intervals += kv.second.second.size();
+    }
+    cerr << "[paf2stable]: Scanned " << total_intervals << " intervals from " << paf_line_count << " PAF lines"
+         << " for " << target_to_intervals.size() << " different target contigs" << endl;
+    cerr << "[paf2stable]: Converting PAF intervals" << endl;
     // make the interval tree from the intervals
     unordered_map<string, StableIntervalTree> target_to_interval_tree = create_interval_trees(target_to_intervals);
 
@@ -105,13 +115,15 @@ int main(int argc, char** argv) {
     paf_file.close();
     paf_file.open(in_paf_path);
     assert(paf_file);
+    size_t lines_written = 0;
     while (getline(paf_file, buffer)) {
         // split into array of tokens
         vector<string> toks;
         split_delims(buffer, "\t\n", toks);        
 
-        paf_to_stable(toks, query_id_to_info, target_to_interval_tree);
+        lines_written += paf_to_stable(toks, query_id_to_info, target_to_interval_tree);
     }
+    cerr << "[paf2stable]: Wrote " << lines_written << " PAF liens" << endl;
     
     return 0;
 }

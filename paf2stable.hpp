@@ -35,12 +35,13 @@ void clip_interval(const StableInterval& interval,
                    const set<int64_t>& cut_points, vector<StableInterval>& clipped_intervals);
 
 // apply the interval map to a PAF line to rewrite it as a series of query-to-query mappings
-// output PAF line(s) prtined to cout
-void paf_to_stable(const vector<string>& paf_toks,
+// output PAF line(s) prtined to cout and return number of lines
+size_t paf_to_stable(const vector<string>& paf_toks,
                    const vector<pair<string, int64_t>>& query_id_to_info,
                    const unordered_map<string, StableIntervalTree> target_to_interval_tree);
 
 // write a new paf line (in stable coordinates) for a given sub-interval of a match block
+// return number of lines written
 void make_paf_line_for_interval(const vector<string>& paf_toks,
                                 const vector<pair<string, int64_t>>& query_id_to_info,
                                 const StableInterval& overlapping_interval,

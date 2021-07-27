@@ -200,9 +200,9 @@ void clip_interval(const StableInterval& interval,
 }
 
 
-void paf_to_stable(const vector<string>& paf_toks,
-                   const vector<pair<string, int64_t>>& query_id_to_info,
-                   const unordered_map<string, StableIntervalTree> target_to_interval_tree) {
+size_t paf_to_stable(const vector<string>& paf_toks,
+                     const vector<pair<string, int64_t>>& query_id_to_info,
+                     const unordered_map<string, StableIntervalTree> target_to_interval_tree) {
 
     int64_t query_start = stol(paf_toks[2]);
     const string& target_name = paf_toks[5];
@@ -210,6 +210,7 @@ void paf_to_stable(const vector<string>& paf_toks,
     int64_t target_start = stol(paf_toks[7]);
     int64_t target_end = stol(paf_toks[8]);
     bool is_reverse = paf_toks[4] == "-";
+    size_t lines_written = 0;
 
     // find the mapping of our target sequence to query sequence(s)
     const StableIntervalTree& interval_tree = target_to_interval_tree.at(target_name);
@@ -266,6 +267,7 @@ void paf_to_stable(const vector<string>& paf_toks,
                     assert(overlapping_interval.start == overlapping_intervals[i-1].stop + 1);
                 }
                 make_paf_line_for_interval(paf_toks, query_id_to_info, overlapping_interval, query_pos + total_block_length);
+                ++lines_written;
                 total_block_length += overlapping_interval.stop - overlapping_interval.start + 1;
             }
             assert(total_block_length == len);
@@ -279,6 +281,7 @@ void paf_to_stable(const vector<string>& paf_toks,
             assert(false);
         }
     }
+    return lines_written;
 }
 
 void make_paf_line_for_interval(const vector<string>& paf_toks,
