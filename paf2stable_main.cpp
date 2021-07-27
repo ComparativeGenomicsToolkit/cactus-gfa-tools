@@ -109,7 +109,8 @@ int main(int argc, char** argv) {
          << " for " << target_to_intervals.size() << " different target contigs" << endl;
     cerr << "[paf2stable]: Converting PAF intervals" << endl;
     // make the interval tree from the intervals
-    unordered_map<string, StableIntervalTree> target_to_interval_tree = create_interval_trees(target_to_intervals);
+    // (UPDATE: no longer making tree - rather just sort the intervals)
+    create_interval_trees(target_to_intervals);
 
     // second pass: output the paf with all targets replaced by queries
     paf_file.close();
@@ -121,7 +122,7 @@ int main(int argc, char** argv) {
         vector<string> toks;
         split_delims(buffer, "\t\n", toks);        
 
-        lines_written += paf_to_stable(toks, query_id_to_info, target_to_interval_tree);
+        lines_written += paf_to_stable(toks, query_id_to_info, target_to_intervals);
     }
     cerr << "[paf2stable]: Wrote " << lines_written << " PAF liens" << endl;
     

@@ -81,8 +81,7 @@ void update_stable_mapping_info(const vector<string>& paf_toks,
     }
 }
 
-unordered_map<string, StableIntervalTree> create_interval_trees(unordered_map<string, pair<int64_t, vector<StableInterval>>>& target_to_intervals) {
-    unordered_map<string, StableIntervalTree> target_to_interval_trees;
+void create_interval_trees(unordered_map<string, pair<int64_t, vector<StableInterval>>>& target_to_intervals) {
     for (auto& kv : target_to_intervals) {
         vector<StableInterval>& intervals = kv.second.second;
         int64_t target_size = kv.second.first;
@@ -120,8 +119,11 @@ unordered_map<string, StableIntervalTree> create_interval_trees(unordered_map<st
             if (i == 0 || intervals[i].start != intervals[i-1].start || intervals[i].stop != intervals[i].stop) {
                 unique_intervals.push_back(intervals.at(i));
             }
-        }
+        }        
         intervals = std::move(unique_intervals);
+
+        // sort the intervals so we can binary search them
+        std::sort(intervals.begin(), intervals.end(), StableIntervalTree::IntervalStartCmp());
 
 #ifdef debug
         cerr << "Interval Tree (" << kv.first << "):";
@@ -130,12 +132,7 @@ unordered_map<string, StableIntervalTree> create_interval_trees(unordered_map<st
         }
         cerr << endl;
 #endif
-        target_to_interval_trees[kv.first] = StableIntervalTree(intervals);
-        intervals.clear();
-
     }
-    target_to_intervals.clear();
-    return target_to_interval_trees;
 }
 
 void clip_interval(const StableInterval& interval,
@@ -148,7 +145,7 @@ void clip_interval(const StableInterval& interval,
         return;
     }
 
-    // fish relevant cut points out of the set (todo: use iterators throughotu)
+    // fish relevant cut points out of the set (todo: use iterators throughout)
     auto i = cut_points.lower_bound(interval.start);
     auto j = cut_points.upper_bound(interval.stop - 1);
     vector<int64_t> cut_positions;
@@ -202,7 +199,7 @@ void clip_interval(const StableInterval& interval,
 
 size_t paf_to_stable(const vector<string>& paf_toks,
                      const vector<pair<string, int64_t>>& query_id_to_info,
-                     const unordered_map<string, StableIntervalTree> target_to_interval_tree) {
+                     const unordered_map<string, pair<int64_t, vector<StableInterval>>>& target_to_intervals) {
 
     int64_t query_start = stol(paf_toks[2]);
     const string& target_name = paf_toks[5];
@@ -213,7 +210,7 @@ size_t paf_to_stable(const vector<string>& paf_toks,
     size_t lines_written = 0;
 
     // find the mapping of our target sequence to query sequence(s)
-    const StableIntervalTree& interval_tree = target_to_interval_tree.at(target_name);
+    const vector<StableInterval>& intervals = target_to_intervals.at(target_name).second;
 
     vector<pair<string, string>> cigars;
     for (int i = 12; i < paf_toks.size(); ++i) {
@@ -244,11 +241,14 @@ size_t paf_to_stable(const vector<string>& paf_toks,
             } else {
                 target_pos = target_start + target_offset;
             }
-            
-            vector<StableInterval> overlapping_intervals = interval_tree.findOverlapping(target_pos, target_pos + len - 1);
-            // we mostly do this to make it easier to debug
-            std::sort(overlapping_intervals.begin(), overlapping_intervals.end(), StableIntervalTree::IntervalStartCmp());
 
+            // pull all overlapping intervals out of our sorted list
+            StableInterval query_interval(target_pos, target_pos, make_tuple(0, 0, false));
+            auto lb = std::lower_bound(intervals.begin(), intervals.end(), query_interval, StableIntervalTree::IntervalStartCmp());
+            query_interval = StableInterval(target_pos + len - 1, target_pos + len - 1, make_tuple(0, 0, false));
+            auto ub = std::upper_bound(intervals.begin(), intervals.end(), query_interval, StableIntervalTree::IntervalStartCmp());
+            vector<StableInterval> overlapping_intervals(lb, ub);
+            
             // these intervals must, by definition, exactly cover the whole match block (because we built and clipped on
             // every match block in the set
             assert(!overlapping_intervals.empty());

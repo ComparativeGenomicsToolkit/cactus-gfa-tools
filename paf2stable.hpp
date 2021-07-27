@@ -28,7 +28,10 @@ void update_stable_mapping_info(const vector<string>& paf_toks,
 
 // build an interval tree for each target out of the mapped intervals
 // the input map is emptied in the process
-unordered_map<string, StableIntervalTree> create_interval_trees(unordered_map<string, pair<int64_t, vector<StableInterval>>>& target_to_intervals);
+//
+// UPDATE: no longer using interval trees as they are too slow to query.  now just keep vectors in sorted order!
+//
+void create_interval_trees(unordered_map<string, pair<int64_t, vector<StableInterval>>>& target_to_intervals);
 
 // clip out an interval against a set, updating the clipped_intervals list
 void clip_interval(const StableInterval& interval,
@@ -37,8 +40,8 @@ void clip_interval(const StableInterval& interval,
 // apply the interval map to a PAF line to rewrite it as a series of query-to-query mappings
 // output PAF line(s) prtined to cout and return number of lines
 size_t paf_to_stable(const vector<string>& paf_toks,
-                   const vector<pair<string, int64_t>>& query_id_to_info,
-                   const unordered_map<string, StableIntervalTree> target_to_interval_tree);
+                     const vector<pair<string, int64_t>>& query_id_to_info,
+                     const unordered_map<string, pair<int64_t, vector<StableInterval>>>& target_to_intervals);
 
 // write a new paf line (in stable coordinates) for a given sub-interval of a match block
 // return number of lines written
