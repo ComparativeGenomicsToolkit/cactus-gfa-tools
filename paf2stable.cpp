@@ -1,7 +1,7 @@
 #include "paf2stable.hpp"
 #include "pafcoverage.hpp"
 
-#define debug
+//#define debug
 
 void update_stable_mapping_info(const vector<string>& paf_toks,
                                 unordered_map<string, int64_t>& query_name_to_id,
