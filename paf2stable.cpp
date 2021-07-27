@@ -216,7 +216,6 @@ void paf_to_stable(const vector<string>& paf_toks,
     if (is_reverse) {
         std::reverse(cigars.begin(), cigars.end());
     }
-    
     for (const auto& vc : cigars) {
         const string& val = vc.first;
         const string& cat = vc.second;
@@ -233,25 +232,17 @@ void paf_to_stable(const vector<string>& paf_toks,
             assert(overlapping_intervals[0].start == target_pos);
             assert(overlapping_intervals.back().stop == target_pos + len - 1);
 
-            // these are the non-overlapping intervals span the target (but don't necessarily cover it completely)
-            vector<pair<int64_t, int64_t>> target_intervals;
-            int64_t cur_target_offset = target_start;
-                        
-            // assumption: the overlapping intervals are returned in sorted order
+            int64_t total_block_length = 0;
             for (size_t i = 0; i < overlapping_intervals.size(); ++i) {
                 StableInterval& overlapping_interval = overlapping_intervals[i];
-                int64_t clip_start = max(overlapping_interval.start, cur_target_offset);
-                int64_t clip_stop = min(overlapping_interval.stop, target_end - 1);
-                if (clip_stop >= clip_start) {
-                    // write the new paf line for the subinterval
-                    make_paf_line_for_interval(paf_toks, query_id_to_info, query_pos, target_pos, len,
-                                               overlapping_interval, clip_start, clip_stop);
-                    cur_target_offset = clip_stop;
+                if (i > 0) {
+                    // expect exact coverage (see above)
+                    assert(overlapping_interval.start == overlapping_intervals[i-1].stop + 1);
                 }
+                make_paf_line_for_interval(paf_toks, query_id_to_info, overlapping_interval, query_pos + total_block_length);
+                total_block_length += overlapping_interval.stop - overlapping_interval.start + 1;
             }
-
-        }
-        if (cat == "M") {
+            assert(total_block_length == len);
             query_pos += len;
             target_pos += len;
         } else if (cat == "I") {
@@ -266,27 +257,8 @@ void paf_to_stable(const vector<string>& paf_toks,
 
 void make_paf_line_for_interval(const vector<string>& paf_toks,
                                 const vector<pair<string, int64_t>>& query_id_to_info,
-                                int64_t match_start_query,
-                                int64_t match_start_target,
-                                int64_t match_length,
                                 const StableInterval& overlapping_interval,
-                                int64_t target_start, 
-                                int64_t target_stop) {
-
-#ifdef debug
-    cerr << "make sub interval msq=" << match_start_query << " mst=" << match_start_target << " len=" << match_length
-         << " ols=" << overlapping_interval.start << " olp=" << overlapping_interval.stop << " ts=" << target_start
-         << " tp=" << target_stop << endl;
-#endif
-
-    // offset with respect to query_pos and target_pos (which indicate the beginning of the Match block)
-    int64_t delta = target_start - match_start_target;
-    assert(delta >= 0);
-
-    int64_t output_block_length = target_stop - target_start + 1;
-    
-    int64_t output_query_start = match_start_query + delta; 
-    int64_t output_query_end = output_query_start + output_block_length;
+                                int64_t query_pos) {
 
     // pull out the mapping information from the interval
     // this is where the target interval ends up in the stable sequence
@@ -294,23 +266,22 @@ void make_paf_line_for_interval(const vector<string>& paf_toks,
     const int64_t& mapped_interval_start = get<1>(overlapping_interval.value);
     const bool& mapped_interval_reversed = get<2>(overlapping_interval.value);
 
-    int64_t output_target_start = mapped_interval_start + delta;
-    int64_t output_target_end = output_target_start + output_block_length;
+    int64_t block_length = overlapping_interval.stop - overlapping_interval.start + 1;
 
     bool is_reverse = mapped_interval_reversed != (paf_toks[4] == "-");
     
     cout << paf_toks[0] << "\t"
          << paf_toks[1] << "\t"
-         << output_query_start << "\t"
-         << output_query_end << "\t"
+         << query_pos << "\t"
+         << (query_pos + block_length) << "\t"
          << (is_reverse ? "-" : "+") << "\t"
          << mapped_interval_info.first << "\t"
          << mapped_interval_info.second << "\t"
-         << output_target_start << "\t"
-         << output_target_end << "\t"
-         << output_block_length << "\t"
-         << output_block_length << "\t"
+         << mapped_interval_start << "\t"
+         << (mapped_interval_start + block_length) << "\t"
+         << block_length << "\t"
+         << block_length << "\t"
          << paf_toks[11] << "\t"
-         << "cg:Z:" << output_block_length << "M"
+         << "cg:Z:" << block_length << "M"
          << "\n";
 }

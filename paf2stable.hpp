@@ -43,12 +43,8 @@ void paf_to_stable(const vector<string>& paf_toks,
 // write a new paf line (in stable coordinates) for a given sub-interval of a match block
 void make_paf_line_for_interval(const vector<string>& paf_toks,
                                 const vector<pair<string, int64_t>>& query_id_to_info,
-                                int64_t query_pos,
-                                int64_t target_pos,
-                                int64_t match_length,
                                 const StableInterval& overlapping_interval,
-                                int64_t target_start, 
-                                int64_t target_stop);
+                                int64_t query_pos);
 
 // for debugging
 inline ostream& operator<<(ostream& os, const tuple<int64_t, int64_t, bool>& triple) {
