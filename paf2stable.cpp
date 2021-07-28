@@ -86,8 +86,20 @@ void create_interval_trees(unordered_map<string, pair<int64_t, vector<StableInte
         vector<StableInterval>& intervals = kv.second.second;
         int64_t target_size = kv.second.first;
 
+        // sort on start coordinate, which is good enough for our soon-to-be non-overlapping intervals
+        // we break ties using query name to avoid fragmentation (ie always make same choice in dupe sets
+        // when possible)
+        function<bool(const StableInterval&, const StableInterval&)> stable_interval_less =
+            [](const StableInterval& i1, const StableInterval& i2) {
+            if (i1.start == i2.start) {
+                return get<0>(i1.value) < get<0>(i2.value);
+            } else {
+                return i1.start < i2.start;
+            }
+        };
+        
         // take a quick pass just to remove duplicates, as there are often many
-        std::sort(intervals.begin(), intervals.end(), StableIntervalTree::IntervalStartCmp());
+        std::sort(intervals.begin(), intervals.end(), stable_interval_less);
         vector<StableInterval> unique_intervals;
         for (size_t i = 0; i < intervals.size(); ++i) {
             if (i == 0 || intervals[i].start != intervals[i-1].start || intervals[i].stop != intervals[i-1].stop) {
@@ -113,7 +125,7 @@ void create_interval_trees(unordered_map<string, pair<int64_t, vector<StableInte
         intervals = std::move(clipped_intervals);        
 
         // take a quick pass just to remove duplicates after clipping
-        std::sort(intervals.begin(), intervals.end(), StableIntervalTree::IntervalStartCmp());
+        std::sort(intervals.begin(), intervals.end(), stable_interval_less);
         unique_intervals.clear();
         for (size_t i = 0; i < intervals.size(); ++i) {
             if (i == 0 || intervals[i].start != intervals[i-1].start || intervals[i].stop != intervals[i].stop) {
@@ -121,9 +133,6 @@ void create_interval_trees(unordered_map<string, pair<int64_t, vector<StableInte
             }
         }        
         intervals = std::move(unique_intervals);
-
-        // sort the intervals so we can binary search them
-        std::sort(intervals.begin(), intervals.end(), StableIntervalTree::IntervalStartCmp());
 
 #ifdef debug
         cerr << "Interval Tree (" << kv.first << "):";

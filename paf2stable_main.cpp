@@ -124,7 +124,7 @@ int main(int argc, char** argv) {
 
         lines_written += paf_to_stable(toks, query_id_to_info, target_to_intervals);
     }
-    cerr << "[paf2stable]: Wrote " << lines_written << " PAF liens" << endl;
+    cerr << "[paf2stable]: Wrote " << lines_written << " PAF lines" << endl;
     
     return 0;
 }
