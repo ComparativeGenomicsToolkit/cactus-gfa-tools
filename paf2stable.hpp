@@ -44,11 +44,12 @@ size_t paf_to_stable(const vector<string>& paf_toks,
                      const unordered_map<string, pair<int64_t, vector<StableInterval>>>& target_to_intervals);
 
 // write a new paf line (in stable coordinates) for a given sub-interval of a match block
-// return number of lines written
-void make_paf_line_for_interval(const vector<string>& paf_toks,
-                                const vector<pair<string, int64_t>>& query_id_to_info,
-                                const StableInterval& overlapping_interval,
-                                int64_t query_pos);
+// return number of lines written (0 or 1)
+size_t make_paf_line_for_interval(const vector<string>& paf_toks,
+                                  const vector<pair<string, int64_t>>& query_id_to_info,
+                                  const StableInterval& overlapping_interval,
+                                  int64_t query_pos,
+                                  vector<string>& out_toks_buffer);
 
 // for debugging
 inline ostream& operator<<(ostream& os, const tuple<int64_t, int64_t, bool>& triple) {

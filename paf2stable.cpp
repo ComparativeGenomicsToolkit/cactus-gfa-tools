@@ -228,6 +228,7 @@ size_t paf_to_stable(const vector<string>& paf_toks,
     int64_t query_offset = 0;
     int64_t query_pos;
     int64_t target_pos;
+    vector<string> out_toks_buffer;
     for (const auto& vc : cigars) {
         const string& val = vc.first;
         const string& cat = vc.second;
@@ -266,8 +267,7 @@ size_t paf_to_stable(const vector<string>& paf_toks,
                     // expect exact coverage (see above)
                     assert(overlapping_interval.start == overlapping_intervals[i-1].stop + 1);
                 }
-                make_paf_line_for_interval(paf_toks, query_id_to_info, overlapping_interval, query_pos + total_block_length);
-                ++lines_written;
+                lines_written += make_paf_line_for_interval(paf_toks, query_id_to_info, overlapping_interval, query_pos + total_block_length, out_toks_buffer);
                 total_block_length += overlapping_interval.stop - overlapping_interval.start + 1;
             }
             assert(total_block_length == len);
@@ -281,13 +281,21 @@ size_t paf_to_stable(const vector<string>& paf_toks,
             assert(false);
         }
     }
+    // flush the buffer
+    if (!out_toks_buffer.empty()) {
+        for (size_t i = 0; i < out_toks_buffer.size(); ++i) {
+            cout << out_toks_buffer[i] << (i < out_toks_buffer.size() - 1 ? "\t" : "\n");
+        }
+        ++lines_written;
+    }            
     return lines_written;
 }
 
-void make_paf_line_for_interval(const vector<string>& paf_toks,
-                                const vector<pair<string, int64_t>>& query_id_to_info,
-                                const StableInterval& overlapping_interval,
-                                int64_t query_pos) {
+size_t make_paf_line_for_interval(const vector<string>& paf_toks,
+                                  const vector<pair<string, int64_t>>& query_id_to_info,
+                                  const StableInterval& overlapping_interval,
+                                  int64_t query_pos,
+                                  vector<string>& out_toks_buffer) {
 
     // pull out the mapping information from the interval
     // this is where the target interval ends up in the stable sequence
@@ -298,19 +306,68 @@ void make_paf_line_for_interval(const vector<string>& paf_toks,
     int64_t block_length = overlapping_interval.stop - overlapping_interval.start + 1;
 
     bool is_reverse = mapped_interval_reversed != (paf_toks[4] == "-");
-    
-    cout << paf_toks[0] << "\t"
-         << paf_toks[1] << "\t"
-         << query_pos << "\t"
-         << (query_pos + block_length) << "\t"
-         << (is_reverse ? "-" : "+") << "\t"
-         << mapped_interval_info.first << "\t"
-         << mapped_interval_info.second << "\t"
-         << mapped_interval_start << "\t"
-         << (mapped_interval_start + block_length) << "\t"
-         << block_length << "\t"
-         << block_length << "\t"
-         << paf_toks[11] << "\t"
-         << "cg:Z:" << block_length << "M"
-         << "\n";
+
+    vector<string> paf_line =  {
+        paf_toks[0],
+        paf_toks[1],
+        to_string(query_pos),
+        to_string(query_pos + block_length),
+        (is_reverse ? "-" : "+"),
+        mapped_interval_info.first,
+        to_string(mapped_interval_info.second),
+        to_string(mapped_interval_start),
+        to_string(mapped_interval_start + block_length),
+        to_string(block_length),
+        to_string(block_length),
+        paf_toks[11],
+        "cg:Z:" + to_string(block_length) + "M"
+    };
+
+    bool merged = false;
+
+    if (!out_toks_buffer.empty() && paf_line[4] == out_toks_buffer[4] && paf_line[5] == out_toks_buffer[5]) {
+        // queries should never change
+        assert(paf_line[0] == out_toks_buffer[0]);
+        assert(paf_line[11] == out_toks_buffer[11]);
+        // todo: a lot of avoidable string <==> integer conversion going on, but keeps refactor simple for now
+        int64_t prev_query_start = stol(out_toks_buffer[2]);
+        int64_t prev_query_end = stol(out_toks_buffer[3]);
+        int64_t prev_target_start = stol(out_toks_buffer[7]);
+        int64_t prev_target_end = stol(out_toks_buffer[8]);
+        int64_t cur_query_start = stol(paf_line[2]);
+        int64_t cur_query_end = stol(paf_line[3]);
+        int64_t cur_target_start = stol(paf_line[7]);
+        int64_t cur_target_end = stol(paf_line[8]);
+
+        if (paf_line[4] == "+" && prev_query_end <= cur_query_start && prev_target_end <= cur_target_start) {
+            // we merge paf_line into out_toks_buffer on the forward strand
+            int64_t query_delta = cur_query_start - prev_query_end;
+            int64_t target_delta = cur_target_start - prev_target_end;
+            out_toks_buffer[3] = paf_line[3];
+            out_toks_buffer[8] = paf_line[8];
+            out_toks_buffer[9] = to_string(cur_query_end - prev_query_start); // not exact, but not used
+            out_toks_buffer[10] = to_string(stol(out_toks_buffer[10]) + (cur_query_end - cur_query_start));
+            if (query_delta > 0) {
+                out_toks_buffer[12] += to_string(query_delta) + "I";
+            }
+            if (target_delta > 0) {
+                out_toks_buffer[12] += to_string(target_delta) + "D";
+            }
+            out_toks_buffer[12] += to_string(cur_query_end - cur_query_start) + "M";
+            merged = true;
+        }
+    }
+
+    size_t ret = 0;
+    if (!merged) {
+        if (!out_toks_buffer.empty()) {
+            for (size_t i = 0; i < out_toks_buffer.size(); ++i) {
+                cout << out_toks_buffer[i] << (i < out_toks_buffer.size() - 1 ? "\t" : "\n");
+            }
+            ++ret;
+        }
+        out_toks_buffer = paf_line;
+    }
+    return ret;
 }
+
