@@ -374,12 +374,12 @@ size_t make_paf_line_for_interval(const vector<string>& paf_toks,
             out_toks_buffer[9] = to_string(cur_query_end - prev_query_start); // not exact, but not used
             out_toks_buffer[10] = to_string(stol(out_toks_buffer[10]) + (cur_query_end - cur_query_start));
             if (query_delta > 0) {
-                out_toks_buffer[12] += to_string(query_delta) + "I";
+                paf_line[12] += to_string(query_delta) + "I";
             }
             if (target_delta > 0) {
-                out_toks_buffer[12] += to_string(target_delta) + "D";
+                paf_line[12] += to_string(target_delta) + "D";
             }
-            out_toks_buffer[12] += to_string(cur_query_end - cur_query_start) + "M";
+            out_toks_buffer[12] = paf_line[12] + out_toks_buffer[12];
             merged = true;            
         }
     }
