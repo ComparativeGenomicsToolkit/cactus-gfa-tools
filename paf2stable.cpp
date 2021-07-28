@@ -378,8 +378,8 @@ size_t make_paf_line_for_interval(const vector<string>& paf_toks,
             }
             if (target_delta > 0) {
                 paf_line[12] += to_string(target_delta) + "D";
-            }
-            out_toks_buffer[12] = paf_line[12] + out_toks_buffer[12];
+            }            
+            out_toks_buffer[12] = paf_line[12] + out_toks_buffer[12].substr(5);
             merged = true;            
         }
     }
