@@ -145,10 +145,12 @@ def main(args):
     load_fa(options.fasta1)
     load_fa(options.fasta2)
 
+    line_count = 0
     with open(options.paf, "r") as aln_file:
         if options.gaf:
             # check the GAF output from minigraph to make sure the minimizers match up between query and target
             for line in aln_file:
+                line_count += 1
                 toks = line.rstrip().split()
                 if toks[0] != '*':
                     query_name = toks[0]
@@ -157,10 +159,14 @@ def main(args):
         else:
             # check the PAF output from the coverted GAM to make sure the matches in the cigar strings are exact
             for line in aln_file:
+                line_count += 1
                 check_cigar(line, fa_dict, options.min_identity)
 
-    print("OK!")
-                                    
+    if line_count > 0:
+        print("OK!")
+    else:
+        raise RuntimeError("Empty Input")
+        
 
 if __name__ == "__main__":
     sys.exit(main(sys.argv))
