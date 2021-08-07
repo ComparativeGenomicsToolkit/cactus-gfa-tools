@@ -215,9 +215,7 @@ void paf_split(const string& input_paf_path,
                const vector<string>& contigs,
                function<bool(const string&)> visit_contig,
                const string& output_prefix,
-               double min_query_coverage,
-               double min_small_query_coverage,
-               int64_t small_coverage_threshold,
+               const map<int64_t, double>& cov_threshold_map,
                double min_query_uniqueness,
                int64_t min_query_chunk,
                bool allow_softclip,
@@ -323,10 +321,7 @@ void paf_split(const string& input_paf_path,
                 }
             }
             double query_coverage_fraction = (double)max_coverage / query_length;
-            double min_coverage = min_query_coverage;
-            if (small_coverage_threshold > 0 && query_length < small_coverage_threshold) {
-                min_coverage = min_small_query_coverage;
-            }
+            double min_coverage = cov_threshold_map.upper_bound(query_length)->second;
             bool is_ref = !reference_prefix.empty() &&
                 query_coverage.first.substr(0, reference_prefix.length()) == reference_prefix;
             if (!is_ref && (query_coverage_fraction < min_coverage || 
@@ -389,7 +384,6 @@ void paf_split(const string& input_paf_path,
                     } 
                 });
             int64_t query_length = query_lengths[query_coverage.first];
-            double min_coverage = min_query_coverage;
             int64_t masked_bases = 0;
             if (mask_stats.count(query_coverage.first)) {
                 // factor in the masking stats by subtracting from denominator
@@ -401,10 +395,7 @@ void paf_split(const string& input_paf_path,
                     masked_bases = 0;
                 }
             }
-
-            if (small_coverage_threshold > 0 && query_lengths[query_coverage.first] < small_coverage_threshold) {
-                min_coverage = min_small_query_coverage;
-            }
+            double min_coverage = cov_threshold_map.upper_bound(query_lengths[query_coverage.first])->second;
             smooth_query_intervals(query_coverage.first, query_length, masked_bases,
                                    non_overlapping_intervals, min_coverage, min_query_uniqueness, min_query_chunk,
                                    contigs, allow_softclip, log_stream);
