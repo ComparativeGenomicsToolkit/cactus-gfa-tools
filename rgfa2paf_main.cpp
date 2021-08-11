@@ -19,6 +19,7 @@ void help(char** argv) {
        << "    -q, --query-lengths FILE            Tab-separated file listing query contig lengths" << endl
        << "    -T, --target-prefix STRING          Prefix all target (reference) contig names with STRING" << endl
        << "    -P, --query-prefix STRING           Prefix all query contig names with STRING" << endl
+       << "    -i, --ignore-queries FILE           Ignore all sequences found in paf FILE" << endl
        << endl;
 }    
 
@@ -29,6 +30,7 @@ int main(int argc, char** argv) {
     string query_lengths_path;
     string query_prefix;
     string target_prefix;
+    string ignore_paf_path;
     
     int c;
     optind = 1; 
@@ -40,12 +42,13 @@ int main(int argc, char** argv) {
             {"query-lengths", required_argument, 0, 'q'},
             {"target-prefix", required_argument, 0, 'T'},
             {"query-prefix", required_argument, 0, 'P'},
+            {"ignore-queries", required_argument, 0, 'i'},
             {0, 0, 0, 0}
         };
 
         int option_index = 0;
 
-        c = getopt_long (argc, argv, "hr:q:T:P:",
+        c = getopt_long (argc, argv, "hr:q:T:P:i:",
                          long_options, &option_index);
 
         // Detect the end of the options.
@@ -66,6 +69,9 @@ int main(int argc, char** argv) {
         case 'P':
             query_prefix = optarg;
             break;
+        case 'i':
+            ignore_paf_path = optarg;
+            break;            
         case 'h':
         case '?':
             /* getopt_long already printed an error message. */
@@ -121,6 +127,27 @@ int main(int argc, char** argv) {
                 query_lengths[toks[0]] = stol(toks[1]);
             }
         }
+    }
+
+    // read the queries we want to ignore
+    unordered_set<string> ignore_set;
+    if (!ignore_paf_path.empty()) {
+        ifstream ignore_paf_stream(ignore_paf_path);
+        if (!ignore_paf_stream) {
+            cerr << "[rgfa2paf] error: Unable to read query ignore PAF file: " << ignore_paf_path << endl;
+            return 1;
+        }
+        string buffer;
+        while (getline(ignore_paf_stream, buffer)) {
+            vector<string> toks;
+            split_delims(buffer, "\t\n", toks);
+            if (toks.size() > 1) {
+                ignore_set.insert(toks[0]);
+            }
+        }
+    }
+    for (auto x : ignore_set) {
+        cerr << "ignoring " << x << endl;
     }
 
     // gfa pass 1: get total query lengths
@@ -188,9 +215,10 @@ int main(int argc, char** argv) {
         assert(found_SR);
         assert(found_SO);
 
-        if (rank <= max_rank) {
+        string query_name = query_prefix + contig;
+        if (rank <= max_rank && !ignore_set.count(query_name)) {
             // emit the paf line
-            cout << (query_prefix + contig) << "\t"
+            cout << query_name << "\t"
                  << query_lengths[contig] << "\t"
                  << offset << "\t"
                  << offset + gfa_seq.sequence.length() << "\t"
