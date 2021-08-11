@@ -146,9 +146,6 @@ int main(int argc, char** argv) {
             }
         }
     }
-    for (auto x : ignore_set) {
-        cerr << "ignoring " << x << endl;
-    }
 
     // gfa pass 1: get total query lengths
     function<void(const gfak::sequence_elem&)> visit_seq_1 = [&](const gfak::sequence_elem& gfa_seq) {
