@@ -7,6 +7,7 @@
 #include <vector>
 #include <unordered_map>
 #include <functional>
+#include <map>
 #include "IntervalTree.h"
 
 using namespace std;
@@ -51,9 +52,7 @@ void paf_split(const string& input_paf_path,
                const vector<string>& contigs,
                function<bool(const string&)> visit_contig,
                const string& output_prefix,
-               double min_query_coverage,
-               double min_small_query_coverage,
-               int64_t small_coverage_threshold,
+               const map<int64_t, double>& cov_threshold_map,
                double min_query_uniqueness,
                int64_t min_query_chunk,
                bool allow_softclip,

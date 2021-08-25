@@ -29,9 +29,8 @@ void help(char** argv) {
        << "    -C, --contig-file FILE                  Path to list of contigs to process" << endl
        << "    -o, --other-name NAME                   Lump all contigs not selected by above options into single reference with name NAME" << endl
        << "contig assignment ambiguity handling options: " << endl
-       << "    -n, --min-query-coverage FLOAT          At least this fraction of input contig must align to reference contig for it to be assigned" << endl
-       << "    -N, --min-small-query-coverage FLOAT    Override -n for query contigs < [--small-coverage-threshold] bp" << endl
-       << "    -T, --small-coverage-threshold N        Used to toggle between the two coverage thresholds (-n and -N)" << endl
+       << "    -n, --min-query-coverage FLOAT          At least this fraction of input contig must align to reference contig for it to be assigned (can repeat)" << endl
+       << "    -T, --small-coverage-threshold N        Used to toggle between the coverage thresholds (-n). Should have one-fewer value than -n" << endl
        << "    -Q, --min-query-uniqueness FLOAT        The ratio of the number of query bases aligned to the chosen ref contig vs the next best ref contig must exceed this threshold to not be considered ambigious" << endl
        << "    -u, --min-query-chunk N                 I a query interval of >= N bp aligns to a reference with sufficient coverage, cut it out.  Disabled when 0. [0]" << endl
        << "    -s, --allow-softclip                    Allow softclipping with -u" << endl
@@ -63,9 +62,8 @@ int main(int argc, char** argv) {
     string other_name;
 
     // ambiguity handling
-    double min_query_coverage = 0;
-    double min_small_query_coverage = 0;
-    double small_coverage_threshold = 0;
+    vector<double> min_query_coverages;
+    vector<int64_t> small_coverage_thresholds;
     double min_query_uniqueness = 0;
     int64_t min_query_chunk = 0;
     bool allow_softclip = false;
@@ -93,7 +91,6 @@ int main(int argc, char** argv) {
             {"contig-file", required_argument, 0, 'C'},
             {"other-name", required_argument, 0, 'o'},            
             {"min-query-coverage", required_argument, 0, 'n'},
-            {"min-small-query-coverage", required_argument, 0, 'N'},
             {"small-coverage-threshold", required_argument, 0, 'T'},
             {"min-query-uniqueness", required_argument, 0, 'Q'},
             {"min-query-chunk", required_argument, 0, 'u'},
@@ -108,7 +105,7 @@ int main(int argc, char** argv) {
 
         int option_index = 0;
 
-        c = getopt_long (argc, argv, "hg:m:p:B:b:M:Gq:c:C:o:n:N:T:Q:u:sP:a:A:r:L:",
+        c = getopt_long (argc, argv, "hg:m:p:B:b:M:Gq:c:C:o:n:T:Q:u:sP:a:A:r:L:",
                          long_options, &option_index);
 
         // Detect the end of the options.
@@ -151,13 +148,10 @@ int main(int argc, char** argv) {
             other_name = optarg;
             break;            
         case 'n':
-            min_query_coverage = stof(optarg);
-            break;
-        case 'N':
-            min_small_query_coverage = stof(optarg);
+            min_query_coverages.push_back(stof(optarg));
             break;
         case 'T':
-            small_coverage_threshold = stol(optarg);
+            small_coverage_thresholds.push_back(stol(optarg));
             break;
         case 'Q':
             min_query_uniqueness = stof(optarg);
@@ -220,21 +214,24 @@ int main(int argc, char** argv) {
         mkdir(output_prefix.c_str(), S_IRWXU | S_IRWXG | S_IROTH | S_IXOTH);
     }
 
-    if ((min_query_coverage > 0 || min_query_uniqueness > 1) && ambiguous_name.empty()) {
+    if ((!min_query_coverages.empty()  || min_query_uniqueness > 1) && ambiguous_name.empty()) {
         cerr << "[rgfa-split] error: ambiguous name must be set with -a when using -n or -Q" << endl;
         return 1;
     }
+
+    if ((!min_query_coverages.empty() || !small_coverage_thresholds.empty()) &&
+        small_coverage_thresholds.size() != min_query_coverages.size() - 1) {
+        cerr << "[rgfa-split] error: If there are K min coverages specified with -n, there must be K-1 thresholds"
+            " specified with -T" << endl;
+        return 1;
+    }
+    for (size_t i = 1; i < small_coverage_thresholds.size(); ++i) {
+        if (small_coverage_thresholds[i] <= small_coverage_thresholds[i-1]) {
+            cerr << "[rgfa-split] error: Thresholds specified by -T must be in strictly increasing order" << endl;
+            return 1;
+        }
+    }
     
-    if (min_small_query_coverage > 0 && (min_query_coverage == 0 || small_coverage_threshold == 0)) {
-        cerr << "[rgfa-split] error: -N and -T can only be used with -n" << endl;
-        return 1;
-    }
-
-    if (small_coverage_threshold > 0 && min_small_query_coverage < min_query_coverage) {
-        cerr << "[rgfa-split] error: When using -T, --min-small-query-coverage (-N) must be >= --min-query-coverage (-n)" << endl;
-        return 1;
-    }
-
     ofstream log_fstream;
     if (!log_path.empty()) {
         log_fstream.open(log_path);
@@ -319,6 +316,18 @@ int main(int argc, char** argv) {
         }
     };
 
+    // make a coverage threshold map
+    map<int64_t, double> cov_threshold_map;
+    if (min_query_coverages.empty()) {
+        // no threshold
+        cov_threshold_map[numeric_limits<int64_t>::max()] = 0.;
+    } else {
+        for (size_t i = 0; i < min_query_coverages.size() - 1; ++i) {
+            cov_threshold_map[small_coverage_thresholds[i]] = min_query_coverages[i];
+        }
+        cov_threshold_map[numeric_limits<int64_t>::max()] = min_query_coverages.back();
+    }
+
     // lump unselected contigs into the "other" category if desired
     if (!other_name.empty()) {
         if (target_to_id.empty()) {
@@ -369,7 +378,7 @@ int main(int argc, char** argv) {
             };
         }
         paf_split(input_paf_path, name_to_refid, partition.second, visit_contig, output_prefix,
-                  min_query_coverage, min_small_query_coverage, small_coverage_threshold, min_query_uniqueness,
+                  cov_threshold_map, min_query_uniqueness,
                   min_query_chunk, allow_softclip,
                   ambiguous_id, reference_prefix, query_mask_stats, max_gap, min_mapq, log_stream);
     }
