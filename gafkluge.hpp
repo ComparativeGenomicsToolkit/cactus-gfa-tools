@@ -1,5 +1,3 @@
-// Downloaded from https://raw.githubusercontent.com/vgteam/libvgio/master/include/vg/io/gafkluge.hpp
-
 #pragma once
 
 /**
@@ -127,7 +125,7 @@ inline void parse_gaf_record(const std::string& gaf_line, GafRecord& gaf_record)
             GafStep step;
             pos = buffer.find_first_of("><", pos);
             next = buffer.find_first_of("><", pos + 1);
-            std::string step_token = buffer.substr(pos, next);
+            std::string step_token = buffer.substr(pos, next != std::string::npos ? next - pos + 1 : std::string::npos);
             size_t colon = step_token.find_first_of(':');
             step.is_reverse = step_token[0] == '<';
             if (colon == std::string::npos) {
@@ -137,14 +135,14 @@ inline void parse_gaf_record(const std::string& gaf_line, GafRecord& gaf_record)
                 step.is_interval = false;
             } else {
                 // colon, we interpret the step as a stable path interval
-                step.name = step_token.substr(1, colon);
+                step.name = step_token.substr(1, colon - 1);
                 step.is_stable = true;
                 step.is_interval = true;
                 size_t dash = step_token.find_first_of('-', colon);
                 if (dash == std::string::npos) {
                     throw std::runtime_error("Error parsing GAF range of " + step_token);
                 }
-                step.start = std::stol(step_token.substr(colon + 1, dash));
+                step.start = std::stol(step_token.substr(colon + 1, dash - colon));
                 step.end = std::stol(step_token.substr(dash + 1));
             }
             gaf_record.path.push_back(step);
@@ -219,6 +217,56 @@ inline void for_each_cs(const GafRecord& gaf_record, std::function<void(const st
         }
     }
 }
+
+/*
+ * Visit each vg cigar record as a string.  cg cigars are described here: 
+ * https://samtools.github.io/hts-specs/SAMv1.pdf 
+ * |([0-9]+[MIDNSHPX=])+
+ */
+inline void for_each_cg(const GafRecord& gaf_record, std::function<void(const char&, const size_t&)> fn) {
+    if (gaf_record.opt_fields.count("cg")) {
+        const std::string& cg_cigar = gaf_record.opt_fields.find("cg")->second.second;
+        size_t next;
+        for (size_t co = 0; co != std::string::npos && co < cg_cigar.length(); co = next) {
+            next = cg_cigar.find_first_of("MIDNSHPX=", co);
+            assert(next != std::string::npos); // todo: better error
+            std::string cg_len = cg_cigar.substr(co, next - co);
+            size_t cg_len_i = std::stol(cg_len);
+            fn(cg_cigar[next], cg_len_i);
+            ++next;
+        }
+    }
+}
+
+/*
+ * Generic cigar function that will visit cs cigars if present, but fall back on cg cigars otherwise
+ * Function takes in token {:*-+MIDNSHPX=}, length, query-string, target-string
+ * The latter two strings are only filled by cs records and will be left empty for cg
+ */
+inline void for_each_cigar(const GafRecord& gaf_record, std::function<void(const char&, const size_t&, const std::string&, const std::string&)> fn) {
+    if (gaf_record.opt_fields.count("cs")) {
+        for_each_cs(gaf_record, [&](const std::string& cs_str) {
+                if (cs_str[0] == ':') {
+                    fn(cs_str[0], std::stol(cs_str.substr(1)), "", "");
+                } else if (cs_str[0] == '+') {
+                    std::string qs = cs_str.substr(1);
+                    fn(cs_str[0], qs.length(), qs, "");
+                } else if (cs_str[0] == '-') {
+                    std::string ts = cs_str.substr(1);
+                    fn(cs_str[0], ts.length(), "", ts);
+                } else if (cs_str[0] == '*') {
+                    assert(cs_str.length() == 3);
+                    fn(cs_str[0], 1, cs_str.substr(2,1), cs_str.substr(1,1));
+                } else {
+                    assert(false);
+                }
+            });
+    } else {
+        for_each_cg(gaf_record, [&](const char& cg_tok, const size_t& cg_len) {
+                fn(cg_tok, cg_len, "", "");
+            });
+    }
+}
     
 /*
  * Write a GAF Step to a stream
@@ -229,7 +277,7 @@ inline std::ostream& operator<<(std::ostream& os, const gafkluge::GafStep& gaf_s
     }
     os << gaf_step.name;
     if (gaf_step.is_interval) {
-        os << gaf_step.start << "-" << gaf_step.end;
+        os << ":" <<  gaf_step.start << "-" << gaf_step.end;
     }
     return os;
 }
