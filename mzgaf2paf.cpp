@@ -179,12 +179,16 @@ size_t mzgaf2paf(const MzGafRecord& gaf_record,
             // insertion before next match
             int64_t insertion_size = matches[i+1].query_start - matches[i].query_end;
             assert(insertion_size >= min_gap);
-            cigar.push_back(std::to_string(insertion_size) + "I");
+            if (insertion_size > 0) {
+                cigar.push_back(std::to_string(insertion_size) + "I");
+            }
             total_insertions += insertion_size;
             // deletion before next match
             int64_t deletion_size = matches[i+1].target_start - matches[i].target_end;
             assert(deletion_size >= min_gap);
-            cigar.push_back(std::to_string(deletion_size) + "D");
+            if (deletion_size > 0) {
+                cigar.push_back(std::to_string(deletion_size) + "D");
+            }
             total_deletions += deletion_size;
         }
     }
