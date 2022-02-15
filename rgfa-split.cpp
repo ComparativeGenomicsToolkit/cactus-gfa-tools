@@ -7,6 +7,16 @@
 
 //#define debug 1
 
+// ignore id=XXX| prefixes in reference contigs
+static string strip_prefix(const string& name) {
+    if (name.compare(0, 3, "id=") == 0) {
+        size_t p = name.find('|', 3);
+        assert(p != string::npos);
+        return name.substr(p + 1);
+    }
+    return name;
+}
+
 /*
 
 sort nodes by rank (ascending)
@@ -50,7 +60,7 @@ pair<unordered_map<int64_t, int64_t>, vector<string>> rgfa2contig(const string& 
         for (const gfak::opt_elem& oe : gfa_seq.opt_fields) {
             if (oe.key == "SN") {
                 assert(found_SN == false);
-                contig = oe.val;
+                contig = strip_prefix(oe.val);
                 found_SN = true;
             } else if (oe.key == "SR") {
                 assert(found_SR == false);
