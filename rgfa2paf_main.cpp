@@ -124,7 +124,11 @@ int main(int argc, char** argv) {
             vector<string> toks;
             split_delims(buffer, "\t\n", toks);
             if (toks.size() > 1) {
-                query_lengths[toks[0]] = stol(toks[1]);
+                string contig = toks[0];
+                if (contig.compare(0, query_prefix.length(), query_prefix) != 0) {
+                    contig = query_prefix + contig;
+                }                
+                query_lengths[contig] = stol(toks[1]);
             }
         }
     }
@@ -142,7 +146,11 @@ int main(int argc, char** argv) {
             vector<string> toks;
             split_delims(buffer, "\t\n", toks);
             if (toks.size() > 1) {
-                ignore_set.insert(toks[0]);
+                string contig = toks[0];
+                if (contig.compare(0, query_prefix.length(), query_prefix) != 0) {
+                    contig = query_prefix + contig;
+                }                                
+                ignore_set.insert(contig);
             }
         }
     }
@@ -176,6 +184,9 @@ int main(int argc, char** argv) {
         assert(found_SN);
         assert(found_SR);
         assert(found_SO);
+        if (contig.compare(0, query_prefix.length(), query_prefix) != 0) {
+            contig = query_prefix + contig;
+        }
 
         if (rank <= max_rank) {
             query_lengths[contig] += gfa_seq.sequence.length();
@@ -211,16 +222,23 @@ int main(int argc, char** argv) {
         assert(found_SN);
         assert(found_SR);
         assert(found_SO);
+        if (contig.compare(0, query_prefix.length(), query_prefix) != 0) {
+            contig = query_prefix + contig;
+        }
 
-        string query_name = query_prefix + contig;
-        if (rank <= max_rank && !ignore_set.count(query_name)) {
+        string target = gfa_seq.name;
+        if (target.compare(0, target_prefix.length(), target_prefix) != 0) {
+            target = target_prefix + target;
+        }
+
+        if (rank <= max_rank && !ignore_set.count(contig)) {
             // emit the paf line
-            cout << query_name << "\t"
+            cout << contig << "\t"
                  << query_lengths[contig] << "\t"
                  << offset << "\t"
                  << offset + gfa_seq.sequence.length() << "\t"
                  << "+" << "\t"
-                 << (target_prefix + gfa_seq.name) << "\t"
+                 << target << "\t"
                  << gfa_seq.sequence.length() << "\t"
                  << "0" << "\t"
                  << gfa_seq.sequence.length()  << "\t"
