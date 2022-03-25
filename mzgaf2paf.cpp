@@ -222,7 +222,7 @@ size_t mzgaf2paf(const MzGafRecord& gaf_record,
                    << (paf_target_start + leading_deletions) << "\t"
                    << (paf_target_end - leftover_deletions) << "\t"
                    << total_matches << "\t"
-                   << (total_matches + total_insertions + total_deletions - leftover_insertions - leftover_deletions) << "\t"
+                   << (total_matches + total_insertions + total_deletions) << "\t"
                    << parent_record.mapq << "\t" << "cg:Z:";
 
         // and the cigar
