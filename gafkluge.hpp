@@ -14,6 +14,7 @@
 #include <vector>
 #include <map>
 #include <functional>
+#include <cassert>
 
 namespace gafkluge {
 
