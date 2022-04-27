@@ -10,7 +10,7 @@ using namespace gafkluge;
 
 void help(char** argv) {
   cerr << "usage: " << argv[0] << " [options] <gaf> [gaf2] [gaf3] [...] > output.paf" << endl
-       << "Convert minigraph --write-mz output(s) to PAF" << endl
+       << "Convert minigraph -S (with -c OR--write-mz) output(s) to PAF" << endl
        << endl
        << "options: " << endl
        << "    -p, --target-prefix PREFIX          Prepend all target (graph) contig names with this prefix" << endl
@@ -206,16 +206,27 @@ int main(int argc, char** argv) {
                     (parent_record.query_length <= min_block_len || parent_record.block_length >= min_block_len) &&
                     gaf_record.target_length >= min_node_len) {
 
-                    total_match_length += mzgaf2paf(gaf_record,
-                                                    parent_record,
-                                                    cout,
-                                                    min_gap,
-                                                    min_match_length,
-                                                    mz_map,
-                                                    universal_filter,
-                                                    query_coverage,
-                                                    min_overlap_len,
-                                                    target_prefix);
+                    if (gaf_record.cigar.empty()) {
+                        // old logic: expects output of --write-mz to transform minimizers into cigars
+                        total_match_length += mzgaf2paf(gaf_record,
+                                                        parent_record,
+                                                        cout,
+                                                        min_gap,
+                                                        min_match_length,
+                                                        mz_map,
+                                                        universal_filter,
+                                                        query_coverage,
+                                                        min_overlap_len,
+                                                        target_prefix);
+                    } else {
+                        // new logic: minigraph -g can now produce cigars, so we use them instead of the minimizers
+                        total_match_length += mzgaf2paf_base(gaf_record,
+                                                             parent_record,
+                                                             cout,
+                                                             query_coverage,
+                                                             min_overlap_len,
+                                                             target_prefix);                        
+                    }
                     
                     total_target_block_length += gaf_record.target_end - gaf_record.target_start;
                     ++total_records;

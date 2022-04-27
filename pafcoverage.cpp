@@ -27,7 +27,7 @@ vector<string> &split_delims(const string &s, const string& delims, vector<strin
 void for_each_cg(const string& cg_tok, function<void(const string&, const string&)> fn) {
     size_t next;
     for (size_t co = 5; co != string::npos; co = next) {
-        next = cg_tok.find_first_of("MDI", co + 1);
+        next = cg_tok.find_first_of("MIDNSHP=X", co + 1);
         if (next != string::npos) {
             fn(cg_tok.substr(co, next - co), cg_tok.substr(next, 1));
             ++next;

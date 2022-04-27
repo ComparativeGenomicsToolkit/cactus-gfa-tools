@@ -53,7 +53,7 @@ void update_stable_mapping_info(const vector<string>& paf_toks,
         const string& val = vc.first;
         const string& cat = vc.second;
         int64_t len = stol(val);
-        if (cat == "M") {
+        if (cat == "M" || cat == "X" || cat == "=") {
             query_pos = query_start + query_offset;
             // if we're in reverse coordinates, we need to measure from the end
             if (is_reverse) {
@@ -242,7 +242,7 @@ size_t paf_to_stable(const vector<string>& paf_toks,
         const string& val = vc.first;
         const string& cat = vc.second;
         int64_t len = stol(val);
-        if (cat == "M") {
+        if (cat == "M" || cat == "X" || cat == "=") {
 
             query_pos = query_start + query_offset;
             // if we're in reverse coordinates, we need to measure from the end

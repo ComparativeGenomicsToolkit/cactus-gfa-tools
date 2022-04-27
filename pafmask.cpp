@@ -160,8 +160,10 @@ string clip_paf(const vector<string>& toks, const string& query_name, int64_t qu
         if (toks[i].substr(0, 5) == "cg:Z:") {
             // todo: quadratic alert: we are scanning the full cigar here
             for_each_cg(toks[i], [&](const string& val, const string& cat) {
-                    assert(cat == "M" || cat == "I" || cat =="D");
-                    cigar_toks.push_back(make_pair(stol(val), cat[0]));
+                    // todo: support these
+                    char cat_ch = (cat == "X" || cat == "=") ? 'M' : cat[0];
+                    assert(cat_ch == 'M' || cat_ch == 'I' || cat_ch == 'D');                                        
+                    cigar_toks.push_back(make_pair(stol(val), cat_ch));
                 });
             break;
         }
@@ -301,8 +303,10 @@ void validate_paf(const vector<string>& toks, const string& fragment_paf) {
             if (paf_toks[i].substr(0, 5) == "cg:Z:") {
                 // todo: quadratic alert: we are scanning the full cigar here
                 for_each_cg(paf_toks[i], [&](const string& val, const string& cat) {
-                        assert(cat == "M" || cat == "I" || cat =="D");
-                        cigar_toks.push_back(make_pair(stol(val), cat[0]));
+                        // todo: support these
+                        char cat_ch = (cat == "X" || cat == "=") ? 'M' : cat[0];
+                        assert(cat_ch == 'M' || cat_ch == 'I' || cat_ch == 'D');                                        
+                        cigar_toks.push_back(make_pair(stol(val), cat_ch));
                     });
                 break;
             }

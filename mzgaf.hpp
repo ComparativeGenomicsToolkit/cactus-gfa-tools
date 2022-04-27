@@ -8,6 +8,7 @@
 #pragma once
 // copied from https://github.com/vgteam/libvgio/blob/master/include/vg/io/gafkluge.hpp
 #include <cassert>
+#include <list>
 #include "gafkluge.hpp"
 
 using namespace std;
@@ -31,6 +32,7 @@ struct MzGafRecord {
     int64_t kmer_size;
     vector<int32_t> target_mz_offsets;
     vector<int32_t> query_mz_offsets;
+    vector<pair<char, int64_t>> cigar;
 };
 
 inline double string_to_float(const std::string& s) {
@@ -113,10 +115,18 @@ inline void parse_mzgaf_record(const std::string& gaf_line, MzGafRecord& gaf_rec
     scan_column();
     gaf_record.query_end = std::stol(buffer);
 
+    gaf_record.target_mz_offsets.clear();
+    gaf_record.query_mz_offsets.clear();
+
+    if (in.peek() == EOF) {
+        // we now support -S without --write-mz (but with -c).  in this case, we're at the end
+        gaf_record.kmer_size = missing_int;
+        return;
+    }
+    
     scan_column();
     gaf_record.kmer_size = std::stol(buffer);
     scan_column();
-    gaf_record.target_mz_offsets.clear();
     if (gaf_record.num_minimizers > 0) {
         gaf_record.target_mz_offsets.reserve(gaf_record.num_minimizers);
     }
@@ -125,7 +135,6 @@ inline void parse_mzgaf_record(const std::string& gaf_line, MzGafRecord& gaf_rec
     assert(span + gaf_record.kmer_size == gaf_record.target_end - gaf_record.target_start);
 
     scan_column();
-    gaf_record.query_mz_offsets.clear();
     if (gaf_record.num_minimizers > 0) {
         gaf_record.query_mz_offsets.reserve(gaf_record.num_minimizers);
     }
@@ -143,14 +152,59 @@ inline void scan_mzgaf(istream& in_stream, function<void(MzGafRecord& gaf_record
                        function<void(GafRecord& parent_record)> parent_fn = nullptr) {
     string line_buffer;
     GafRecord gaf_record;
+    list<pair<char, size_t>> gaf_cigar;
+    list<pair<char, size_t>>::iterator gaf_cig_it;
     MzGafRecord mz_record;
     while (getline(in_stream, line_buffer)) {
         if (line_buffer[0] == '*') {
             assert(!gaf_record.query_name.empty());
             parse_mzgaf_record(line_buffer, mz_record);
+            // scan the cigar to consume the step
+            if (!gaf_cigar.empty()) {
+                int64_t cig_target_len = 0;
+                auto gaf_cig_it2 = gaf_cig_it;
+                int64_t target_length = mz_record.target_end - mz_record.target_start;
+                for (; gaf_cig_it2 != gaf_cigar.end() && cig_target_len < target_length; ++gaf_cig_it2) {
+                    if (gaf_cig_it2->first == 'X' || gaf_cig_it2->first == '=' || gaf_cig_it2->first == 'D'
+                        || gaf_cig_it2->first == 'M' || gaf_cig_it2->first == 'N') {
+                        cig_target_len += gaf_cig_it2->second;
+                    }
+                }
+                if (cig_target_len < target_length) {
+                    cerr << "[mzgaf] error: Ran out of cigar to consume GAF step\n" << gaf_record << endl << line_buffer << endl;
+                    exit(1);
+                }
+                // if our cigar overhangs the step we just chop it
+                // maintaining that the step exactly spans range [it, it2)
+                if (cig_target_len > target_length) {
+                    int64_t delta = cig_target_len - target_length;
+                    // insert a new (empty) step before it2
+                    gaf_cigar.insert(gaf_cig_it2, pair<char, size_t>());
+                    --gaf_cig_it2;
+
+                    // set the new step's length to delta
+                    auto gaf_cig_it3 = gaf_cig_it2;
+                    --gaf_cig_it3;
+                    gaf_cig_it2->first = gaf_cig_it3->first;
+                    gaf_cig_it2->second = delta;
+                    // and subtract it off the previous step
+                    assert(gaf_cig_it3->second > delta);
+                    gaf_cig_it3->second -= delta;
+                }
+                mz_record.cigar.clear();
+                for (; gaf_cig_it != gaf_cig_it2; ++gaf_cig_it) {
+                    mz_record.cigar.push_back(*gaf_cig_it);
+                }
+            }            
             visit_fn(mz_record, gaf_record);
         } else {
             parse_gaf_record(line_buffer, gaf_record);
+            // parse the cigar if it's there
+            gaf_cigar.clear();
+            for_each_cg(gaf_record, [&](const char& c, const size_t& s) {
+                    gaf_cigar.push_back(make_pair(c, s));
+                });
+            gaf_cig_it = gaf_cigar.begin();
             if (parent_fn) {
                 parent_fn(gaf_record);
             }

@@ -242,6 +242,61 @@ size_t mzgaf2paf(const MzGafRecord& gaf_record,
     return total_matches;
 }
 
+size_t mzgaf2paf_base(const MzGafRecord& gaf_record,
+                      const GafRecord& parent_record,
+                      ostream& paf_stream,
+                      QueryCoverage& query_coverage,
+                      int64_t min_overlap_len,                 
+                      const string& target_prefix) {
+
+    // paf coordinates are always on forward strand. but the mz output coordinates for the target
+    // can apparently be on the reverse strand, so we flip them as needed
+    int64_t paf_target_start = gaf_record.target_start;
+    int64_t paf_target_end = gaf_record.target_end;
+    if (gaf_record.is_reverse) {
+        paf_target_start = gaf_record.target_length - gaf_record.target_end;
+        paf_target_end = gaf_record.target_length - gaf_record.target_start;
+    }
+  
+    TwoBitVec* cov_vec = min_overlap_len > 0 ? &query_coverage[parent_record.query_name] : nullptr;
+    if (cov_vec && cov_vec->size() == 0) {
+        assert(parent_record.block_length < min_overlap_len);
+        cov_vec = nullptr;
+    }
+
+    int64_t total_matches = 0;
+    int64_t total_bases = 0;
+    for (const auto& cig : gaf_record.cigar) {
+        total_bases += cig.second;
+        if (cig.first == 'M' || cig.first == '=') {
+            total_matches += cig.second;
+        }
+    }
+    
+    // output the paf columns
+    paf_stream << parent_record.query_name << "\t"
+               << parent_record.query_length << "\t"
+               << gaf_record.query_start << "\t"
+               << gaf_record.query_end << "\t"
+               << (gaf_record.is_reverse ? "-" : "+") << "\t"
+               << target_prefix << gaf_record.target_name << "\t"
+               << gaf_record.target_length << "\t"
+               << paf_target_start << "\t"
+               << paf_target_end << "\t"
+               << total_matches << "\t"
+               << total_bases << "\t"
+               << parent_record.mapq << "\t" << "cg:Z:";
+
+    // and the cigar
+    for (int64_t i = 0; i < gaf_record.cigar.size(); ++i) {
+        int64_t idx = gaf_record.is_reverse ? gaf_record.cigar.size() - 1 - i : i;
+        paf_stream << gaf_record.cigar[i].second << gaf_record.cigar[i].first;
+    }
+    paf_stream << "\n";
+
+    return total_matches;
+}
+
 
 // update the counts for one mapping of query to target
 void update_mz_map(const gafkluge::MzGafRecord& gaf_record,

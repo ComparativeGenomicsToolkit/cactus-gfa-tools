@@ -74,6 +74,18 @@ size_t mzgaf2paf(const gafkluge::MzGafRecord& gaf_record,
                  int64_t min_overlap_len,
                  const string& target_prefix = "");
 
+/**
+ * Like above, but expect cigar from minigraph base alignment (via its new -c option)
+ * much simpler in that the cigar just gets passed through rather than being assembled
+ * from the minimizers
+ */
+size_t mzgaf2paf_base(const gafkluge::MzGafRecord& gaf_record,
+                      const gafkluge::GafRecord& parent_record,
+                      ostream& paf_stream,
+                      QueryCoverage& query_coverage,
+                      int64_t min_overlap_len,
+                      const string& target_prefix = "");
+
 /* update the counts for one mapping of query to target.  if the any of the filters
  * fail, the coverage count is updated, but none of the minimizer counts.
  */
