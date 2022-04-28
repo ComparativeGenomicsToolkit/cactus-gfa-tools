@@ -48,7 +48,15 @@ paf2lastz a.paf > a.cigar
 ```
 where `a.paf` was created by, for example, `minimap2 -c`
 
+### gaf2paf
+
+Convert [minigraph](https://github.com/lh3/minigraph) output from GAF to PAF. Requires `minigraph` be run with `-c` to produce cigars. The output PAF is in stable sequence space. 
+
+The use case is that a set of such alignments can be used as anchors by [Cactus](https://github.com/ComparativeGenomicsToolkit/cactus) to form its initial graph. 
+
 ### mzgaf2paf
+
+(no longer necessary now that minigraph can produce its own cigars with `-c`. See `gaf2paf` above instead)
 
 Convert [minigraph](https://github.com/lh3/minigraph) output from GAF to PAF, where PAF records represent pairwise aligments between the query and nodes in the graph.  The output alignments have cigar strings, and are based on the minimizer offsets obtained when using `minigraph -S --write-mz`.
 
@@ -78,6 +86,10 @@ hg38.chr20  2833756  709771   709857   -  s43   97 5  91 86 86 255   cg:Z:86M
 ```
 
 A variety of filters are available.  Use `mzgaf2paf -h` to list them.
+
+### paf2stable
+
+Converts a PAF where the targets are in node-space (ie the output of mzgaf2paf) into a stable PAF in sequence space (comparable to the output of gaf2paf)
 
 ### rgfa-split
 

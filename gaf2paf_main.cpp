@@ -1,3 +1,7 @@
+/*
+  Convert GAF from minigraph -c to PAF (in stable coordinates)
+ */
+
 #include <unistd.h>
 #include <getopt.h>
 #include <fstream>
@@ -8,7 +12,7 @@
 #include "gafkluge.hpp"
 #include "paf.hpp"
 
-#define debug
+//#define debug
 
 using namespace std;
 using namespace gafkluge;
@@ -50,7 +54,7 @@ static inline bool consumes_target(const Cig& c) {
 }
 
 // cut the cigar at pos removing cut_len. cut_len is inserted as a new element after pos
-void cigar_cut(Cigar& cigar, Cigar::iterator pos, int64_t cut_len) {
+static void cigar_cut(Cigar& cigar, Cigar::iterator pos, int64_t cut_len) {
     assert (cut_len > 0);
     int64_t remainder = pos->second - cut_len;
     assert(remainder > 0);
@@ -62,7 +66,7 @@ void cigar_cut(Cigar& cigar, Cigar::iterator pos, int64_t cut_len) {
 };
 
 // get the next "target_len" bases worth of cigar, starting at pos, clipping at the end if necessary
-pair<Cigar::iterator, Cigar::iterator> cigar_next_by_target(Cigar& cigar, Cigar::iterator pos, int64_t target_len) {
+static pair<Cigar::iterator, Cigar::iterator> cigar_next_by_target(Cigar& cigar, Cigar::iterator pos, int64_t target_len) {
     int64_t cur_len = 0;
     auto pos2 = pos;
     for (pos2 = pos; pos2 != cigar.end() && cur_len < target_len; ++pos2) {
@@ -83,8 +87,54 @@ pair<Cigar::iterator, Cigar::iterator> cigar_next_by_target(Cigar& cigar, Cigar:
     return make_pair(pos, pos2);
 }
 
+static void flip_gaf(GafRecord& gaf_record, const unordered_map<string, int64_t>& len_map) {
+    // flip strand
+    gaf_record.strand = gaf_record.strand == '+' ? '-' : '+';
+    // flip the cigar
+    Cigar cigar;
+    for_each_cg(gaf_record, [&](const char& c, const int64_t& s) {
+            cigar.push_back(make_pair(c, s));
+        });
+    cigar.reverse();
+    assert(!cigar.empty());
+    stringstream flipped_cigar;
+    for (const auto& cig : cigar) {
+        flipped_cigar << cig.second << cig.first;
+    }
+    gaf_record.opt_fields["cg"].second = flipped_cigar.str();
+    // flip the path
+    std::reverse(gaf_record.path.begin(), gaf_record.path.end());
+    // flip the path offsets. do to this, we first measure its total (target) length
+    int64_t path_target_len = 0;
+    for (auto& step : gaf_record.path) {
+        step.is_reverse = !step.is_reverse;
+        assert(step.is_stable);
+        int64_t step_len = -1;
+        // if the step is just a chromosome, we shimmy it into an interval so we treat consistently
+        if (!step.is_interval) {
+            if (!len_map.count(step.name)) {
+                cerr << "[gaf2paf] error: unable to find " << step.name << " in lengths map" << endl;
+                exit(1);
+            }            
+            step_len = len_map.at(step.name);
+            assert(gaf_record.path.size() == 1);
+        } else {
+            step_len = step.end - step.start;
+        }           
+        path_target_len += step_len;
+    }
+    int64_t rev_start = path_target_len - gaf_record.path_end;
+    int64_t rev_end = path_target_len - gaf_record.path_start;
+    gaf_record.path_start = rev_start;
+    gaf_record.path_end = rev_end;
+    cerr << "flipped record\n" << gaf_record << endl;
+}
+
 /* convert a GAF line to a PAF line */
 static void gaf2paf(const GafRecord& gaf_record, const unordered_map<string, int64_t>& len_map, ostream& os) {
+
+    assert(gaf_record.strand == '+');
+    
     // load up the cg_cigar
     Cigar cigar;
     for_each_cg(gaf_record, [&](const char& c, const int64_t& s) {
@@ -124,7 +174,7 @@ static void gaf2paf(const GafRecord& gaf_record, const unordered_map<string, int
         }
         // the path offsets affect the first and last step. end_offset here is the distance cut from the end of the last step
         int64_t start_offset = step_idx == 0 ? gaf_record.path_start : 0;
-        int64_t end_offset = step_idx == gaf_record.path.size() - 1 ? target_base_count + (step.end - step.start) - path_len : 0;
+        int64_t end_offset = step_idx == gaf_record.path.size() - 1 ? target_base_count + (step.end - step.start) - path_len - start_offset: 0;
         assert(start_offset >= 0 && end_offset >= 0);
 
         // gobble up the step's worth of target bases from the cigar
@@ -248,7 +298,7 @@ int main(int argc, char** argv) {
     }
 
     if (lengths_path.empty()) {
-        cerr << "gaf2paf] error: -l must be specified to produce valid PAF" << endl;
+        cerr << "[gaf2paf] error: -l must be specified to produce valid PAF" << endl;
         return 1;        
     }    
 
@@ -272,7 +322,7 @@ int main(int argc, char** argv) {
         } else {
             in_file.open(in_path);
             if (!in_file) {
-                cerr << "[mzgaf2paf] error: unable to open input: " << in_path << endl;
+                cerr << "[gaf2paf] error: unable to open input: " << in_path << endl;
                 return 1;
             }
             in_stream = &in_file;
@@ -281,7 +331,18 @@ int main(int argc, char** argv) {
         GafRecord gaf_record;
         string line_buffer;
         while (getline(*in_stream, line_buffer)) {
+            if (line_buffer[0] == '*') {
+                // skip -S stuff
+                continue;
+            }
             parse_gaf_record(line_buffer, gaf_record);
+            if (!gaf_record.opt_fields.count("cg")) {
+                cerr << "[gaf2paf] error: cg cigar not found. This tool only works on output of minigraph -c" << endl;
+                return 1;
+            }
+            if (gaf_record.strand == '-') {
+                flip_gaf(gaf_record, len_map);
+            }
             gaf2paf(gaf_record, len_map, cout);
         }
     }
