@@ -8,6 +8,7 @@
 #include <unordered_map>
 #include <algorithm>
 #include <list>
+#include <cassert>
 
 #include "gafkluge.hpp"
 #include "paf.hpp"
@@ -108,7 +109,7 @@ static void flip_gaf(GafRecord& gaf_record, const unordered_map<string, int64_t>
     int64_t path_target_len = 0;
     for (auto& step : gaf_record.path) {
         step.is_reverse = !step.is_reverse;
-        assert(step.is_stable);
+        //assert(step.is_stable);
         int64_t step_len = -1;
         // if the step is just a chromosome, we shimmy it into an interval so we treat consistently
         if (!step.is_interval) {
@@ -117,7 +118,6 @@ static void flip_gaf(GafRecord& gaf_record, const unordered_map<string, int64_t>
                 exit(1);
             }            
             step_len = len_map.at(step.name);
-            assert(gaf_record.path.size() == 1);
         } else {
             step_len = step.end - step.start;
         }           
@@ -157,7 +157,7 @@ static void gaf2paf(const GafRecord& gaf_record, const unordered_map<string, int
     for (int64_t step_idx = 0; step_idx < gaf_record.path.size(); ++ step_idx) {
         auto step = gaf_record.path[step_idx];
         
-        assert(step.is_stable);
+        //assert(step.is_stable);
         //  get the length from the lookup
         if (!len_map.count(step.name)) {
             cerr << "[gaf2paf] error: unable to find " << step.name << " in lengths map" << endl;
@@ -170,7 +170,7 @@ static void gaf2paf(const GafRecord& gaf_record, const unordered_map<string, int
         if (!step.is_interval) {
             step.start = 0;
             step.end = paf_record.target_len;
-            assert(gaf_record.path.size() == 1);
+            //assert(gaf_record.path.size() == 1);
         }
         // the path offsets affect the first and last step. end_offset here is the distance cut from the end of the last step
         int64_t start_offset = step_idx == 0 ? gaf_record.path_start : 0;
