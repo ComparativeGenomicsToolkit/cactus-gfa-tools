@@ -2,6 +2,7 @@
 #include <getopt.h>
 #include <fstream>
 #include <unordered_map>
+#include <algorithm>
 #include <list>
 
 #include "gafkluge.hpp"
@@ -94,8 +95,9 @@ static void gaf2paf(const GafRecord& gaf_record, const unordered_map<string, int
     PafLine paf_record;
     paf_record.query_name = gaf_record.query_name;
     paf_record.query_len = gaf_record.query_length;
-    paf_record.strand = gaf_record.strand;
+    paf_record.mapq = gaf_record.mapq;
 
+    int64_t path_len = gaf_record.path_end - gaf_record.path_start;
     Cigar::iterator cigar_pos = cigar.begin();
     
     int64_t query_base_count = 0; // keep track of bases in query
@@ -106,27 +108,36 @@ static void gaf2paf(const GafRecord& gaf_record, const unordered_map<string, int
         auto step = gaf_record.path[step_idx];
         
         assert(step.is_stable);
+        //  get the length from the lookup
+        if (!len_map.count(step.name)) {
+            cerr << "[gaf2paf] error: unable to find " << step.name << " in lengths map" << endl;
+            exit(1);
+        }
+        paf_record.target_name = step.name;
+        paf_record.target_len = len_map.at(step.name);
+
         // if the step is just a chromosome, we shimmy it into an interval so we treat consistently
         if (!step.is_interval) {
-            step.start = gaf_record.path_start;
-            step.end = gaf_record.path_end;
+            step.start = 0;
+            step.end = paf_record.target_len;
             assert(gaf_record.path.size() == 1);
-        } else {
-            // if the step is the first step, we tack on the path offset
-            if (step_idx == 0) {
-                step.start += gaf_record.path_start;
-            }
-            // ditto last
-            if (step_idx == gaf_record.path.size() - 1) {
-                //cerr << "tbc " << target_base_count << " step " << step.start <<"," << step.end << " pathend " << gaf_record.path_end << endl;
-                assert(target_base_count + (step.end - step.start) >= gaf_record.path_end - gaf_record.path_start);
-                step.end = step.start + (gaf_record.path_end - gaf_record.path_start - target_base_count);
-            }
         }
+        // the path offsets affect the first and last step. end_offset here is the distance cut from the end of the last step
+        int64_t start_offset = step_idx == 0 ? gaf_record.path_start : 0;
+        int64_t end_offset = step_idx == gaf_record.path.size() - 1 ? target_base_count + (step.end - step.start) - path_len : 0;
+        assert(start_offset >= 0 && end_offset >= 0);
 
         // gobble up the step's worth of target bases from the cigar
         // we use target, because that's the only measure we have -- it's embedded in the step
-        auto cig_range = cigar_next_by_target(cigar, cigar_pos, step.end - step.start);
+        auto cig_range = cigar_next_by_target(cigar, cigar_pos, (step.end - end_offset) - (step.start + start_offset));
+
+        if (step.is_reverse) {
+            std::swap(start_offset, end_offset);
+            std::reverse(cig_range.first, cig_range.second);
+            paf_record.strand = '-';
+        } else {
+            paf_record.strand = '+';
+        }
 
         // turn the cigar into a string
         stringstream cig_string;        
@@ -152,22 +163,10 @@ static void gaf2paf(const GafRecord& gaf_record, const unordered_map<string, int
         // make a new paf record
         paf_record.query_start = gaf_record.query_start + query_base_count;
         paf_record.query_end = paf_record.query_start + cig_query_bases;
-        paf_record.target_start = step.start;
-        paf_record.target_end = step.end;
-        assert(step.end - step.start == cig_target_bases);
+        paf_record.target_start = step.start + start_offset;
+        paf_record.target_end = step.end - end_offset;
+        assert((step.end - end_offset) - (step.start + start_offset) == cig_target_bases);
         
-        paf_record.strand = gaf_record.strand; //todo: must combine with step reverse tag
-
-        // go fishing for the target length
-        if (!len_map.count(step.name)) {
-            cerr << "[gaf2paf] error: unable to find " << step.name << " in lengths map" << endl;
-            exit(1);
-        }
-        paf_record.target_name = step.name;
-        paf_record.target_len = len_map.at(step.name);
-        
-        paf_record.mapq = gaf_record.mapq;
-
         // output the record
         os << paf_record;
         
@@ -179,9 +178,7 @@ static void gaf2paf(const GafRecord& gaf_record, const unordered_map<string, int
         }
 
         // output the cigar last
-        os << "\tcg:Z:" << cig_string.str();
-        
-        os << "\n";
+        os << "\tcg:Z:" << cig_string.str() << "\n";
         
         // advance our counters
         query_base_count += cig_query_bases;
