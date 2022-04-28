@@ -11,7 +11,7 @@
 #include "gfakluge.hpp"
 #include "gafkluge.hpp"
 
-#define debug
+//#define debug
 
 using namespace std;
 using namespace gafkluge;

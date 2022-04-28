@@ -24,7 +24,7 @@ make test
 ## Tools Included
 
 * [gaf2paf](#gaf2paf)
-# [gaf2unstable](#gaf2unstable)
+* [gaf2unstable](#gaf2unstable)
 * [paf2lastz](#paf2lastz)
 * [mzgaf2paf](#mzgaf2paf)
 * [rgfa-split](#rgfa-split)
@@ -57,6 +57,7 @@ gaf2unstable 1.gaf -g graph.gfa -o node-lengths.tsv > 1u.gaf
 gaf2paf 1u.gaf -l node-lengths.tsv > 1u.paf
 
 ```
+
 ### paf2lastz
 
 *(Cactus now works with PAF natively, so this tool is no longer needed)*

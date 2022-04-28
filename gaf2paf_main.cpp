@@ -127,7 +127,6 @@ static void flip_gaf(GafRecord& gaf_record, const unordered_map<string, int64_t>
     int64_t rev_end = path_target_len - gaf_record.path_start;
     gaf_record.path_start = rev_start;
     gaf_record.path_end = rev_end;
-    cerr << "flipped record\n" << gaf_record << endl;
 }
 
 /* convert a GAF line to a PAF line */
