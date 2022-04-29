@@ -52,10 +52,10 @@ mzgaf2paf.o:$(LIB_DEPS) mzgaf2paf.cpp mzgaf2paf.hpp mzgaf.hpp gafkluge.hpp
 pafcoverage: pafcoverage.o pafcoverage_main.o
 	$(CXX) $(INCLUDE_FLAGS) $(CXXFLAGS) $(CPPFLAGS) -o pafcoverage pafcoverage_main.o pafcoverage.o $(LIB_FLAGS)
 
-pafcoverage_main.o:$(LIB_DEPS) pafcoverage_main.cpp pafcoverage.hpp
+pafcoverage_main.o:$(LIB_DEPS) pafcoverage_main.cpp pafcoverage.hpp paf.hpp
 	$(CXX) $(INCLUDE_FLAGS) $(CXXFLAGS) $(CPPFLAGS) -c pafcoverage_main.cpp $(INC_FLAGS)
 
-pafcoverage.o:$(LIB_DEPS) pafcoverage.cpp pafcoverage.hpp
+pafcoverage.o:$(LIB_DEPS) pafcoverage.cpp pafcoverage.hpp paf.hpp
 	$(CXX) $(INCLUDE_FLAGS) $(CXXFLAGS) $(CPPFLAGS) -c pafcoverage.cpp $(INC_FLAGS)
 
 rgfa-split: rgfa-split.o rgfa-split_main.o pafcoverage.o
@@ -64,7 +64,7 @@ rgfa-split: rgfa-split.o rgfa-split_main.o pafcoverage.o
 rgfa-split_main.o:$(LIB_DEPS) rgfa-split_main.cpp rgfa-split.hpp
 	$(CXX) $(INCLUDE_FLAGS) $(CXXFLAGS) $(CPPFLAGS) -c rgfa-split_main.cpp $(INC_FLAGS)
 
-rgfa-split.o:$(LIB_DEPS) rgfa-split.cpp rgfa-split.hpp gafkluge.hpp gfakluge.hpp pliib.hpp tinyfa.hpp pafcoverage.hpp
+rgfa-split.o:$(LIB_DEPS) rgfa-split.cpp rgfa-split.hpp gafkluge.hpp gfakluge.hpp pliib.hpp tinyfa.hpp pafcoverage.hpp paf.hpp
 	$(CXX) $(INCLUDE_FLAGS) $(CXXFLAGS) $(CPPFLAGS) -c rgfa-split.cpp $(INC_FLAGS)
 
 paf2lastz: paf2lastz.o paf2lastz_main.o
@@ -76,16 +76,16 @@ paf2lastz_main.o:$(LIB_DEPS) paf2lastz_main.cpp paf2lastz.hpp paf2lastz.hpp
 paf2lastz.o:$(LIB_DEPS) paf2lastz.cpp paf2lastz.hpp
 	$(CXX) $(INCLUDE_FLAGS) $(CXXFLAGS) $(CPPFLAGS) -c paf2lastz.cpp $(INC_FLAGS)
 
-rgfa2paf_main.o: rgfa2paf_main.cpp gfakluge.hpp pafcoverage.hpp
+rgfa2paf_main.o: rgfa2paf_main.cpp gfakluge.hpp pafcoverage.hpp paf.hpp
 	$(CXX) $(INCLUDE_FLAGS) $(CXXFLAGS) $(CPPFLAGS) -c rgfa2paf_main.cpp $(INC_FLAGS)
 
 rgfa2paf: rgfa2paf_main.o pafcoverage.o
 	$(CXX) $(INCLUDE_FLAGS) $(CXXFLAGS) $(CPPFLAGS) -o rgfa2paf rgfa2paf_main.o pafcoverage.o
 
-pafmask.o: pafmask.cpp rgfa-split.hpp pafcoverage.hpp pafmask.hpp
+pafmask.o: pafmask.cpp rgfa-split.hpp pafcoverage.hpp paf.hpp pafmask.hpp
 	$(CXX) $(INCLUDE_FLAGS) $(CXXFLAGS) $(CPPFLAGS) -c pafmask.cpp $(INC_FLAGS)
 
-pafmask_main.o: pafmask_main.cpp rgfa-split.hpp pafcoverage.hpp pafmask.hpp
+pafmask_main.o: pafmask_main.cpp rgfa-split.hpp pafcoverage.hpp paf.hpp pafmask.hpp
 	$(CXX) $(INCLUDE_FLAGS) $(CXXFLAGS) $(CPPFLAGS) -c pafmask_main.cpp $(INC_FLAGS)
 
 pafmask: pafmask_main.o pafmask.o rgfa-split.o pafcoverage.o
@@ -94,10 +94,10 @@ pafmask: pafmask_main.o pafmask.o rgfa-split.o pafcoverage.o
 paf2stable: paf2stable_main.o pafcoverage.o paf2stable.o
 	$(CXX) $(INCLUDE_FLAGS) $(CXXFLAGS) $(CPPFLAGS) -o paf2stable paf2stable_main.o paf2stable.o pafcoverage.o
 
-paf2stable.o:$(LIB_DEPS) paf2stable.cpp paf2stable.hpp pafcoverage.hpp
+paf2stable.o:$(LIB_DEPS) paf2stable.cpp paf2stable.hpp pafcoverage.hpp paf.hpp
 	$(CXX) $(INCLUDE_FLAGS) $(CXXFLAGS) $(CPPFLAGS) -c paf2stable.cpp $(INC_FLAGS)
 
-paf2stable_main.o: paf2stable_main.cpp paf2stable.hpp pafcoverage.hpp
+paf2stable_main.o: paf2stable_main.cpp paf2stable.hpp pafcoverage.hpp paf.hpp
 	$(CXX) $(INCLUDE_FLAGS) $(CXXFLAGS) $(CPPFLAGS) -c paf2stable_main.cpp $(INC_FLAGS)
 
 gaf2unstable: gaf2unstable_main.o

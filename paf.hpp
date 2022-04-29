@@ -3,7 +3,7 @@
 #include <string>
 #include <vector>
 #include <iostream>
-
+#include <cassert>
 using namespace std;
 
 struct PafLine {
@@ -76,4 +76,15 @@ inline ostream& operator<<(ostream& os, const PafLine& paf) {
        << paf.target_name << "\t" << paf.target_len << "\t" << paf.target_start << "\t" << paf.target_end << "\t"
        << paf.num_matching << "\t" << paf.num_bases << "\t" << paf.mapq;
     return os;
+}
+
+inline void for_each_cg(const string& cg_tok, function<void(const string&, const string&)> fn) {
+    size_t next;
+    for (size_t co = 5; co != string::npos; co = next) {
+        next = cg_tok.find_first_of("M=XDI", co + 1);
+        if (next != string::npos) {
+            fn(cg_tok.substr(co, next - co), cg_tok.substr(next, 1));
+            ++next;
+        }
+    }
 }
