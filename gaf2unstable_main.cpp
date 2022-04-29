@@ -102,7 +102,9 @@ static vector<pair<MGSeq, pair<int64_t, int64_t>>>  get_unstable_interval(const 
         ui_len -= ui_len - (end -start);
         assert(unstable_intervals.back().second.second > 0);
     }
-    assert(ui_len == end - start);
+    if (end != numeric_limits<int64_t>::max()) {
+        assert(ui_len == end - start);
+    }
     return unstable_intervals;
 }
 

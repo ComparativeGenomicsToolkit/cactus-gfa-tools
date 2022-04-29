@@ -107,7 +107,7 @@ gaf2unstable: gaf2unstable_main.o gafkluge.hpp paf.hpp
 	$(CXX) $(INCLUDE_FLAGS) $(CXXFLAGS) $(CPPFLAGS) -o gaf2unstable gaf2unstable_main.cpp $(INC_FLAGS)
 
 test : all paf2lastz_test pafmask_test
-	cd test && prove -v test.t
+	cd test && prove -v test.t && prove -v gaf2paf.t
 
 paf2lastz_test: mapqTest scoreTest
 	rm -f test/paf2lastz/out_mapq test/paf2lastz/out_score
