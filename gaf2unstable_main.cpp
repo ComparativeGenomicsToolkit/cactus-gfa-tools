@@ -113,6 +113,9 @@ static void gaf2unstable(const unordered_map<string, set<MGSeq>>& lookup, GafRec
     for (auto& step : gaf_record.path) {        
         auto unstable_interval = get_unstable_interval(lookup, step.name, step.start,
                                                        step.is_interval ? step.end : numeric_limits<int64_t>::max());
+        if (step.is_reverse) {
+            std::reverse(unstable_interval.begin(), unstable_interval.end());            
+        }
 
         for (const auto& unstable_frag : unstable_interval) {
             GafStep unstable_step;

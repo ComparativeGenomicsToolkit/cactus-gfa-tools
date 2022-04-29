@@ -215,6 +215,8 @@ static void gaf2paf(const GafRecord& gaf_record, const unordered_map<string, int
         paf_record.target_start = step.start + start_offset;
         paf_record.target_end = step.end - end_offset;
         assert((step.end - end_offset) - (step.start + start_offset) == cig_target_bases);
+        assert(paf_record.target_end - paf_record.target_start == cig_target_bases);
+        assert(paf_record.query_end - paf_record.query_start == cig_query_bases);
         
         // output the record
         os << paf_record;
