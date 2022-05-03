@@ -92,27 +92,45 @@ static vector<pair<MGSeq, pair<int64_t, int64_t>>>  get_unstable_interval(const 
     }
 
     // clip the endpoints
-    if (unstable_intervals[0].first.offset > start) {
-        unstable_intervals[0].second.first = unstable_intervals[0].first.offset - start;
+    if (unstable_intervals[0].first.offset != start) {
+        assert(unstable_intervals[0].first.offset < start);
+        unstable_intervals[0].second.first = start - unstable_intervals[0].first.offset;
         ui_len -= unstable_intervals[0].second.first;
     }
-    
     if (ui_len > end - start) {
         unstable_intervals.back().second.second -= ui_len - (end -start);
         ui_len -= ui_len - (end -start);
         assert(unstable_intervals.back().second.second > 0);
     }
-    if (end != numeric_limits<int64_t>::max()) {
-        assert(ui_len == end - start);
-    }
+    assert(ui_len == end - start);
+    
     return unstable_intervals;
 }
-
+    
 static void gaf2unstable(const unordered_map<string, set<MGSeq>>& lookup, GafRecord& gaf_record) {
     vector<GafStep> unstable_path;
-    for (auto& step : gaf_record.path) {        
-        auto unstable_interval = get_unstable_interval(lookup, step.name, step.start,
-                                                       step.is_interval ? step.end : numeric_limits<int64_t>::max());
+    for (auto& step : gaf_record.path) {
+
+        vector<pair<MGSeq, pair<int64_t, int64_t>>> unstable_interval;
+        
+        // special logic required when target is just a contig (not an interval)
+        if (!step.is_interval) {
+            assert(gaf_record.path.size() == 1);
+            unstable_interval = get_unstable_interval(lookup, step.name, gaf_record.path_start, gaf_record.path_end);
+            // override path start / end / length to fit the interval
+            int64_t path_len = gaf_record.path_end - gaf_record.path_start;
+            gaf_record.path_start -= unstable_interval.at(0).first.offset;
+            gaf_record.path_end = gaf_record.path_start + path_len;
+            int64_t interval_len = 0;
+            for (const auto& i : unstable_interval) {
+                interval_len += i.first.length;
+            }
+            gaf_record.path_length = interval_len;
+            
+        } else {
+            unstable_interval = get_unstable_interval(lookup, step.name, step.start, step.end);
+        }
+        
         if (step.is_reverse) {
             std::reverse(unstable_interval.begin(), unstable_interval.end());            
         }
@@ -122,9 +140,7 @@ static void gaf2unstable(const unordered_map<string, set<MGSeq>>& lookup, GafRec
             unstable_step.name = unstable_frag.first.name;
             unstable_step.is_reverse = step.is_reverse;
             unstable_step.is_stable = false;
-            unstable_step.start = unstable_frag.second.first;
-            unstable_step.end = unstable_frag.second.second;
-            unstable_step.is_interval = unstable_step.start != 0 || unstable_step.end != unstable_frag.first.length;
+            unstable_step.is_interval = false;
             unstable_path.push_back(unstable_step);
         }
 
