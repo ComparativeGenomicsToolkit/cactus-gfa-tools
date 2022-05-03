@@ -100,9 +100,6 @@ paf2stable.o:$(LIB_DEPS) paf2stable.cpp paf2stable.hpp pafcoverage.hpp paf.hpp
 paf2stable_main.o: paf2stable_main.cpp paf2stable.hpp pafcoverage.hpp paf.hpp
 	$(CXX) $(INCLUDE_FLAGS) $(CXXFLAGS) $(CPPFLAGS) -c paf2stable_main.cpp $(INC_FLAGS)
 
-gaf2unstable: gaf2unstable_main.o
-	$(CXX) $(INCLUDE_FLAGS) $(CXXFLAGS) $(CPPFLAGS) -o paf2stable gaf2unstable_main.o paf2stable.o pafcoverage.o
-
 gaf2unstable: gaf2unstable_main.o gafkluge.hpp paf.hpp
 	$(CXX) $(INCLUDE_FLAGS) $(CXXFLAGS) $(CPPFLAGS) -o gaf2unstable gaf2unstable_main.cpp $(INC_FLAGS)
 
