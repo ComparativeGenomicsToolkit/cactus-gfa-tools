@@ -10,6 +10,7 @@
 #include <unordered_map>
 #include <ostream>
 #include <functional>
+#include "paf.hpp"
 
 using namespace std;
 
@@ -28,8 +29,3 @@ void print_coverage_summary(const CoverageMap& coverage_map, ostream& out);
  */
 void print_coverage_gaps_as_bed(const CoverageMap& coverage_map, ostream& out, int64_t min_gap_length);
 
-// some parsing functions more or less copied from vg
-vector<string> &split_delims(const string &s, const string& delims, vector<string> &elems);
-
-// parse cigar
-void for_each_cg(const string& cg_tok, function<void(const string&, const string&)> fn);

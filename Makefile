@@ -35,7 +35,7 @@ CXXFLAGS := -O3 -Werror=return-type -std=c++14 -ggdb -g -MMD -MP $(PARALLEL_FLAG
 LIB_FLAGS = $(LIBS)
 INC_FLAGS = -I$(CWD)
 
-all: mzgaf2paf pafcoverage rgfa-split paf2lastz rgfa2paf pafmask paf2stable
+all: mzgaf2paf gaf2paf pafcoverage rgfa-split paf2lastz rgfa2paf pafmask paf2stable gaf2unstable
 
 mzgaf2paf: mzgaf2paf.o mzgaf2paf_main.o
 	$(CXX) $(INCLUDE_FLAGS) $(CXXFLAGS) $(CPPFLAGS) -o mzgaf2paf mzgaf2paf_main.o mzgaf2paf.o $(LIB_FLAGS)
@@ -43,16 +43,19 @@ mzgaf2paf: mzgaf2paf.o mzgaf2paf_main.o
 mzgaf2paf_main.o:$(LIB_DEPS) mzgaf2paf_main.cpp mzgaf2paf.hpp mzgaf.hpp gafkluge.hpp
 	$(CXX) $(INCLUDE_FLAGS) $(CXXFLAGS) $(CPPFLAGS) -c mzgaf2paf_main.cpp $(INC_FLAGS)
 
+gaf2paf: gaf2paf_main.o gafkluge.hpp paf.hpp
+	$(CXX) $(INCLUDE_FLAGS) $(CXXFLAGS) $(CPPFLAGS) -o gaf2paf gaf2paf_main.cpp $(INC_FLAGS)
+
 mzgaf2paf.o:$(LIB_DEPS) mzgaf2paf.cpp mzgaf2paf.hpp mzgaf.hpp gafkluge.hpp
 	$(CXX) $(INCLUDE_FLAGS) $(CXXFLAGS) $(CPPFLAGS) -c mzgaf2paf.cpp $(INC_FLAGS)
 
 pafcoverage: pafcoverage.o pafcoverage_main.o
 	$(CXX) $(INCLUDE_FLAGS) $(CXXFLAGS) $(CPPFLAGS) -o pafcoverage pafcoverage_main.o pafcoverage.o $(LIB_FLAGS)
 
-pafcoverage_main.o:$(LIB_DEPS) pafcoverage_main.cpp pafcoverage.hpp
+pafcoverage_main.o:$(LIB_DEPS) pafcoverage_main.cpp pafcoverage.hpp paf.hpp
 	$(CXX) $(INCLUDE_FLAGS) $(CXXFLAGS) $(CPPFLAGS) -c pafcoverage_main.cpp $(INC_FLAGS)
 
-pafcoverage.o:$(LIB_DEPS) pafcoverage.cpp pafcoverage.hpp
+pafcoverage.o:$(LIB_DEPS) pafcoverage.cpp pafcoverage.hpp paf.hpp
 	$(CXX) $(INCLUDE_FLAGS) $(CXXFLAGS) $(CPPFLAGS) -c pafcoverage.cpp $(INC_FLAGS)
 
 rgfa-split: rgfa-split.o rgfa-split_main.o pafcoverage.o
@@ -61,7 +64,7 @@ rgfa-split: rgfa-split.o rgfa-split_main.o pafcoverage.o
 rgfa-split_main.o:$(LIB_DEPS) rgfa-split_main.cpp rgfa-split.hpp
 	$(CXX) $(INCLUDE_FLAGS) $(CXXFLAGS) $(CPPFLAGS) -c rgfa-split_main.cpp $(INC_FLAGS)
 
-rgfa-split.o:$(LIB_DEPS) rgfa-split.cpp rgfa-split.hpp gafkluge.hpp gfakluge.hpp pliib.hpp tinyfa.hpp pafcoverage.hpp
+rgfa-split.o:$(LIB_DEPS) rgfa-split.cpp rgfa-split.hpp gafkluge.hpp gfakluge.hpp pliib.hpp tinyfa.hpp pafcoverage.hpp paf.hpp
 	$(CXX) $(INCLUDE_FLAGS) $(CXXFLAGS) $(CPPFLAGS) -c rgfa-split.cpp $(INC_FLAGS)
 
 paf2lastz: paf2lastz.o paf2lastz_main.o
@@ -73,16 +76,16 @@ paf2lastz_main.o:$(LIB_DEPS) paf2lastz_main.cpp paf2lastz.hpp paf2lastz.hpp
 paf2lastz.o:$(LIB_DEPS) paf2lastz.cpp paf2lastz.hpp
 	$(CXX) $(INCLUDE_FLAGS) $(CXXFLAGS) $(CPPFLAGS) -c paf2lastz.cpp $(INC_FLAGS)
 
-rgfa2paf_main.o: rgfa2paf_main.cpp gfakluge.hpp pafcoverage.hpp
+rgfa2paf_main.o: rgfa2paf_main.cpp gfakluge.hpp pafcoverage.hpp paf.hpp
 	$(CXX) $(INCLUDE_FLAGS) $(CXXFLAGS) $(CPPFLAGS) -c rgfa2paf_main.cpp $(INC_FLAGS)
 
 rgfa2paf: rgfa2paf_main.o pafcoverage.o
 	$(CXX) $(INCLUDE_FLAGS) $(CXXFLAGS) $(CPPFLAGS) -o rgfa2paf rgfa2paf_main.o pafcoverage.o
 
-pafmask.o: pafmask.cpp rgfa-split.hpp pafcoverage.hpp pafmask.hpp
+pafmask.o: pafmask.cpp rgfa-split.hpp pafcoverage.hpp paf.hpp pafmask.hpp
 	$(CXX) $(INCLUDE_FLAGS) $(CXXFLAGS) $(CPPFLAGS) -c pafmask.cpp $(INC_FLAGS)
 
-pafmask_main.o: pafmask_main.cpp rgfa-split.hpp pafcoverage.hpp pafmask.hpp
+pafmask_main.o: pafmask_main.cpp rgfa-split.hpp pafcoverage.hpp paf.hpp pafmask.hpp
 	$(CXX) $(INCLUDE_FLAGS) $(CXXFLAGS) $(CPPFLAGS) -c pafmask_main.cpp $(INC_FLAGS)
 
 pafmask: pafmask_main.o pafmask.o rgfa-split.o pafcoverage.o
@@ -91,14 +94,17 @@ pafmask: pafmask_main.o pafmask.o rgfa-split.o pafcoverage.o
 paf2stable: paf2stable_main.o pafcoverage.o paf2stable.o
 	$(CXX) $(INCLUDE_FLAGS) $(CXXFLAGS) $(CPPFLAGS) -o paf2stable paf2stable_main.o paf2stable.o pafcoverage.o
 
-paf2stable.o:$(LIB_DEPS) paf2stable.cpp paf2stable.hpp pafcoverage.hpp
+paf2stable.o:$(LIB_DEPS) paf2stable.cpp paf2stable.hpp pafcoverage.hpp paf.hpp
 	$(CXX) $(INCLUDE_FLAGS) $(CXXFLAGS) $(CPPFLAGS) -c paf2stable.cpp $(INC_FLAGS)
 
-paf2stable_main.o: paf2stable_main.cpp paf2stable.hpp pafcoverage.hpp
+paf2stable_main.o: paf2stable_main.cpp paf2stable.hpp pafcoverage.hpp paf.hpp
 	$(CXX) $(INCLUDE_FLAGS) $(CXXFLAGS) $(CPPFLAGS) -c paf2stable_main.cpp $(INC_FLAGS)
 
+gaf2unstable: gaf2unstable_main.o gafkluge.hpp paf.hpp
+	$(CXX) $(INCLUDE_FLAGS) $(CXXFLAGS) $(CPPFLAGS) -o gaf2unstable gaf2unstable_main.cpp $(INC_FLAGS)
+
 test : all paf2lastz_test pafmask_test
-	cd test && prove -v test.t
+	cd test && prove -v test.t && prove -v gaf2paf.t
 
 paf2lastz_test: mapqTest scoreTest
 	rm -f test/paf2lastz/out_mapq test/paf2lastz/out_score
@@ -117,4 +123,4 @@ pafmask_test:
 	cd test && prove -v pafmask.t
 
 clean:
-	rm -rf mzgaf2paf main.o mzgaf2paf.o pafcoverage pafcoverage.o pafcoverage_main.o rgfa-split rgfa-split.o rgfa-split_main.o paf2lastz paf2lastz_main.o paf2lastz.o pafmask pafmask_main.o
+	rm -rf mzgaf2paf main.o mzgaf2paf.o pafcoverage pafcoverage.o pafcoverage_main.o rgfa-split rgfa-split.o rgfa-split_main.o paf2lastz paf2lastz_main.o paf2lastz.o pafmask pafmask_main.o gaf2paf gaf2unstable

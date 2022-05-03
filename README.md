@@ -23,13 +23,44 @@ make test
 
 ## Tools Included
 
+* [gaf2paf](#gaf2paf)
+* [gaf2unstable](#gaf2unstable)
 * [paf2lastz](#paf2lastz)
 * [mzgaf2paf](#mzgaf2paf)
 * [rgfa-split](#rgfa-split)
 * [rgfa2paf](#rgfa2paf)
 * pafcoverage (for debugging only)
+* [pafmask](#pafmask)
+
+### gaf2paf
+
+Converts [minigraph](https://github.com/lh3/minigraph) output from GAF to PAF. Requires `minigraph` be run with `-c` to produce cigars. The output PAF is in stable sequence space.
+
+**Important** The lengths of the target sequences are required to produce a valid PAF. This information is not in the input GAF, therefore the `-l` option must be used to specifiy a table of sequence sizes.  This file can be produced by concatenating the results of `samtools faidx` for each fasta file. Example:
+
+```
+minigraph -cxggs 1.fa 2.fa 3.fa > graph.gfa
+minigraph -cxasm graph.gfa 1.fa  > 1.gaf
+for i in 1 2 3 ; do samtools faidx $i.fa; done
+cat 1.fa.fai 2.fa.fai 3.fa.fai > lengths.tsv
+gaf2paf 1.gaf -l lengths.tsv > 1.paf
+```
+
+### gaf2unstable
+
+By default, [gaf2paf](#gaf2paf) writes the output PAF in stable coordinates (same as the GAF). This means the target sequences are contigs like `chr1` and not minigraph nodes (like `s1`). The Minigraph-Cactus pipeline requires paf in unstable coordinates for best performance (for the time being). `gaf2unstable` can be used to switch over to unstable coordinates as follows. Note that its `-o` option is used to make the lengths table, so using `samtools faidx` as above is no longer required. But instead of the lengths, it needs to read rGFA file from `minigraph`. Example:
+
+```
+minigraph -cxggs 1.fa 2.fa 3.fa > graph.gfa
+minigraph -cxasm graph.gfa 1.fa  > 1.gaf
+gaf2unstable 1.gaf -g graph.gfa -o node-lengths.tsv > 1u.gaf
+gaf2paf 1u.gaf -l node-lengths.tsv > 1u.paf
+
+```
 
 ### paf2lastz
+
+*(Cactus now works with PAF natively, so this tool is no longer needed)*
 
 Convert PAF with cg cigars to LASTZ cigars
 
@@ -48,7 +79,10 @@ paf2lastz a.paf > a.cigar
 ```
 where `a.paf` was created by, for example, `minimap2 -c`
 
+
 ### mzgaf2paf
+
+*(Now that minigraph can produce cigars with `-c`, this tool is no longer needed. To convert GAF-with-cigar output, see [gaf2paf](#gaf2paf) and # [gaf2unstable](#gaf2unstable) above)*
 
 Convert [minigraph](https://github.com/lh3/minigraph) output from GAF to PAF, where PAF records represent pairwise aligments between the query and nodes in the graph.  The output alignments have cigar strings, and are based on the minimizer offsets obtained when using `minigraph -S --write-mz`.
 
@@ -78,6 +112,10 @@ hg38.chr20  2833756  709771   709857   -  s43   97 5  91 86 86 255   cg:Z:86M
 ```
 
 A variety of filters are available.  Use `mzgaf2paf -h` to list them.
+
+### paf2stable
+
+Converts a PAF where the targets are in node-space (ie the output of mzgaf2paf) into a stable PAF in sequence space (comparable to the output of gaf2paf)
 
 ### rgfa-split
 

@@ -5,36 +5,6 @@
 
 using namespace std;
 
-// some parsing functions more or less copied from vg
-vector<string> &split_delims(const string &s, const string& delims, vector<string> &elems) {
-    size_t start = string::npos;
-    for (size_t i = 0; i < s.size(); ++i) {
-        if (delims.find(s[i]) != string::npos) {
-            if (start != string::npos && i > start) {
-                elems.push_back(s.substr(start, i - start));
-            }
-            start = string::npos;
-        } else if (start == string::npos) {
-            start = i;
-        }
-    }
-    if (start != string::npos && start < s.size()) {
-        elems.push_back(s.substr(start, s.size() - start));
-    }
-    return elems;
-}
-
-void for_each_cg(const string& cg_tok, function<void(const string&, const string&)> fn) {
-    size_t next;
-    for (size_t co = 5; co != string::npos; co = next) {
-        next = cg_tok.find_first_of("MDI", co + 1);
-        if (next != string::npos) {
-            fn(cg_tok.substr(co, next - co), cg_tok.substr(next, 1));
-            ++next;
-        }
-    }
-}
-
 void update_coverage_map(const string& paf_line, CoverageMap& coverage_map) {
 
     // split into array of tokens

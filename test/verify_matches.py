@@ -48,7 +48,8 @@ def check_cigar(paf_line, fa_dict, min_identity):
     target_end = int(toks[8])
     
     query_name = toks[0]
-    assert query_name in fa_dict
+    if query_name not in fa_dict:
+        raise RuntimeError("Query name {} not found in fasta".format(query_name))
     query_seq = fa_dict[query_name][query_start:query_end]
     assert len(query_seq) == query_end-query_start
     assert len(fa_dict[query_name]) == int(toks[1])
@@ -66,18 +67,18 @@ def check_cigar(paf_line, fa_dict, min_identity):
     query_pos = 0
     target_pos = 0
 
-    cigar_toks = re.findall('([0-9]+)(M|D|I)', cigar[4:])
+    cigar_toks = re.findall('([0-9]+)(=|X|M|D|I)', cigar[4:])
     if toks[4] == '-':
         cigar_toks = reversed(cigar_toks)
 
     for cig_len, cig_type in cigar_toks:
-        if cig_type == "M":
+        if cig_type in ["M", "="]:
             query_e = query_pos + int(cig_len)
             query_frag = query_seq[query_pos:query_e]
             target_e = target_pos + int(cig_len)
             target_frag = target_seq[target_pos:target_e]
             iden = pct_identity(query_frag.upper(), target_frag.upper(), ignore_n = min_identity < 1)
-            if min_identity == 1 and iden < 1 or (len(query_frag) > 100 and iden < min_identity):
+            if (min_identity == 1 and iden < 1) or (len(query_frag) > 100 and iden < min_identity):
                 sys.stderr.write("Validation Error iden={} < min={}\n\t{}\n".format(iden, min_identity, paf_line))
                 sys.stderr.write("\tCigar : {}{} :\n\tquery[{}:{}] = \"{}\"\n\ttarget[{}:{}] = \"{}\"\n".format(
                     cig_len, cig_type, query_pos, query_e, query_frag, target_pos, target_e, target_frag))

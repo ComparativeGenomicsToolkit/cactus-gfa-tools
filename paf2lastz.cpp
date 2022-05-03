@@ -4,38 +4,9 @@
 #include <cassert>
 #include <iostream>
 #include "paf2lastz.hpp"
+#include "paf.hpp"
 
 using namespace std;
-
-// some parsing functions more or less copied from vg
-static std::vector<std::string> &split_delims(const std::string &s, const std::string& delims, std::vector<std::string> &elems) {
-    size_t start = string::npos;
-    for (size_t i = 0; i < s.size(); ++i) {
-        if (delims.find(s[i]) != string::npos) {
-            if (start != string::npos && i > start) {
-                elems.push_back(s.substr(start, i - start));
-            }
-            start = string::npos;
-        } else if (start == string::npos) {
-            start = i;
-        }
-    }
-    if (start != string::npos && start < s.size()) {
-        elems.push_back(s.substr(start, s.size() - start));
-    }
-    return elems;
-}
-
-static void for_each_cg(const string& cg_tok, std::function<void(const std::string&, const std::string&)> fn) {
-    size_t next;
-    for (size_t co = 5; co != std::string::npos; co = next) {
-        next = cg_tok.find_first_of("MDI", co + 1);
-        if (next != std::string::npos) {
-            fn(cg_tok.substr(co, next - co), cg_tok.substr(next, 1));
-            ++next;
-        }
-    }
-}
 
 pair<std::string, bool> paf2lastz(const std::string& paf_line, bool use_mapq) {
 
@@ -90,7 +61,7 @@ pair<std::string, bool> paf2lastz(const std::string& paf_line, bool use_mapq) {
         if (toks[i].substr(0, 5) == "cg:Z:") {
             found_cigar = true;
             for_each_cg(toks[i], [&](const string& val, const string& cat) {
-                    lastz_line += " " + cat + " " + val;
+                    lastz_line += " " + (cat == "X" || cat == "=" ? "M" : cat) + " " + val;
                 });
         } else if (toks[i].substr(0, 5) == "tp:A:") {
             is_secondary = toks[i].length() == 6 && toks[i][5] == 'S';
