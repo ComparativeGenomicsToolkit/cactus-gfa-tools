@@ -228,6 +228,12 @@ static void gaf2paf(const GafRecord& gaf_record, const unordered_map<string, int
             os << "\ttp:" << tp.first << ":" << tp.second;
         }
 
+        // throw in some information about the parent gaf (for downstream filtering)
+        // gm: number of matches in the gaf
+        os << "\tgm:i:" << gaf_record.matches;
+        // gl: block length in the gaf
+        os << "\tgl:i:" << gaf_record.block_length;
+
         // output the cigar last
         os << "\tcg:Z:" << cig_string.str() << "\n";
         

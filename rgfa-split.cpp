@@ -4,6 +4,7 @@
 #include "rgfa-split.hpp"
 #include "gfakluge.hpp"
 #include "pafcoverage.hpp"
+#include "paf.hpp"
 
 //#define debug 1
 
@@ -658,7 +659,7 @@ int64_t count_small_gap_bases(const vector<string>& toks, int64_t max_gap_as_mat
         if (toks[i].substr(0, 5) == "cg:Z:") {
             for_each_cg(toks[i], [&](const string& val, const string& cat) {
                     int64_t len = stol(val);
-                    if (cat == "M") {
+                    if (cat == "M" || cat == "X" || cat == "=") {
                         if (after_match && running_ins < max_gap_as_match && running_del < max_gap_as_match) {
                             total_gap += running_ins;
                         }
