@@ -613,7 +613,7 @@ void gfa_split(const string& rgfa_path,
     function<void()> flush_files = [&out_files, &created_files]() {
         if (out_files.size() > 100) {
             for (auto& idx_of : out_files) {
-                created_files.insert(idx_of.first);                                
+                created_files.insert(idx_of.first);
                 delete idx_of.second;
             }
             out_files.clear();
@@ -646,10 +646,10 @@ void gfa_split(const string& rgfa_path,
             ref_contig = &contigs[reference_id];
         }
         if (ref_contig != nullptr && visit_contig(*ref_contig)) {
+            flush_files();
             ofstream*& out_gfa_stream = out_files[reference_id];
             if (out_gfa_stream == nullptr) {
-                string out_gfa_path = output_prefix + *ref_contig + ".gfa";
-                flush_files();
+                string out_gfa_path = output_prefix + *ref_contig + ".gfa";                
                 out_gfa_stream = new ofstream(out_gfa_path, get_flags(reference_id));
                 if (!(*out_gfa_stream)) {
                     cerr << "error: unable to open output gfa file: " << out_gfa_path << endl;
