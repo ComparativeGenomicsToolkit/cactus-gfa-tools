@@ -20,6 +20,7 @@ for each node in sorted list
    scan all edges for rank i-1 adjacencies
    build consensus contig
 */
+
 pair<unordered_map<int64_t, int64_t>, vector<string>> rgfa2contig(const string& gfa_path) {
 
     // map rank -> nodes
@@ -446,10 +447,24 @@ void paf_split(const string& input_paf_path,
     // second pass, do the splitting
     input_paf_stream.clear();
     input_paf_stream.seekg(0, ios::beg);
-    
-    // note: we're assuming a small number of reference contigs (ie 23), so we can afford to open file
-    // for each. 
+
+    // in the event of lots of reference contigs (ex grch38 unplaced stuff), we may have too
+    // many files.  in this case, we just naively flush'em all and start from scratch
+    // (todo: sorting / lru cache would both be far better approaches)
     unordered_map<int64_t, ofstream*> out_files;
+    unordered_set<int64_t> created_files;
+    function<void()> flush_files = [&out_files, &created_files]() {
+        if (out_files.size() > 100) {
+            for (auto& idx_of : out_files) {
+                created_files.insert(idx_of.first);                                
+                delete idx_of.second;
+            }
+            out_files.clear();
+        }
+    };
+    function<ios_base::openmode(int64_t)> get_flags = [&created_files](int64_t ref_idx) {
+        return created_files.count(ref_idx) ? ios_base::app : ios_base::out;
+    };
 
     // load up the query contigs for downstream fasta splitting
     unordered_map<int64_t, unordered_set<string> > query_map;
@@ -493,12 +508,12 @@ void paf_split(const string& input_paf_path,
         // chromosome?  if so, we write the paf line, otherwise it's effectively filtered out
         if ((reference_id == target_reference_id && visit_contig(reference_contig)) ||
             (ambiguous_id >= 0 && reference_contig == contigs[ambiguous_id])) {
+            flush_files();
             ofstream*& out_paf_stream = out_files[reference_id];
             if (out_paf_stream == nullptr) {
                 string out_paf_path = output_prefix + reference_contig + ".paf";
-                out_paf_stream = new ofstream(out_paf_path);
+                out_paf_stream = new ofstream(out_paf_path, get_flags(reference_id));
                 pafs_written[reference_id] = true;
-                assert(out_files.size() < 100);
                 if (!(*out_paf_stream)) {
                     cerr << "error: unable to open output paf file: " << out_paf_path << endl;
                     exit(1);
@@ -590,9 +605,23 @@ void gfa_split(const string& rgfa_path,
     ifstream input_gfa_stream(rgfa_path);
     assert(input_gfa_stream);
 
-    // note: we're assuming a small number of reference contigs (ie 23), so we can afford to open file
-    // for each. 
+    // in the event of lots of reference contigs (ex grch38 unplaced stuff), we may have too
+    // many files.  in this case, we just naively flush'em all and start from scratch
+    // (todo: sorting / lru cache would both be far better approaches)
     unordered_map<int64_t, ofstream*> out_files;
+    unordered_set<int64_t> created_files;
+    function<void()> flush_files = [&out_files, &created_files]() {
+        if (out_files.size() > 100) {
+            for (auto& idx_of : out_files) {
+                created_files.insert(idx_of.first);                                
+                delete idx_of.second;
+            }
+            out_files.clear();
+        }
+    };
+    function<ios_base::openmode(int64_t)> get_flags = [&created_files](int64_t ref_idx) {
+        return created_files.count(ref_idx) ? ios_base::app : ios_base::out;
+    };
 
     string gfa_line;
     while (getline(input_gfa_stream, gfa_line)) {
@@ -620,8 +649,8 @@ void gfa_split(const string& rgfa_path,
             ofstream*& out_gfa_stream = out_files[reference_id];
             if (out_gfa_stream == nullptr) {
                 string out_gfa_path = output_prefix + *ref_contig + ".gfa";
-                out_gfa_stream = new ofstream(out_gfa_path);
-                assert(out_files.size() < 100);
+                flush_files();
+                out_gfa_stream = new ofstream(out_gfa_path, get_flags(reference_id));
                 if (!(*out_gfa_stream)) {
                     cerr << "error: unable to open output gfa file: " << out_gfa_path << endl;
                     exit(1);
@@ -632,10 +661,7 @@ void gfa_split(const string& rgfa_path,
     }
 
     // clean up the files
-    for (auto& ref_stream : out_files) {
-        delete ref_stream.second;
-    }
-    out_files.clear();
+    flush_files();
 }
 
 int64_t count_small_gap_bases(const vector<string>& toks, int64_t max_gap_as_match) {
