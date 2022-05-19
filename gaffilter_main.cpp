@@ -27,7 +27,7 @@ static void help(char** argv) {
     cerr << "usage: " << argv[0] << " [options] <gaf> > output.gaf" << endl
          << "Filter GAF record if its query interval overlaps another query interval and\n"
          << "  1) the record is secondary and the overlapping record is primary or\n"
-         << "  1) the record's MAPQ is lower than {ratio, see -r} times the overlapping record's MAPQ or\n"
+         << "  2) the record's MAPQ is lower than {ratio, see -r} times the overlapping record's MAPQ or\n"
          << "  3) the record's block length is less than {ratio, see -r} times larger than the overlapping record's block length (and its MAPQ isn't higher)" << endl
          << endl
          << "options: " << endl
@@ -153,7 +153,8 @@ int main(int argc, char** argv) {
             parse_gaf_record(line_buffer, gaf_record);
         }
         gaf_records.push_back(gaf_record);
-    }    
+    }
+    cerr << "[gaffilter]: Loaded " << gaf_records.size() << (is_paf ? "PAF" : "GAF") << " records" << endl;
 
     // make an interval tree for each query sequence
     unordered_map<string, vector<GafInterval>> gaf_intervals;
@@ -166,6 +167,7 @@ int main(int argc, char** argv) {
         gaf_trees[qi.first] = new GafIntervalTree(qi.second);
     }
     gaf_intervals.clear();
+    cerr << "[gaffilter]: Constructed interval trees" << endl;
 
     // test if one record "dominates" another, using primary/secondary, mapq, block length in that order
     function<bool(const GafRecord&, const GafRecord&)> dominates = [&](const GafRecord& gaf1, const GafRecord& gaf2) {
