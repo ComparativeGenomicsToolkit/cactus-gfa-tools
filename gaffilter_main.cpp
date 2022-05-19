@@ -230,7 +230,11 @@ int main(int argc, char** argv) {
             cout << print_record(gaf_records[i]) << "\n";
         } else {
             ++filter_count;
-            filter_len_count += gaf_records[i].block_length;
+            if (is_paf) {
+                filter_len_count += paf_records[i].num_bases;
+            } else {
+                filter_len_count += gaf_records[i].block_length;
+            }
 #ifdef debug
             cerr << "\nfiltering record " << i << " (" << &gaf_records[i] << ") because it doesn't dominate its "
                  << (overlapping.size() - 1) << " overlaps\n  " << print_record(gaf_records[i]) << endl;
