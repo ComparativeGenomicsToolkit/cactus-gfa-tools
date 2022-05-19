@@ -132,10 +132,6 @@ int main(int argc, char** argv) {
         if (is_paf) {
             PafLine paf_record = parse_paf_line(line_buffer);
             paf_records.push_back(paf_record);
-            if (!paf_record.opt_fields.count("gl")) {
-                cerr << "[gaffilter] error: \"gl\" optional tag required to process PAF" << endl;
-                return 1;
-            }            
             // just copy what we (might) need
             gaf_record.query_name = paf_record.query_name;
             gaf_record.query_length = paf_record.query_len;
@@ -143,7 +139,11 @@ int main(int argc, char** argv) {
             gaf_record.query_end = paf_record.query_end;
             gaf_record.strand = paf_record.strand;
             gaf_record.mapq = paf_record.mapq;
-            gaf_record.block_length = stol(paf_record.opt_fields.at("gl").second);
+            if (paf_record.opt_fields.count("gl")) {
+                gaf_record.block_length = stol(paf_record.opt_fields.at("gl").second);
+            } else {
+                gaf_record.block_length = paf_record.num_bases;
+            }
             if (paf_record.opt_fields.count("tp")) {
                 gaf_record.opt_fields["tp"] = paf_record.opt_fields.at("tp");
             }
