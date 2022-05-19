@@ -4,6 +4,7 @@
 #include <vector>
 #include <iostream>
 #include <cassert>
+#include <map>
 using namespace std;
 
 struct PafLine {
@@ -20,6 +21,11 @@ struct PafLine {
     int64_t num_bases;
     int64_t mapq;
     string cigar;
+
+    // Map a tag name to its type and value
+    // ex: "de:f:0.2183" in the GAF would appear as opt_fields["de"] = ("f", "0.2183")
+    // note: cigar not stored here, but rather in cigar string above
+    std::map<std::string, std::pair<std::string, std::string>>  opt_fields;
 };
 
 inline vector<string> split_delims(const string &s, const string& delims, vector<string> &elems) {
@@ -63,7 +69,11 @@ inline PafLine parse_paf_line(const string& paf_line) {
     for (size_t i = 12; i < toks.size(); ++i) {
         if (toks[i].compare(0, 3, "cg:Z:") == 0) {
             paf.cigar = toks[i].substr(5);
-            break;
+        } else {
+            vector<string> tag_toks;
+            split_delims(toks[i], ":", tag_toks);
+            assert(tag_toks.size() == 3);
+            paf.opt_fields[tag_toks[0]] = make_pair(tag_toks[1], tag_toks[2]);
         }
     }
 
@@ -75,6 +85,12 @@ inline ostream& operator<<(ostream& os, const PafLine& paf) {
        << string(1, paf.strand) << "\t"
        << paf.target_name << "\t" << paf.target_len << "\t" << paf.target_start << "\t" << paf.target_end << "\t"
        << paf.num_matching << "\t" << paf.num_bases << "\t" << paf.mapq;
+    if (!paf.cigar.empty()) {
+        os << "\tcg:Z:" << paf.cigar;        
+    }
+    for (const auto& kv : paf.opt_fields) {
+        os << "\t" << kv.first << ":" << kv.second.first << ":" << kv.second.second;
+    }
     return os;
 }
 

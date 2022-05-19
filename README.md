@@ -65,9 +65,11 @@ Filter a GAF so that there are no overlapping query intervals.  It uses simple h
 * it doesn't overlap anything, or
 * it is primary and only overlaps secondaries, or
 * its mapq is > N * the mapq of any overlap, or
-* its query length is N * the query length of any overlap (and the first two conditions do not apply in reverse from the overlap)
+* its block length is N * the block length of any overlap (and the first two conditions do not apply in reverse from the overlap)
 
-`N` is 2 by default and can be set with `-r`.  
+`N` is 2 by default and can be set with `-r`.
+
+This tool can also run on PAFs (expecting to use the original GAF block length stored in a "gl" tag) by adding the `-p` option. In practice, this will perform a more fine-grained filter and should remove fewer alignments. 
 
 ### paf2lastz
 
