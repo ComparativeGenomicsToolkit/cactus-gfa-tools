@@ -37,16 +37,16 @@ static bool dominates(const GafRecord& gaf1, const GafRecord& gaf2, double ratio
     } else if (primary2 && !primary1) {
         return false;
     }
-    if ((double)gaf1.block_length / ((double)gaf2.block_length + 0.000001) >= ratio) {
-        return true;
-    } else if ((double)gaf2.block_length / ((double)gaf1.block_length + 0.000001) >= ratio) {
-        return false;
-    }
     if ((double)gaf1.mapq / ((double)gaf2.mapq + 0.000001) >= ratio) {
         return true;
     } else if ((double)gaf2.mapq / ((double)gaf1.mapq + 0.000001) >= ratio) {
         return false;
     }
+    if ((double)gaf1.block_length / ((double)gaf2.block_length + 0.000001) >= ratio) {
+        return true;
+    } else if ((double)gaf2.block_length / ((double)gaf1.block_length + 0.000001) >= ratio) {
+        return false;
+    }    
     return false;
 }
 
