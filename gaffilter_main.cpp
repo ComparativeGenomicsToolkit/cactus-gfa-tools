@@ -211,8 +211,13 @@ int main(int argc, char** argv) {
     // this is a really inefficient in worst-case (where everything overlaps) but that's not at all what we expect
     for (int64_t i = 0; i < gaf_records.size(); ++i) {
         bool is_dominant = true;
+        int64_t end_point = gaf_records[i].query_end;
+        if (end_point > gaf_records[i].query_start) {
+            // interval tree expects closed coordinates.  but it also expects the end point >= start point
+            --end_point;
+        }
         vector<GafInterval> overlapping = gaf_trees[gaf_records[i].query_name]->findOverlapping(
-            gaf_records[i].query_start, gaf_records[i].query_end);
+            gaf_records[i].query_start, end_point);        
         for (const auto& ogi : overlapping) {
             if (ogi.value != &gaf_records[i]) {
                 is_dominant = is_dominant && dominates(gaf_records[i], *ogi.value);
