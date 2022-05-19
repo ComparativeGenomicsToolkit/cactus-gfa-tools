@@ -149,7 +149,6 @@ int main(int argc, char** argv) {
             }
             // hack alert: hijack path_length with offset in paf_records
             gaf_record.path_length = paf_records.size() - 1;
-            gaf_records.push_back(gaf_record);
         } else {
             parse_gaf_record(line_buffer, gaf_record);
         }
@@ -168,57 +167,62 @@ int main(int argc, char** argv) {
     }
     gaf_intervals.clear();
 
+    // test if one record "dominates" another, using primary/secondary, mapq, block length in that order
+    function<bool(const GafRecord&, const GafRecord&)> dominates = [&](const GafRecord& gaf1, const GafRecord& gaf2) {
+        bool primary1 = !gaf1.opt_fields.count("tp") || gaf1.opt_fields.at("tp").second == "P";
+        bool primary2 = !gaf2.opt_fields.count("tp") || gaf2.opt_fields.at("tp").second == "P";
+        if (primary1 && !primary2) {
+            return true;
+        } else if (primary2 && !primary1) {
+            return false;
+        }
+        if ((double)gaf1.block_length / ((double)gaf2.block_length + 0.000001) >= ratio) {
+            return true;
+        } else if ((double)gaf2.block_length / ((double)gaf1.block_length + 0.000001) >= ratio) {
+            return false;
+        }
+        if ((double)gaf1.mapq / ((double)gaf2.mapq + 0.000001) >= ratio) {
+            return true;
+        } else if ((double)gaf2.mapq / ((double)gaf1.mapq + 0.000001) >= ratio) {
+            return false;
+        }
+        return false;
+    };
 
     int64_t filter_count = 0;
     int64_t filter_len_count = 0;
-
+        
     // simple algorithm:
     // for each record, scan its overlaps and flag it if it finds anything
     // that overlaps that isn't ratio X smaller.
     // this is a really inefficient in worst-case (where everything overlaps) but that's not at all what we expect
     for (int64_t i = 0; i < gaf_records.size(); ++i) {
-        bool is_filtered = false;
-        bool is_primary = !gaf_records[i].opt_fields.count("tp") || gaf_records[i].opt_fields.at("tp").second == "P";
+        bool is_dominant = true;
         vector<GafInterval> overlapping = gaf_trees[gaf_records[i].query_name]->findOverlapping(
             gaf_records[i].query_start, gaf_records[i].query_end);
         for (const auto& ogi : overlapping) {
             if (ogi.value != &gaf_records[i]) {
-                bool overlap_primary = !ogi.value->opt_fields.count("tp") || ogi.value->opt_fields.at("tp").second == "P";
-                double orat = (double)gaf_records[i].block_length / ((double)ogi.value->block_length + 0.000001);
-                double mrat = (double)gaf_records[i].mapq / ((double)ogi.value->mapq + 0.000001);
-                // primary / secondary comparison takes priority
-                if (overlap_primary && !is_primary) {
-#ifdef debug
-                    cerr << "filtering record " << i << "\n " << print_record(gaf_records[i]) << "\ndue to primary overlap with\n "
-                         << print_record(*ogi.value) << endl;
-#endif                    
-                    is_filtered = true;
-                } else {
-                    // next is mapq
-                    if (1. / mrat >= ratio) {
-#ifdef debug
-                        cerr << "filtering record " << i << "\n " << print_record(gaf_records[i]) << "\n because its mapq is dominiated by " << (1./mrat) << " by\n "
-                             << print_record(*ogi.value) << endl;
-#endif                                            
-                        is_filtered = true;
-                        // then interval length
-                    } else if (mrat <= ratio && 1. / orat >= ratio) {
-#ifdef debug
-                        cerr << "filtering record " << i << "\n " << print_record(gaf_records[i]) << "\n because its block length is dominiated by " << (1./orat) << " by\n "
-                             << print_record(*ogi.value) << endl;
-#endif                    
-                        is_filtered = true;
-                    }
-                }
-                if (is_filtered) {
-                    ++filter_count;
-                    filter_len_count += gaf_records[i].block_length;
+                is_dominant = is_dominant && dominates(gaf_records[i], *ogi.value);
+                if (!is_dominant) {
                     break;
                 }
             }
         }
-        if (!is_filtered) {
+        if (is_dominant) {
             cout << print_record(gaf_records[i]) << "\n";
+        } else {
+            ++filter_count;
+            filter_len_count += gaf_records[i].block_length;
+#ifdef debug
+            cerr << "\nfiltering record " << i << " (" << &gaf_records[i] << ") because it doesn't dominate its "
+                 << (overlapping.size() - 1) << " overlaps\n  " << print_record(gaf_records[i]) << endl;
+            int64_t ocount = 0;
+            for (const auto& ogi : overlapping) {
+                if (ogi.value != &gaf_records[i]) {
+                    cerr << "overlap " << ocount++ << " (" << ogi.value << "):\n  " << print_record(*ogi.value) << endl;
+                }
+            }
+#endif
         }
     }
 
