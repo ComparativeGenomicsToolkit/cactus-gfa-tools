@@ -22,6 +22,40 @@ using namespace gafkluge;
 typedef IntervalTree<int64_t, const GafRecord*> GafIntervalTree;
 typedef GafIntervalTree::interval GafInterval;
 
+// test if one record "dominates" another, using primary/secondary, mapq, block length in that order
+static bool dominates(const GafRecord& gaf1, const GafRecord& gaf2, double ratio) {
+    bool primary1 = !gaf1.opt_fields.count("tp") || gaf1.opt_fields.at("tp").second == "P";
+    bool primary2 = !gaf2.opt_fields.count("tp") || gaf2.opt_fields.at("tp").second == "P";
+    // empty interval can't dominate
+    if (gaf1.query_start >= gaf1.query_end) {
+        return false;
+    } else if (gaf2.query_start >= gaf2.query_end) {
+        return true;
+    }
+    if (primary1 && !primary2) {
+        return true;
+    } else if (primary2 && !primary1) {
+        return false;
+    }
+    if ((double)gaf1.block_length / ((double)gaf2.block_length + 0.000001) >= ratio) {
+        return true;
+    } else if ((double)gaf2.block_length / ((double)gaf1.block_length + 0.000001) >= ratio) {
+        return false;
+    }
+    if ((double)gaf1.mapq / ((double)gaf2.mapq + 0.000001) >= ratio) {
+        return true;
+    } else if ((double)gaf2.mapq / ((double)gaf1.mapq + 0.000001) >= ratio) {
+        return false;
+    }
+    return false;
+}
+
+// measure the overlap
+static int64_t overlap_size(const GafRecord& gaf1, const GafRecord& gaf2) {
+    int64_t ostart = std::max(gaf1.query_start, gaf2.query_start);
+    int64_t oend = std::min(gaf1.query_end, gaf2.query_end);
+    return oend - ostart;
+}
 
 static void help(char** argv) {
     cerr << "usage: " << argv[0] << " [options] <gaf> > output.gaf" << endl
@@ -31,13 +65,15 @@ static void help(char** argv) {
          << "  3) the record's block length is less than {ratio, see -r} times larger than the overlapping record's block length (and its MAPQ isn't higher)" << endl
          << endl
          << "options: " << endl
-         << "    -r, --ratio N      If two query blocks overlap, and one is Nx bigger than the other, the bigger one is kept (otherwise both deleted) [2]" << endl
-         << "    -p, --paf          Input is PAF, not GAF" << endl;
+         << "    -r, --ratio N       If two query blocks overlap, and one is Nx bigger than the other, the bigger one is kept (otherwise both deleted) [2]" << endl
+         << "    -m, --min-overlap N Ignore overlaps that consitute <N% of the length [0]" << endl
+         << "    -p, --paf           Input is PAF, not GAF" << endl;
 }    
 
 int main(int argc, char** argv) {
 
     double ratio = 2.;
+    double min_overlap_pct = 0.;
     
     int c;
     bool is_paf = false;
@@ -47,13 +83,14 @@ int main(int argc, char** argv) {
         static const struct option long_options[] = {
             {"help", no_argument, 0, 'h'},
             {"ratio", required_argument, 0, 'r'},
+            {"min-overlap", required_argument, 0, 'm'},            
             {"paf", no_argument, 0, 'p'},
             {0, 0, 0, 0}
         };
 
         int option_index = 0;
 
-        c = getopt_long (argc, argv, "h:r:p",
+        c = getopt_long (argc, argv, "h:r:m:p",
                          long_options, &option_index);
 
         // Detect the end of the options.
@@ -64,6 +101,9 @@ int main(int argc, char** argv) {
         {
         case 'r':
             ratio = stof(optarg);
+            break;
+        case 'm':
+            min_overlap_pct = stof(optarg);
             break;
         case 'p':
             is_paf = true;
@@ -174,33 +214,6 @@ int main(int argc, char** argv) {
     gaf_intervals.clear();
     cerr << "[gaffilter]: Constructed interval trees" << endl;
 
-    // test if one record "dominates" another, using primary/secondary, mapq, block length in that order
-    function<bool(const GafRecord&, const GafRecord&)> dominates = [&](const GafRecord& gaf1, const GafRecord& gaf2) {
-        bool primary1 = !gaf1.opt_fields.count("tp") || gaf1.opt_fields.at("tp").second == "P";
-        bool primary2 = !gaf2.opt_fields.count("tp") || gaf2.opt_fields.at("tp").second == "P";
-        // empty interval can't dominate
-        if (gaf1.query_start >= gaf1.query_end) {
-            return false;
-        } else if (gaf2.query_start >= gaf2.query_end) {
-            return true;
-        }
-        if (primary1 && !primary2) {
-            return true;
-        } else if (primary2 && !primary1) {
-            return false;
-        }
-        if ((double)gaf1.block_length / ((double)gaf2.block_length + 0.000001) >= ratio) {
-            return true;
-        } else if ((double)gaf2.block_length / ((double)gaf1.block_length + 0.000001) >= ratio) {
-            return false;
-        }
-        if ((double)gaf1.mapq / ((double)gaf2.mapq + 0.000001) >= ratio) {
-            return true;
-        } else if ((double)gaf2.mapq / ((double)gaf1.mapq + 0.000001) >= ratio) {
-            return false;
-        }
-        return false;
-    };
 
     int64_t filter_count = 0;
     int64_t filter_len_count = 0;
@@ -216,14 +229,22 @@ int main(int argc, char** argv) {
             // interval tree expects closed coordinates.  but it also expects the end point >= start point
             --end_point;
         }
-        vector<GafInterval> overlapping = gaf_trees[gaf_records[i].query_name]->findOverlapping(
-            gaf_records[i].query_start, end_point);        
-        for (const auto& ogi : overlapping) {
-            if (ogi.value != &gaf_records[i]) {
-                is_dominant = is_dominant && dominates(gaf_records[i], *ogi.value);
-                if (!is_dominant) {
-                    break;
+        vector<GafInterval> overlapping;
+        gaf_trees[gaf_records[i].query_name]->visit_overlapping(gaf_records[i].query_start, end_point, [&](const GafInterval& interval) {
+                // filter self alignments
+                if (interval.value != &gaf_records[i]) {
+                    int64_t overlap_bases = overlap_size(gaf_records[i], *interval.value);
+                    // filter overlaps that are too small to matter (via min_overlap_pct)
+                    if (gaf_records[i].block_length == 0 ||
+                        (double)overlap_bases / (double)gaf_records[i].block_length >= min_overlap_pct) {
+                        overlapping.push_back(interval);
+                    }
                 }
+            });
+        for (const auto& ogi : overlapping) {
+            is_dominant = is_dominant && dominates(gaf_records[i], *ogi.value, ratio);
+            if (!is_dominant) {
+                break;
             }
         }
         if (is_dominant) {
@@ -237,12 +258,10 @@ int main(int argc, char** argv) {
             }
 #ifdef debug
             cerr << "\nfiltering record " << i << " (" << &gaf_records[i] << ") because it doesn't dominate its "
-                 << (overlapping.size() - 1) << " overlaps\n  " << print_record(gaf_records[i]) << endl;
+                 << overlapping.size() << " overlaps\n  " << print_record(gaf_records[i]) << endl;
             int64_t ocount = 0;
             for (const auto& ogi : overlapping) {
-                if (ogi.value != &gaf_records[i]) {
-                    cerr << "overlap " << ocount++ << " (" << ogi.value << "):\n  " << print_record(*ogi.value) << endl;
-                }
+                cerr << "overlap " << ocount++ << " (" << ogi.value << "):\n  " << print_record(*ogi.value) << endl;
             }
 #endif
         }
