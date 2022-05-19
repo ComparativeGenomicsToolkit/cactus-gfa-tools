@@ -154,11 +154,16 @@ int main(int argc, char** argv) {
         }
         gaf_records.push_back(gaf_record);
     }
-    cerr << "[gaffilter]: Loaded " << gaf_records.size() << (is_paf ? "PAF" : "GAF") << " records" << endl;
+    cerr << "[gaffilter]: Loaded " << gaf_records.size() << (is_paf ? " PAF" : " GAF") << " records" << endl;
 
     // make an interval tree for each query sequence
     unordered_map<string, vector<GafInterval>> gaf_intervals;
     for (const auto& gaf_record : gaf_records) {
+        int64_t end_point = gaf_record.query_end;
+        if (end_point > gaf_record.query_start) {
+            // interval tree expects closed coordinates.  but it also expects the end point >= start point
+            --end_point;
+        }
         GafInterval gaf_interval(gaf_record.query_start, gaf_record.query_end - 1, &gaf_record);
         gaf_intervals[gaf_record.query_name].push_back(gaf_interval);
     }
@@ -173,6 +178,12 @@ int main(int argc, char** argv) {
     function<bool(const GafRecord&, const GafRecord&)> dominates = [&](const GafRecord& gaf1, const GafRecord& gaf2) {
         bool primary1 = !gaf1.opt_fields.count("tp") || gaf1.opt_fields.at("tp").second == "P";
         bool primary2 = !gaf2.opt_fields.count("tp") || gaf2.opt_fields.at("tp").second == "P";
+        // empty interval can't dominate
+        if (gaf1.query_start >= gaf1.query_end) {
+            return false;
+        } else if (gaf2.query_start >= gaf2.query_end) {
+            return true;
+        }
         if (primary1 && !primary2) {
             return true;
         } else if (primary2 && !primary1) {
