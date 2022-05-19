@@ -25,6 +25,7 @@ make test
 
 * [gaf2paf](#gaf2paf)
 * [gaf2unstable](#gaf2unstable)
+* [gaffilter](#gaffilter)
 * [paf2lastz](#paf2lastz)
 * [mzgaf2paf](#mzgaf2paf)
 * [rgfa-split](#rgfa-split)
@@ -57,6 +58,16 @@ gaf2unstable 1.gaf -g graph.gfa -o node-lengths.tsv > 1u.gaf
 gaf2paf 1u.gaf -l node-lengths.tsv > 1u.paf
 
 ```
+
+### gaffilter
+
+Filter a GAF so that there are no overlapping query intervals.  It uses simple heuristics.  For each record, keep it if
+* it doesn't overlap anything, or
+* it is primary and only overlaps secondaries, or
+* its mapq is > N * the mapq of any overlap, or
+* its query length is N * the query length of any overlap (and the first two conditions do not apply in reverse from the overlap)
+
+`N` is 2 by default and can be set with `-r`.  
 
 ### paf2lastz
 
