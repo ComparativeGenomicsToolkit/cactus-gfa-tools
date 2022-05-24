@@ -217,25 +217,31 @@ static void gaf2paf(const GafRecord& gaf_record, const unordered_map<string, int
         assert((step.end - end_offset) - (step.start + start_offset) == cig_target_bases);
         assert(paf_record.target_end - paf_record.target_start == cig_target_bases);
         assert(paf_record.query_end - paf_record.query_start == cig_query_bases);
+
+        // we can delete over some nodes.  this leaves obnoxious 0-length paf lines
+        // that don't serve a purpose (and all have overlapping query coordinates which
+        // can raise flags when debugging gaffilter)... so don't print them
+        if (paf_record.num_matching > 0) {
         
-        // output the record
-        os << paf_record;
+            // output the record
+            os << paf_record;
         
-        // todo: are there other optional tags we want to preserve? most would need to be recomputed to be
-        // valid on alignment subregion
-        if (gaf_record.opt_fields.count("tp")) {
-            const auto& tp = gaf_record.opt_fields.at("tp");
-            os << "\ttp:" << tp.first << ":" << tp.second;
+            // todo: are there other optional tags we want to preserve? most would need to be recomputed to be
+            // valid on alignment subregion
+            if (gaf_record.opt_fields.count("tp")) {
+                const auto& tp = gaf_record.opt_fields.at("tp");
+                os << "\ttp:" << tp.first << ":" << tp.second;
+            }
+
+            // throw in some information about the parent gaf (for downstream filtering)
+            // gm: number of matches in the gaf
+            os << "\tgm:i:" << gaf_record.matches;
+            // gl: block length in the gaf
+            os << "\tgl:i:" << gaf_record.block_length;
+
+            // output the cigar last
+            os << "\tcg:Z:" << cig_string.str() << "\n";
         }
-
-        // throw in some information about the parent gaf (for downstream filtering)
-        // gm: number of matches in the gaf
-        os << "\tgm:i:" << gaf_record.matches;
-        // gl: block length in the gaf
-        os << "\tgl:i:" << gaf_record.block_length;
-
-        // output the cigar last
-        os << "\tcg:Z:" << cig_string.str() << "\n";
         
         // advance our counters
         query_base_count += cig_query_bases;
