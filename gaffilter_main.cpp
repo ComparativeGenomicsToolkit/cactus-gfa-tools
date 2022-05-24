@@ -223,6 +223,9 @@ int main(int argc, char** argv) {
             if (paf_record.opt_fields.count("tp")) {
                 gaf_record.opt_fields["tp"] = paf_record.opt_fields.at("tp");
             }
+            if (paf_record.opt_fields.count("rc")) {
+                gaf_record.opt_fields["rc"] = paf_record.opt_fields.at("rc");
+            }
             // hack alert: hijack path_length with offset in paf_records
             gaf_record.path_length = paf_records.size() - 1;
         } else {

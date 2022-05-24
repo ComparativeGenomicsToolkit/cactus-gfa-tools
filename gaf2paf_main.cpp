@@ -233,6 +233,11 @@ static void gaf2paf(const GafRecord& gaf_record, const unordered_map<string, int
                 os << "\ttp:" << tp.first << ":" << tp.second;
             }
 
+            if (gaf_record.opt_fields.count("rc")) {
+                const auto& rc = gaf_record.opt_fields.at("rc");
+                os << "\trc:" << rc.first << ":" << rc.second;
+            }
+
             // throw in some information about the parent gaf (for downstream filtering)
             // gm: number of matches in the gaf
             os << "\tgm:i:" << gaf_record.matches;
