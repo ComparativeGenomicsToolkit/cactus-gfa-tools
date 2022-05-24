@@ -6,10 +6,9 @@
 #include <unordered_map>
 #include <vector>
 #include <set>
-#include "paf2stable.hpp"
-#include "pafcoverage.hpp"
 #include "gfakluge.hpp"
 #include "gafkluge.hpp"
+#include "rgfa-split.hpp"
 
 //#define debug
 
@@ -107,7 +106,9 @@ static vector<pair<MGSeq, pair<int64_t, int64_t>>>  get_unstable_interval(const 
     return unstable_intervals;
 }
     
-static void gaf2unstable(const unordered_map<string, set<MGSeq>>& lookup, GafRecord& gaf_record) {
+static void gaf2unstable(const unordered_map<string, set<MGSeq>>& lookup,
+                         const pair<unordered_map<int64_t, int64_t>, vector<string>>& partition,
+                         GafRecord& gaf_record) {
     vector<GafStep> unstable_path;
     for (auto& step : gaf_record.path) {
 
@@ -153,6 +154,24 @@ static void gaf2unstable(const unordered_map<string, set<MGSeq>>& lookup, GafRec
 #endif        
     }
     gaf_record.path = unstable_path;
+
+    // add tags for reference contigs
+    set<int64_t> ref_ids;
+    for (const auto& unstable_step : gaf_record.path) {
+        int64_t node_name = node_id(unstable_step.name);
+        assert(partition.first.count(node_name));
+        ref_ids.insert(partition.first.at(node_name));
+    }
+    if (ref_ids.size() > 1) {
+        cerr << "[gaf2unstable] warning: Target path spans multiple reference contigs ";
+        for (int64_t ref_id : ref_ids) {
+            cerr << partition.second.at(ref_id) << ", ";
+        }
+        cerr << "\nthe (unstable) record is\n" << gaf_record << endl;
+    }
+    if (ref_ids.size() == 1) {
+        gaf_record.opt_fields["rc"] = make_pair("Z", partition.second.at(*ref_ids.begin()));
+    }
 }
 
 void help(char** argv) {
@@ -249,6 +268,9 @@ int main(int argc, char** argv) {
     // load the gfa
     auto lookup = get_unstable_mapping(rgfa_path);
 
+    // also get the reference contigs (todo: should merge two gfa passes)
+    pair<unordered_map<int64_t, int64_t>, vector<string>> partition = rgfa2contig(rgfa_path);
+
     if (!node_lengths_path.empty()) {
         ofstream node_lengths_file(node_lengths_path);
         if (!node_lengths_file) {
@@ -271,7 +293,7 @@ int main(int argc, char** argv) {
             continue;
         }
         parse_gaf_record(line_buffer, gaf_record);
-        gaf2unstable(lookup, gaf_record);
+        gaf2unstable(lookup, partition, gaf_record);
         cout << gaf_record << "\n";
     }
 
