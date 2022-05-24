@@ -265,16 +265,27 @@ int main(int argc, char** argv) {
             --end_point;
         }
         vector<GafInterval> overlapping;
+        string ref_contig;
+        if (gaf_records[i].opt_fields.count("rc")) {
+            ref_contig = gaf_records[i].opt_fields.at("rc").second;
+        }
         gaf_trees[gaf_records[i].query_name]->visit_overlapping(gaf_records[i].query_start, end_point, [&](const GafInterval& interval) {
                 // filter self alignments 
                 if (interval.value != &gaf_records[i] &&
                     //and mapq/block length failing alignments
                     interval.value->mapq >= min_mapq && interval.value->block_length >= min_block_len) {
-                    int64_t overlap_bases = overlap_size(gaf_records[i], *interval.value);
-                    // filter overlaps that are too small to matter (via min_overlap_pct)
-                    if (gaf_records[i].block_length == 0 ||
-                        (double)overlap_bases / (double)gaf_records[i].block_length >= min_overlap_pct) {
-                        overlapping.push_back(interval);
+                    string overlap_contig;
+                    if (interval.value->opt_fields.count("rc")) {
+                        overlap_contig = interval.value->opt_fields.at("rc").second;
+                    }
+                    // also ignore things that map to different contigs
+                    if (ref_contig == overlap_contig || ref_contig.empty() || overlap_contig.empty()) {
+                        int64_t overlap_bases = overlap_size(gaf_records[i], *interval.value);
+                        // filter overlaps that are too small to matter (via min_overlap_pct)
+                        if (gaf_records[i].block_length == 0 ||
+                            (double)overlap_bases / (double)gaf_records[i].block_length >= min_overlap_pct) {
+                            overlapping.push_back(interval);
+                        }
                     }
                 }
             });
