@@ -276,7 +276,7 @@ int main(int argc, char** argv) {
                 // filter self alignments 
                 if (interval.value != &gaf_records[i] &&
                     //and mapq/block length failing alignments
-                    interval.value->mapq >= min_mapq && interval.value->block_length >= min_block_len) {
+                    interval.value->mapq >= min_mapq && (interval.value->query_length <= min_block_len || interval.value->block_length >= min_block_len)) {
                     string overlap_contig;
                     if (interval.value->opt_fields.count("rc")) {
                         overlap_contig = interval.value->opt_fields.at("rc").second;
