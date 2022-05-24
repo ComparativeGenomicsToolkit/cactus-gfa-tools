@@ -30,12 +30,12 @@ void update_coverage_map(const string& paf_line, CoverageMap& coverage_map) {
             int64_t query_pos = stol(toks[2]);
             for_each_cg(toks[i], [&](const string& val, const string& cat) {
                     int64_t len = stol(val);
-                    if (cat == "M") {
+                    if (cat == "M" || cat == "=" || cat == "X") {
                         for (int64_t j = 0; j < len; ++j) {
                             query_coverage[query_pos + j] = true;
                         }
                     }
-                    if (cat == "M" || cat == "I") {
+                    if (cat == "M" || cat == "=" || cat == "X" || cat == "I") {
                         query_pos += len;
                     }
                 });
