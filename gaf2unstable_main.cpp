@@ -172,6 +172,11 @@ static void gaf2unstable(const unordered_map<string, set<MGSeq>>& lookup,
     if (ref_ids.size() == 1) {
         gaf_record.opt_fields["rc"] = make_pair("Z", partition.second.at(*ref_ids.begin()));
     }
+    double identity = 0;
+    if (gaf_record.block_length > 0) {
+        identity = (double)gaf_record.matches / (double)gaf_record.block_length;
+    }
+    gaf_record.opt_fields["gi"] = make_pair("i", std::to_string((int)(identity * 100.)));
 }
 
 void help(char** argv) {
