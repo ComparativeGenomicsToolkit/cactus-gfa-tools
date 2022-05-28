@@ -82,7 +82,8 @@ static void help(char** argv) {
          << "    -m, --min-overlap N             Ignore overlaps that consitute <N% of the length [0]" << endl
          << "    -o, --min-overlap-length N      If >= 2 query regions with size >= N overlap, ignore the query region.  If 1 query region with size >= N overlaps any regions of size <= N, ignore the smaller ones only. Works separate to -r/-m but can be used in conjunction with them to combine the two filters (0 = disable) [0]" << endl
          << "    -q, --min-mapq N                Don't let an interval with MAPQ < N cause something to be filtered out" << endl
-         << "    -b, --min-block-length N           Don't let an interval with block length < N cause something to be filtered out" << endl
+         << "    -b, --min-block-length N        Don't let an interval with block length < N cause something to be filtered out" << endl
+         << "    -i, --min-identity N            Don't let an interval with identity < N cause something to be filtered out" << endl       
          << "    -p, --paf                       Input is PAF, not GAF" << endl;
 }    
 
@@ -92,7 +93,8 @@ int main(int argc, char** argv) {
     double min_overlap_pct = 0.;
     int64_t min_overlap_len = 0;
     int64_t min_block_len = 0;
-    int64_t min_mapq = 0;    
+    int64_t min_mapq = 0;
+    double min_identity = 0;
     
     int c;
     bool is_paf = false;
@@ -105,14 +107,15 @@ int main(int argc, char** argv) {
             {"min-overlap", required_argument, 0, 'm'},
             {"min-overlap-length", required_argument, 0, 'o'},
             {"min-block-length", required_argument, 0, 'b'},
-            {"min-mapq", required_argument, 0, 'q'},            
+            {"min-mapq", required_argument, 0, 'q'},
+            {"min-identity", required_argument, 0, 'i'},
             {"paf", no_argument, 0, 'p'},
             {0, 0, 0, 0}
         };
 
         int option_index = 0;
 
-        c = getopt_long (argc, argv, "h:r:m:po:b:q:",
+        c = getopt_long (argc, argv, "h:r:m:po:b:q:i:",
                          long_options, &option_index);
 
         // Detect the end of the options.
@@ -135,6 +138,9 @@ int main(int argc, char** argv) {
             break;
         case 'b':
             min_block_len = std::stol(optarg);
+            break;
+        case 'i':
+            min_identity = std::stof(optarg);
             break;
         case 'q':
             min_mapq = std::stol(optarg);
@@ -273,10 +279,13 @@ int main(int argc, char** argv) {
             ref_contig = gaf_records[i].opt_fields.at("rc").second;
         }
         gaf_trees[gaf_records[i].query_name]->visit_overlapping(gaf_records[i].query_start, end_point, [&](const GafInterval& interval) {
-                // filter self alignments 
+                // filter self alignments
+                double identity = interval.value->matches ? interval.value->block_length / interval.value->matches  : 0;
                 if (interval.value != &gaf_records[i] &&
                     //and mapq/block length failing alignments
-                    interval.value->mapq >= min_mapq && (interval.value->query_length <= min_block_len || interval.value->block_length >= min_block_len)) {
+                    interval.value->mapq >= min_mapq && (interval.value->query_length <= min_block_len || interval.value->block_length >= min_block_len) &&
+                    // and identity failing alignments
+                    identity >= min_identity) {
                     string overlap_contig;
                     if (interval.value->opt_fields.count("rc")) {
                         overlap_contig = interval.value->opt_fields.at("rc").second;
