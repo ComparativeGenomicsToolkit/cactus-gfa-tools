@@ -281,6 +281,9 @@ int main(int argc, char** argv) {
         gaf_trees[gaf_records[i].query_name]->visit_overlapping(gaf_records[i].query_start, end_point, [&](const GafInterval& interval) {
                 // filter self alignments
                 double identity = interval.value->matches ? interval.value->block_length / interval.value->matches  : 0;
+                if (interval.value->opt_fields.count("gi")) {
+                    identity = min(identity, (double)stof(interval.value->opt_fields.at("gi").second));
+                }
                 if (interval.value != &gaf_records[i] &&
                     //and mapq/block length failing alignments
                     interval.value->mapq >= min_mapq && (interval.value->query_length <= min_block_len || interval.value->block_length >= min_block_len) &&
