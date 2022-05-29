@@ -9,6 +9,7 @@
 #include <algorithm>
 #include <list>
 #include <cassert>
+#include <cmath>
 
 #include "gafkluge.hpp"
 #include "paf.hpp"
@@ -243,6 +244,13 @@ static void gaf2paf(const GafRecord& gaf_record, const unordered_map<string, int
             os << "\tgm:i:" << gaf_record.matches;
             // gl: block length in the gaf
             os << "\tgl:i:" << gaf_record.block_length;
+            // gi: the identity (col 10 / 11) in the gaf
+            double identity = 0;
+            if (gaf_record.block_length > 0) {
+              identity = (double)gaf_record.matches / (double)gaf_record.block_length;
+              identity = std::floor(identity * 1000 + 0.5 )/1000;
+            }
+            os << "\tgi:f:" << identity;
 
             // output the cigar last
             os << "\tcg:Z:" << cig_string.str() << "\n";
