@@ -280,7 +280,7 @@ int main(int argc, char** argv) {
         }
         gaf_trees[gaf_records[i].query_name]->visit_overlapping(gaf_records[i].query_start, end_point, [&](const GafInterval& interval) {
                 // filter self alignments
-                double identity = interval.value->matches ? interval.value->block_length / interval.value->matches  : 0;
+                double identity = interval.value->matches ? (double)interval.value->block_length / (double)interval.value->matches  : 0;
                 if (interval.value->opt_fields.count("gi")) {
                     identity = min(identity, (double)stof(interval.value->opt_fields.at("gi").second));
                 }
