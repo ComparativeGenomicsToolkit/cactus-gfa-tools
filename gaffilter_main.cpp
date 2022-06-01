@@ -226,6 +226,11 @@ int main(int argc, char** argv) {
             } else {
                 gaf_record.block_length = paf_record.num_bases;
             }
+            if (paf_record.opt_fields.count("gm")) {
+                gaf_record.matches = stol(paf_record.opt_fields.at("gm").second);
+            } else {
+                gaf_record.matches = paf_record.num_matching;
+            }
             if (paf_record.opt_fields.count("tp")) {
                 gaf_record.opt_fields["tp"] = paf_record.opt_fields.at("tp");
             }
@@ -281,6 +286,7 @@ int main(int argc, char** argv) {
         gaf_trees[gaf_records[i].query_name]->visit_overlapping(gaf_records[i].query_start, end_point, [&](const GafInterval& interval) {
                 // filter self alignments
                 double identity = interval.value->matches ? (double)interval.value->block_length / (double)interval.value->matches  : 0;
+                assert(identity >= 0);
                 if (interval.value->opt_fields.count("gi")) {
                     identity = min(identity, (double)stof(interval.value->opt_fields.at("gi").second));
                 }
