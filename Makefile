@@ -100,8 +100,11 @@ paf2stable.o:$(LIB_DEPS) paf2stable.cpp paf2stable.hpp pafcoverage.hpp paf.hpp
 paf2stable_main.o: paf2stable_main.cpp paf2stable.hpp pafcoverage.hpp paf.hpp
 	$(CXX) $(INCLUDE_FLAGS) $(CXXFLAGS) $(CPPFLAGS) -c paf2stable_main.cpp $(INC_FLAGS)
 
-gaf2unstable: gaf2unstable_main.o gafkluge.hpp paf.hpp
-	$(CXX) $(INCLUDE_FLAGS) $(CXXFLAGS) $(CPPFLAGS) -o gaf2unstable gaf2unstable_main.cpp $(INC_FLAGS)
+gaf2unstable_main.o:gaf2unstable_main.cpp gafkluge.hpp gfakluge.hpp paf.hpp rgfa-split.hpp
+	$(CXX) $(INCLUDE_FLAGS) $(CXXFLAGS) $(CPPFLAGS) -c gaf2unstable_main.cpp
+
+gaf2unstable: gaf2unstable_main.o rgfa-split.o pafcoverage.o
+	$(CXX) $(INCLUDE_FLAGS) $(CXXFLAGS) $(CPPFLAGS) -o gaf2unstable gaf2unstable_main.o rgfa-split.o $(INC_FLAGS)
 
 gaffilter: gaffilter_main.o gafkluge.hpp paf.hpp IntervalTree.h
 	$(CXX) $(INCLUDE_FLAGS) $(CXXFLAGS) $(CPPFLAGS) -o gaffilter gaffilter_main.cpp $(INC_FLAGS)

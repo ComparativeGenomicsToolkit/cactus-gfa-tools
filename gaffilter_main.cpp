@@ -22,6 +22,11 @@ using namespace gafkluge;
 typedef IntervalTree<int64_t, const GafRecord*> GafIntervalTree;
 typedef GafIntervalTree::interval GafInterval;
 
+// TODO: we have two ways of filtering below, dominates and dominates_mzgaf()
+// need to figure out which one is better (all signs point to the old one, which,
+// if I remember, is Gospel From Heng.  If that's the case we can just forget the new one
+// if not here, then at least hide the options in cactus config.
+
 // test if one record "dominates" another, using primary/secondary, mapq, block length in that order
 static bool dominates(const GafRecord& gaf1, const GafRecord& gaf2, double ratio) {
     bool primary1 = !gaf1.opt_fields.count("tp") || gaf1.opt_fields.at("tp").second == "P";
@@ -50,10 +55,17 @@ static bool dominates(const GafRecord& gaf1, const GafRecord& gaf2, double ratio
     return false;
 }
 
+// test if one record "dominates" another, using same logic as mzgaf2paf 
+static bool dominates_mzgaf2paf(const GafRecord& gaf1, const GafRecord& gaf2, int64_t query_overlap_threshold) {
+    return (gaf1.block_length >= query_overlap_threshold && gaf2.block_length < query_overlap_threshold ||
+            gaf1.block_length < query_overlap_threshold && gaf2.block_length < query_overlap_threshold);
+}
+
 // measure the overlap
 static int64_t overlap_size(const GafRecord& gaf1, const GafRecord& gaf2) {
     int64_t ostart = std::max(gaf1.query_start, gaf2.query_start);
     int64_t oend = std::min(gaf1.query_end, gaf2.query_end);
+    assert(oend >= ostart);
     return oend - ostart;
 }
 
@@ -63,17 +75,26 @@ static void help(char** argv) {
          << "  1) the record is secondary and the overlapping record is primary or\n"
          << "  2) the record's MAPQ is lower than {ratio, see -r} times the overlapping record's MAPQ or\n"
          << "  3) the record's block length is less than {ratio, see -r} times larger than the overlapping record's block length (and its MAPQ isn't higher)" << endl
+         << "  Also: the -o option can be used to mimic mzgaf2paf's query overlap filter" << endl
          << endl
          << "options: " << endl
-         << "    -r, --ratio N       If two query blocks overlap, and one is Nx bigger than the other, the bigger one is kept (otherwise both deleted) [2]" << endl
-         << "    -m, --min-overlap N Ignore overlaps that consitute <N% of the length [0]" << endl
-         << "    -p, --paf           Input is PAF, not GAF" << endl;
+         << "    -r, --ratio N                   If two query blocks overlap, and one is Nx bigger than the other, the bigger one is kept (otherwise both deleted) [0]" << endl
+         << "    -m, --min-overlap N             Ignore overlaps that consitute <N% of the length [0]" << endl
+         << "    -o, --min-overlap-length N      If >= 2 query regions with size >= N overlap, ignore the query region.  If 1 query region with size >= N overlaps any regions of size <= N, ignore the smaller ones only. Works separate to -r/-m but can be used in conjunction with them to combine the two filters (0 = disable) [0]" << endl
+         << "    -q, --min-mapq N                Don't let an interval with MAPQ < N cause something to be filtered out" << endl
+         << "    -b, --min-block-length N        Don't let an interval with block length < N cause something to be filtered out" << endl
+         << "    -i, --min-identity N            Don't let an interval with identity < N cause something to be filtered out" << endl       
+         << "    -p, --paf                       Input is PAF, not GAF" << endl;
 }    
 
 int main(int argc, char** argv) {
 
-    double ratio = 2.;
+    double ratio = 0.;
     double min_overlap_pct = 0.;
+    int64_t min_overlap_len = 0;
+    int64_t min_block_len = 0;
+    int64_t min_mapq = 0;
+    double min_identity = 0;
     
     int c;
     bool is_paf = false;
@@ -83,14 +104,18 @@ int main(int argc, char** argv) {
         static const struct option long_options[] = {
             {"help", no_argument, 0, 'h'},
             {"ratio", required_argument, 0, 'r'},
-            {"min-overlap", required_argument, 0, 'm'},            
+            {"min-overlap", required_argument, 0, 'm'},
+            {"min-overlap-length", required_argument, 0, 'o'},
+            {"min-block-length", required_argument, 0, 'b'},
+            {"min-mapq", required_argument, 0, 'q'},
+            {"min-identity", required_argument, 0, 'i'},
             {"paf", no_argument, 0, 'p'},
             {0, 0, 0, 0}
         };
 
         int option_index = 0;
 
-        c = getopt_long (argc, argv, "h:r:m:p",
+        c = getopt_long (argc, argv, "h:r:m:po:b:q:i:",
                          long_options, &option_index);
 
         // Detect the end of the options.
@@ -105,9 +130,21 @@ int main(int argc, char** argv) {
         case 'm':
             min_overlap_pct = stof(optarg);
             break;
+        case 'o':
+            min_overlap_len = std::stol(optarg);
+            break;            
         case 'p':
             is_paf = true;
             break;
+        case 'b':
+            min_block_len = std::stol(optarg);
+            break;
+        case 'i':
+            min_identity = std::stof(optarg);
+            break;
+        case 'q':
+            min_mapq = std::stol(optarg);
+            break;            
         case 'h':
         case '?':
             /* getopt_long already printed an error message. */
@@ -121,6 +158,11 @@ int main(int argc, char** argv) {
 
     if (argc <= 1) {
         help(argv);
+        return 1;
+    }
+
+    if ((ratio == 0) && (min_overlap_len == 0)) {
+        cerr << "[gaffilter] error: at least one of -r or -o must be used to specify filter" << endl;
         return 1;
     }
 
@@ -184,8 +226,16 @@ int main(int argc, char** argv) {
             } else {
                 gaf_record.block_length = paf_record.num_bases;
             }
+            if (paf_record.opt_fields.count("gm")) {
+                gaf_record.matches = stol(paf_record.opt_fields.at("gm").second);
+            } else {
+                gaf_record.matches = paf_record.num_matching;
+            }
             if (paf_record.opt_fields.count("tp")) {
                 gaf_record.opt_fields["tp"] = paf_record.opt_fields.at("tp");
+            }
+            if (paf_record.opt_fields.count("rc")) {
+                gaf_record.opt_fields["rc"] = paf_record.opt_fields.at("rc");
             }
             // hack alert: hijack path_length with offset in paf_records
             gaf_record.path_length = paf_records.size() - 1;
@@ -223,26 +273,51 @@ int main(int argc, char** argv) {
     // that overlaps that isn't ratio X smaller.
     // this is a really inefficient in worst-case (where everything overlaps) but that's not at all what we expect
     for (int64_t i = 0; i < gaf_records.size(); ++i) {
-        bool is_dominant = true;
         int64_t end_point = gaf_records[i].query_end;
         if (end_point > gaf_records[i].query_start) {
             // interval tree expects closed coordinates.  but it also expects the end point >= start point
             --end_point;
         }
         vector<GafInterval> overlapping;
+        string ref_contig;
+        if (gaf_records[i].opt_fields.count("rc")) {
+            ref_contig = gaf_records[i].opt_fields.at("rc").second;
+        }
         gaf_trees[gaf_records[i].query_name]->visit_overlapping(gaf_records[i].query_start, end_point, [&](const GafInterval& interval) {
                 // filter self alignments
-                if (interval.value != &gaf_records[i]) {
-                    int64_t overlap_bases = overlap_size(gaf_records[i], *interval.value);
-                    // filter overlaps that are too small to matter (via min_overlap_pct)
-                    if (gaf_records[i].block_length == 0 ||
-                        (double)overlap_bases / (double)gaf_records[i].block_length >= min_overlap_pct) {
-                        overlapping.push_back(interval);
+                double identity = interval.value->matches ? (double)interval.value->block_length / (double)interval.value->matches  : 0;
+                assert(identity >= 0);
+                if (interval.value->opt_fields.count("gi")) {
+                    identity = min(identity, (double)stof(interval.value->opt_fields.at("gi").second));
+                }
+                if (interval.value != &gaf_records[i] &&
+                    //and mapq/block length failing alignments
+                    interval.value->mapq >= min_mapq && (interval.value->query_length <= min_block_len || interval.value->block_length >= min_block_len) &&
+                    // and identity failing alignments
+                    identity >= min_identity) {
+                    string overlap_contig;
+                    if (interval.value->opt_fields.count("rc")) {
+                        overlap_contig = interval.value->opt_fields.at("rc").second;
+                    }
+                    // also ignore things that map to different contigs
+                    if (ref_contig == overlap_contig || ref_contig.empty() || overlap_contig.empty()) {
+                        int64_t overlap_bases = overlap_size(gaf_records[i], *interval.value);
+                        // filter overlaps that are too small to matter (via min_overlap_pct)
+                        if (gaf_records[i].block_length == 0 ||
+                            (double)overlap_bases / (double)gaf_records[i].block_length >= min_overlap_pct) {
+                            overlapping.push_back(interval);
+                        }
                     }
                 }
             });
+        bool is_dominant = true;
         for (const auto& ogi : overlapping) {
-            is_dominant = is_dominant && dominates(gaf_records[i], *ogi.value, ratio);
+            if (ratio) {
+                is_dominant = dominates(gaf_records[i], *ogi.value, ratio);
+            }
+            if (is_dominant && min_overlap_len) {
+                is_dominant = dominates_mzgaf2paf(gaf_records[i], *ogi.value, min_overlap_len);
+            }
             if (!is_dominant) {
                 break;
             }
