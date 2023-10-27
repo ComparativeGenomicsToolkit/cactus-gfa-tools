@@ -329,6 +329,7 @@ int main(int argc, char** argv) {
     }
 
     // lump unselected contigs into the "other" category if desired
+    int64_t other_id = -1;
     if (!other_name.empty()) {
         if (target_to_id.empty()) {
             set_other_contig(partition.first, partition.second, visit_contig, other_name);
@@ -338,6 +339,7 @@ int main(int argc, char** argv) {
         visit_contig = [&](const string&) -> bool {
             return true;
         };
+        other_id = partition.second.size();
     }
     
     // set the ambigious name
@@ -379,7 +381,7 @@ int main(int argc, char** argv) {
         }
         paf_split(input_paf_path, name_to_refid, partition.second, visit_contig, output_prefix,
                   cov_threshold_map, min_query_uniqueness,
-                  min_query_chunk, allow_softclip,
+                  min_query_chunk, allow_softclip, other_id,
                   ambiguous_id, reference_prefix, query_mask_stats, max_gap, min_mapq, log_stream);
     }
 
