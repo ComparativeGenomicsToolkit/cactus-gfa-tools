@@ -231,6 +231,7 @@ void paf_split(const string& input_paf_path,
                double min_query_uniqueness,
                int64_t min_query_chunk,
                bool allow_softclip,
+               int64_t other_id,
                int64_t ambiguous_id,
                const string& reference_prefix,
                const unordered_map<string, int64_t>& mask_stats,
@@ -296,14 +297,20 @@ void paf_split(const string& input_paf_path,
     // (if min_query_chunk is set, this is generalized to chunks of the query)
     unordered_map<string, CoverageIntervalTree> query_ref_map;
 
+    // index contigs vector by name (only used for rescuing unmapped ref contigs)
+    unordered_map<string, int64_t> ref_name_to_id;
+
     if (min_query_chunk <= 0) {
         // this is the "old" way where the entire query contig is mapped to a single reference
         for (auto& query_coverage : coverage_map) {
             int64_t max_coverage = 0;
-            int64_t max_id;
+            int64_t max_id = ambiguous_id;
             int64_t next_coverage = 0;
             int64_t next_id;
-        
+
+            bool is_ref = !reference_prefix.empty() &&
+               query_coverage.first.substr(0, reference_prefix.length()) == reference_prefix;
+       
             // find the highest coverage
             for (auto& ref_coverage : query_coverage.second) {
                 int64_t total_ref_coverage = 0;
@@ -320,6 +327,24 @@ void paf_split(const string& input_paf_path,
                     next_coverage = total_ref_coverage;
                 }
             }
+            // do our best to place our unmapped ref contig
+            // this functionality was somehow lost in a refactor of the python, so do it here
+            if (is_ref && max_id == ambiguous_id) {
+                // build index on demand
+                if (ref_name_to_id.empty()) {
+                    for (int64_t rci = 0 ; rci < contigs.size(); ++rci) {
+                        ref_name_to_id[contigs[rci]] = rci;
+                    }
+                }
+                // name in contigs vector do not necessarily have prefix
+                string strip_name = strip_prefix(query_coverage.first);
+                if (ref_name_to_id.count(strip_name)) {
+                    max_id = ref_name_to_id.at(strip_name);
+                } else if (other_id != -1) {
+                    max_id = other_id;
+                }
+            }
+            
             // check if it's good enough
             int64_t query_length = query_lengths[query_coverage.first];
             if (mask_stats.count(query_coverage.first)) {
@@ -334,15 +359,17 @@ void paf_split(const string& input_paf_path,
             }
             double query_coverage_fraction = (double)max_coverage / query_length;
             double min_coverage = cov_threshold_map.upper_bound(query_length)->second;
-            bool is_ref = !reference_prefix.empty() &&
-                query_coverage.first.substr(0, reference_prefix.length()) == reference_prefix;
             if (!is_ref && (query_coverage_fraction < min_coverage || 
                             (next_coverage > 0 && max_coverage < (double)next_coverage * min_query_uniqueness))) {
                 log_stream << "Query contig is ambiguous: ";
                 max_id = ambiguous_id;
                 assert(max_id >= 0 && max_id < contigs.size());
             } else {
-                log_stream << "Assigned contig to " << contigs[max_id] << ": ";
+                log_stream << "Assigned ";
+                if (is_ref) {
+                    log_stream << "ref-";
+                }
+                log_stream << "contig to " << contigs[max_id] << ": ";
             }
             log_stream << query_coverage.first 
                        << "  len=" << query_length << " cov=" << query_coverage_fraction << " (vs " << min_coverage << ") ";
