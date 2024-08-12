@@ -260,9 +260,17 @@ void paf_split(const string& input_paf_path,
         int64_t matching_bases = stol(toks[9]);
         int64_t mapq = stol(toks[11]);
 
-        // use the map to go from the target name (rgfa node id in this case) to t
-        // the reference contig (ex chr20)
-        int64_t reference_id = name_to_refid(target_name);
+        int64_t reference_id = -1;
+        try {
+            // use the map to go from the target name (rgfa node id in this case) to t
+            // the reference contig (ex chr20)
+            reference_id = name_to_refid(target_name);
+        } catch (...) {
+            // hack to support self-alignments.  they aren't used for contig assignment
+            // and just need to be ignored at this point
+            assert(query_name == target_name);
+            continue;
+        }
         
         // also count tiny indels between matches
         int64_t small_gap_bases = count_small_gap_bases(toks, max_gap_as_match);
@@ -522,12 +530,19 @@ void paf_split(const string& input_paf_path,
         int64_t query_start = stol(toks[2]);
         int64_t query_end = stol(toks[3]);
         string& target_name = toks[5];
-        target_set.insert(target_name);
 
-        // use the map to go from the target name (rgfa node id in this case) to
-        // the reference contig (ex chr20)
-        int64_t target_reference_id = name_to_refid(target_name);
-
+        int64_t target_reference_id = -1;
+        try {
+            // use the map to go from the target name (rgfa node id in this case) to t
+            // the reference contig (ex chr20)
+            target_reference_id = name_to_refid(target_name);
+            target_set.insert(target_name);
+        } catch (...) {
+            // hack to support self-alignments.  they aren't used for contig assignment
+            // and just need to be assigned via whererver the query contig goes
+            assert(query_name == target_name);
+        }
+        
         assert(query_ref_map.count(query_name));
         CoverageIntervalTree& intervals = query_ref_map.at(query_name);
         vector<CoverageInterval> overlaps = intervals.findOverlapping(query_start, query_end - 1);
@@ -544,7 +559,7 @@ void paf_split(const string& input_paf_path,
 
         // do both the query and reference sequences fall in the same chromosome, and we wnat to visit that
         // chromosome?  if so, we write the paf line, otherwise it's effectively filtered out
-        if ((reference_id == target_reference_id && visit_contig(reference_contig)) ||
+        if (((target_reference_id == -1 || reference_id == target_reference_id) && visit_contig(reference_contig)) ||
             (ambiguous_id >= 0 && reference_contig == contigs[ambiguous_id])) {
             flush_files();
             ofstream*& out_paf_stream = out_files[reference_id];
