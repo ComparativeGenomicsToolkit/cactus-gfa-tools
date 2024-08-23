@@ -541,6 +541,12 @@ void paf_split(const string& input_paf_path,
             // hack to support self-alignments.  they aren't used for contig assignment
             // and just need to be assigned via whererver the query contig goes
             assert(query_name == target_name);
+            if (!query_ref_map.count(query_name)) {
+                // if we've never seen this contig before (ie it appears in self-alignment and
+                // nothing else), then it can't be processed at all.  in this case, just
+                // forget the self-alignment (though technically it should be ambiguous, I guess)                
+                continue;
+            }            
         }
         
         assert(query_ref_map.count(query_name));
