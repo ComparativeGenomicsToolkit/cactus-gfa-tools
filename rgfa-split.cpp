@@ -532,15 +532,14 @@ void paf_split(const string& input_paf_path,
         string& target_name = toks[5];
 
         int64_t target_reference_id = -1;
-        try {
+        if (query_name != target_name) {
             // use the map to go from the target name (rgfa node id in this case) to t
             // the reference contig (ex chr20)
             target_reference_id = name_to_refid(target_name);
             target_set.insert(target_name);
-        } catch (...) {
+        } else {
             // hack to support self-alignments.  they aren't used for contig assignment
             // and just need to be assigned via whererver the query contig goes
-            assert(query_name == target_name);
             if (!query_ref_map.count(query_name)) {
                 // if we've never seen this contig before (ie it appears in self-alignment and
                 // nothing else), then it can't be processed at all.  in this case, just
