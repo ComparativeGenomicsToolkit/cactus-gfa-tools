@@ -257,6 +257,14 @@ int main(int argc, char** argv) {
         // compute from minigraph output
         check_ifile(rgfa_path);
         partition = rgfa2contig(rgfa_path);
+        // hack to support rc tags coming from stable pafs
+        for (int64_t i = 0; i < partition.second.size(); ++i) {
+            if (!target_to_id.count(partition.second[i])) {
+                target_to_id[partition.second[i]] = i;
+            } else {
+                assert(target_to_id[partition.second[i]] == i);
+            }
+        }
     } else if (!input_contig_map_path.empty()) {
         // load table
         check_ifile(input_contig_map_path);
@@ -365,11 +373,17 @@ int main(int argc, char** argv) {
         function<int64_t(const string&)> name_to_refid;
         if (!rgfa_path.empty()) {
             name_to_refid = [&](const string& target_name) {
-                // use the map to go from the target name (rgfa node id in this case) to t
-                // the reference contig (ex chr20)
-                int64_t target_id = node_id(target_name);
-                assert(partition.first.count(target_id));
-                int64_t reference_id = partition.first.at(target_id);
+                int64_t reference_id;
+                if (target_to_id.count(target_name)) {
+                    // hack to allow rc tag override
+                    reference_id = target_to_id[target_name];
+                } else {
+                    // use the map to go from the target name (rgfa node id in this case) to t
+                    // the reference contig (ex chr20)                    
+                    int64_t target_id = node_id(target_name);
+                    assert(partition.first.count(target_id));
+                    reference_id = partition.first.at(target_id);
+                }
                 return reference_id;
             };
         } else {

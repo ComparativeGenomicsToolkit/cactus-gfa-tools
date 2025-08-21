@@ -106,9 +106,10 @@ static vector<pair<MGSeq, pair<int64_t, int64_t>>>  get_unstable_interval(const 
     return unstable_intervals;
 }
     
-static void gaf2unstable(const unordered_map<string, set<MGSeq>>& lookup,
-                         const pair<unordered_map<int64_t, int64_t>, vector<string>>& partition,
-                         GafRecord& gaf_record) {
+static GafRecord gaf2unstable(const unordered_map<string, set<MGSeq>>& lookup,
+                              const pair<unordered_map<int64_t, int64_t>, vector<string>>& partition,
+                              const GafRecord& input_gaf_record) {
+    GafRecord gaf_record = input_gaf_record;
     vector<GafStep> unstable_path;
     for (auto& step : gaf_record.path) {
 
@@ -172,6 +173,8 @@ static void gaf2unstable(const unordered_map<string, set<MGSeq>>& lookup,
     if (ref_ids.size() == 1) {
         gaf_record.opt_fields["rc"] = make_pair("Z", partition.second.at(*ref_ids.begin()));
     }
+    
+    return gaf_record;
 }
 
 void help(char** argv) {
@@ -180,13 +183,15 @@ void help(char** argv) {
        << endl
        << "options: " << endl
        << "    -g, --rGFA FILE           (uncompressed) minigraph rGFA, required to look up unstable mappings" << endl
-       << "    -o, --out-lengths FILE    Output lengths of all minigraph sequences in given file (can be passed to gaf2paf)" << endl;
+       << "    -o, --out-lengths FILE    Output lengths of all minigraph sequences in given file (can be passed to gaf2paf)" << endl
+       << "    -r, --rc-tag-only         Only add rc (ref contig tags), don't actually convert to unstable" << endl;
 }    
 
 int main(int argc, char** argv) {
 
     string rgfa_path;
     string node_lengths_path;
+    bool rc_only;
     int c;
     optind = 1; 
     while (true) {
@@ -195,12 +200,13 @@ int main(int argc, char** argv) {
             {"help", no_argument, 0, 'h'},
             {"rgfa", required_argument, 0, 'g'},
             {"out-lengths", required_argument, 0, '0'},
+            {"rc-tag-only", no_argument, 0, 'r'},
             {0, 0, 0, 0}
         };
 
         int option_index = 0;
 
-        c = getopt_long (argc, argv, "hg:o:",
+        c = getopt_long (argc, argv, "hg:o:r",
                          long_options, &option_index);
 
         // Detect the end of the options.
@@ -215,6 +221,9 @@ int main(int argc, char** argv) {
             break;
         case 'o':
             node_lengths_path = optarg;
+            break;
+        case 'r':
+            rc_only = true;
             break;
         case '?':
             /* getopt_long already printed an error message. */
@@ -293,8 +302,13 @@ int main(int argc, char** argv) {
             continue;
         }
         parse_gaf_record(line_buffer, gaf_record);
-        gaf2unstable(lookup, partition, gaf_record);
-        cout << gaf_record << "\n";
+        GafRecord unstable_gaf_record = gaf2unstable(lookup, partition, gaf_record);
+        if (rc_only) {
+            gaf_record.opt_fields = unstable_gaf_record.opt_fields;
+            cout << gaf_record << "\n";
+        } else {
+            cout << unstable_gaf_record << "\n";
+        }
     }
 
     return 0;

@@ -9,6 +9,7 @@
 #include <functional>
 #include <map>
 #include "IntervalTree.h"
+#include "paf.hpp"
 
 using namespace std;
 
@@ -85,7 +86,7 @@ inline int64_t node_id(const string& rgfa_id) {
 /**
  * Count up bases of small indels bookended by matches, which we will apply to the coverage
  */
-int64_t count_small_gap_bases(const vector<string>& toks, int64_t max_gap_as_match);
+int64_t count_small_gap_bases(const PafLine& paf_rec, int64_t max_gap_as_match);
 
 /**
  * Keep track of PAF coverage by remembering intervals (generalizes previous logic that
@@ -110,7 +111,7 @@ void smooth_query_intervals(const string& query_name, int64_t query_length, int6
 /**
  * Rename the query contig to a sub-fragment in order to reflect the fact that it will be cut in the output
  */
-void apply_paf_query_offsets(vector<string>& paf_toks, int64_t query_fragment_start, int64_t query_fragment_end); 
+void apply_paf_query_offsets(PafLine& paf_rec, int64_t query_fragment_start, int64_t query_fragment_end); 
 
 
 // TODO: make consisten with vg's naming scheme (requires change in grpahmap-split that would postprocess faidx output)

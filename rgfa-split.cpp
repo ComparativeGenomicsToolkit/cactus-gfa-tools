@@ -250,42 +250,50 @@ void paf_split(const string& input_paf_path,
 
     string paf_line;
     while (getline(input_paf_stream, paf_line)) {
-        vector<string> toks;
-        split_delims(paf_line, "\t\n", toks);
-
+         
         // parse the paf columns
-        string& query_name = toks[0];
-        int64_t query_length = stol(toks[1]);
-        string& target_name = toks[5];
-        int64_t matching_bases = stol(toks[9]);
-        int64_t mapq = stol(toks[11]);
+        PafLine paf_rec = parse_paf_line(paf_line);
 
         int64_t reference_id = -1;
         try {
             // use the map to go from the target name (rgfa node id in this case) to t
             // the reference contig (ex chr20)
-            reference_id = name_to_refid(target_name);
+            reference_id = name_to_refid(paf_rec.target_name);
         } catch (...) {
-            // hack to support self-alignments.  they aren't used for contig assignment
-            // and just need to be ignored at this point
-            assert(query_name == target_name);
-            continue;
+            // use rc tag if available
+            if (paf_rec.opt_fields.count("rc")) {
+                // we rely on the rc tags being in the table by virtue of
+                // the ref-to-ref mapping added after its creation
+                string ref_contig_name = paf_rec.opt_fields["rc"].second;
+                reference_id = name_to_refid(ref_contig_name);
+#ifdef debug
+                cerr << "Found rc-based Reference ID " << reference_id << " for target " << paf_rec.target_name << endl;
+#endif                
+            } else {
+                // hack to support self-alignments.  they aren't used for contig assignment
+                // and just need to be ignored at this point
+                // note that this codepath is for the --collapse option but a similar scenario
+                // can come from stable paf (which should be caught with the rc check above)
+                assert(paf_rec.query_name == paf_rec.target_name);
+                continue;
+            }
         }
         
         // also count tiny indels between matches
-        int64_t small_gap_bases = count_small_gap_bases(toks, max_gap_as_match);
+        int64_t small_gap_bases = count_small_gap_bases(paf_rec, max_gap_as_match);
 
         // zero out the coverage if mapq too small
-        int64_t effective_coverage = mapq >= min_mapq ? matching_bases + small_gap_bases : 0;
+        int64_t effective_coverage = paf_rec.mapq >= min_mapq ? paf_rec.num_matching + small_gap_bases : 0;
             
         // add the coverage of this reference contig to this query contig
         // note: important to use matching_bases here instead of just the query interval
         //       to account for softclips which can have a big impact
-        coverage_map[query_name][reference_id].emplace_back(stol(toks[2]), stol(toks[3]) - 1, make_pair(effective_coverage, 0));
+        coverage_map[paf_rec.query_name][reference_id].emplace_back(paf_rec.query_start, paf_rec.query_end - 1,
+                                                                    make_pair(effective_coverage, 0));
 
         // store the query length (todo: we could save a few bytes by
         // sticking it in the coverage map somewhere)
-        query_lengths[query_name] = query_length;
+        query_lengths[paf_rec.query_name] = paf_rec.query_len;
     }
 
     // merge the coverage intervals
@@ -480,7 +488,8 @@ void paf_split(const string& input_paf_path,
 #ifdef debug
             cerr << "intervals for " << query_ref.first << endl;
             query_ref.second.visit_all([&](const CoverageInterval& interval) {
-                    cerr << " " << interval << endl;
+                cerr << " " << interval.start << "-" <<interval.stop << " => " << interval.value.first
+                     << "," << interval.value.second << endl;
                 });
             cerr << "." << endl;
 #endif
@@ -522,25 +531,29 @@ void paf_split(const string& input_paf_path,
     vector<bool> pafs_written(contigs.size(), false);
 
     while (getline(input_paf_stream, paf_line)) {
-        vector<string> toks;
-        split_delims(paf_line, "\t\n", toks);
-
-        // parse the paf columns
-        string& query_name = toks[0];
-        int64_t query_start = stol(toks[2]);
-        int64_t query_end = stol(toks[3]);
-        string& target_name = toks[5];
-
+        PafLine paf_rec = parse_paf_line(paf_line);
+        
         int64_t target_reference_id = -1;
-        if (query_name != target_name) {
-            // use the map to go from the target name (rgfa node id in this case) to t
-            // the reference contig (ex chr20)
-            target_reference_id = name_to_refid(target_name);
-            target_set.insert(target_name);
+        if (paf_rec.query_name != paf_rec.target_name || paf_rec.opt_fields.count("rc")) {
+            try {
+                // use the map to go from the target name (rgfa node id in this case) to t
+                // the reference contig (ex chr20)
+                target_reference_id = name_to_refid(paf_rec.target_name);
+            } catch (...) {
+                // use rc tag (only way we should be able to get here
+                assert(paf_rec.opt_fields.count("rc"));
+                if (paf_rec.opt_fields.count("rc")) {
+                    // we rely on the rc tags being in the table by virtue of
+                    // the ref-to-ref mapping added after its creation
+                    string ref_contig_name = paf_rec.opt_fields["rc"].second;
+                    target_reference_id = name_to_refid(ref_contig_name);
+                }
+            }                
+            target_set.insert(paf_rec.target_name);
         } else {
             // hack to support self-alignments.  they aren't used for contig assignment
             // and just need to be assigned via whererver the query contig goes
-            if (!query_ref_map.count(query_name)) {
+            if (!query_ref_map.count(paf_rec.query_name)) {
                 // if we've never seen this contig before (ie it appears in self-alignment and
                 // nothing else), then it can't be processed at all.  in this case, just
                 // forget the self-alignment (though technically it should be ambiguous, I guess)                
@@ -548,9 +561,9 @@ void paf_split(const string& input_paf_path,
             }            
         }
         
-        assert(query_ref_map.count(query_name));
-        CoverageIntervalTree& intervals = query_ref_map.at(query_name);
-        vector<CoverageInterval> overlaps = intervals.findOverlapping(query_start, query_end - 1);
+        assert(query_ref_map.count(paf_rec.query_name));
+        CoverageIntervalTree& intervals = query_ref_map.at(paf_rec.query_name);
+        vector<CoverageInterval> overlaps = intervals.findOverlapping(paf_rec.query_start, paf_rec.query_end - 1);
 
         if (overlaps.size() > 1) {
             // the only way for this to happen is if the paf line corresponds to a query overlap that gets
@@ -577,16 +590,11 @@ void paf_split(const string& input_paf_path,
                     exit(1);
                 }
             }
-            apply_paf_query_offsets(toks, overlaps[0].start, overlaps[0].stop);
-            for (size_t i = 0; i < toks.size(); ++i) {
-                if (i > 0) {
-                    *out_paf_stream << "\t";
-                }
-                *out_paf_stream << toks[i];
-            }
-            *out_paf_stream << "\n";
+            apply_paf_query_offsets(paf_rec, overlaps[0].start, overlaps[0].stop);
+            *out_paf_stream << paf_rec << "\n";
+            
             // remember this query contig for future fasta splitting
-            query_map[reference_id].insert(query_name);
+            query_map[reference_id].insert(paf_rec.query_name);
         } 
         
     }
@@ -616,6 +624,9 @@ void paf_split(const string& input_paf_path,
         }
         for (const string& query_name : ref_queries.second) {
             out_contigs_stream << query_name << "\n";
+#ifdef debug
+            cerr << "writing query contig " << query_name << " for ref " << reference_contig << " id=" << ref_queries.first << endl;
+#endif
         }
         out_contigs_stream.close();
     }
@@ -625,7 +636,15 @@ void paf_split(const string& input_paf_path,
     vector<string> mg_contigs;
     mg_contigs.reserve(target_set.size());
     for (const auto& target_name : target_set) {
-        mg_contigs.push_back(target_name);
+        try {
+            name_to_refid(target_name);
+            mg_contigs.push_back(target_name);
+        } catch (...) {
+            // hack out non-minigraph targets here (they were previously handled using the rc tag)
+            // todo: is this legit?
+            
+            continue;
+        }
     }
     std::sort(mg_contigs.begin(), mg_contigs.end(), [&](const string& a, const string& b) {
             return contigs[name_to_refid(a)] < contigs[name_to_refid(b)];
@@ -722,33 +741,29 @@ void gfa_split(const string& rgfa_path,
     flush_files();
 }
 
-int64_t count_small_gap_bases(const vector<string>& toks, int64_t max_gap_as_match) {
+int64_t count_small_gap_bases(const PafLine& paf_rec, int64_t max_gap_as_match) {
 
     bool after_match = false;
     int64_t running_ins = 0;
     int64_t running_del = 0;
     int64_t total_gap = 0;
-    for (int i = 12; i < toks.size(); ++i) {
-        if (toks[i].substr(0, 5) == "cg:Z:") {
-            for_each_cg(toks[i], [&](const string& val, const string& cat) {
-                    int64_t len = stol(val);
-                    if (cat == "M" || cat == "X" || cat == "=") {
-                        if (after_match && running_ins < max_gap_as_match && running_del < max_gap_as_match) {
-                            total_gap += running_ins;
-                        }
-                        running_ins = 0;
-                        running_del = 0;
-                        after_match = true;
-                    } else if (cat == "I") {
-                        running_ins += len;
-                    } else {
-                        assert(cat == "D");
-                        running_del += len;
-                    }
-                });
+            
+    for_each_cg(paf_rec.cigar, [&](const string& val, const string& cat) {
+        int64_t len = stol(val);
+        if (cat == "M" || cat == "X" || cat == "=") {
+            if (after_match && running_ins < max_gap_as_match && running_del < max_gap_as_match) {
+                total_gap += running_ins;
+            }
+            running_ins = 0;
+            running_del = 0;
+            after_match = true;
+        } else if (cat == "I") {
+            running_ins += len;
+        } else {
+            assert(cat == "D");
+            running_del += len;
         }
-    }
-
+    });
     return total_gap;
 }
 
@@ -978,41 +993,36 @@ void smooth_query_intervals(const string& query_name, int64_t query_length, int6
     }
 }
 
-void apply_paf_query_offsets(vector<string>& paf_toks, int64_t query_fragment_start, int64_t query_fragment_end) {
+void apply_paf_query_offsets(PafLine& paf_rec, int64_t query_fragment_start, int64_t query_fragment_end) {
 
-    int64_t query_length = stol(paf_toks[1]);
-
-    if (query_fragment_end - query_fragment_start + 1 == query_length) {
+    if (query_fragment_end - query_fragment_start + 1 == paf_rec.query_len) {
         assert(query_fragment_start == 0);
         // nothing to do, as the fragment spans the entire query sequence
         return;
     }
 
-    int64_t query_start = stol(paf_toks[2]);
     // note, paf coordinates are 0-based end exclusive, but internally we're always using
     // 0-based inclusive.  
-    int64_t query_end = stol(paf_toks[3]);
 
-    tuple<string, int64_t, int64_t> parsed_query_name = parse_faidx_subpath(paf_toks[0]);
+    tuple<string, int64_t, int64_t> parsed_query_name = parse_faidx_subpath(paf_rec.query_name);
     string& query_name = get<0>(parsed_query_name);
 
     // apply adjustments to convert back to coordinates on the original contig
     if (get<1>(parsed_query_name) > 0) {
-        query_start += get<1>(parsed_query_name);
-        query_end += get<1>(parsed_query_name);
+        paf_rec.query_start += get<1>(parsed_query_name);
+        paf_rec.query_end += get<1>(parsed_query_name);
     }
 
-    assert(query_fragment_start <= query_start && query_fragment_end >= query_end - 1);
+    assert(query_fragment_start <= paf_rec.query_start && query_fragment_end >= paf_rec.query_end - 1);
 
     int64_t delta = query_fragment_start;
-    int64_t adjusted_query_start = query_start - delta;
-    int64_t adjusted_query_end = query_end - delta;
+    int64_t adjusted_query_start = paf_rec.query_start - delta;
+    int64_t adjusted_query_end = paf_rec.query_end - delta;
 
-
-    paf_toks[0] = make_faidx_subpath(query_name, query_fragment_start, query_fragment_end);
-    paf_toks[1] = to_string(query_fragment_end - query_fragment_start + 1);
-    paf_toks[2] = to_string(adjusted_query_start);
-    paf_toks[3] = to_string(adjusted_query_end);
+    paf_rec.query_name = make_faidx_subpath(query_name, query_fragment_start, query_fragment_end);
+    paf_rec.query_len = query_fragment_end - query_fragment_start + 1;
+    paf_rec.query_start = adjusted_query_start;
+    paf_rec.query_end = adjusted_query_end;
 }
 
 // todo: harmonize with vg::Paths::parse_subpath_name
