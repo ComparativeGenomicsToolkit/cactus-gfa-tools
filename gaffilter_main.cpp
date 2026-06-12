@@ -98,7 +98,8 @@ int main(int argc, char** argv) {
     
     int c;
     bool is_paf = false;
-    optind = 1; 
+    bool cut_mode = false;
+    optind = 1;
     while (true) {
 
         static const struct option long_options[] = {
@@ -110,12 +111,13 @@ int main(int argc, char** argv) {
             {"min-mapq", required_argument, 0, 'q'},
             {"min-identity", required_argument, 0, 'i'},
             {"paf", no_argument, 0, 'p'},
+            {"cut", no_argument, 0, 'C'},
             {0, 0, 0, 0}
         };
 
         int option_index = 0;
 
-        c = getopt_long (argc, argv, "h:r:m:po:b:q:i:",
+        c = getopt_long (argc, argv, "h:r:m:pCo:b:q:i:",
                          long_options, &option_index);
 
         // Detect the end of the options.
@@ -135,6 +137,9 @@ int main(int argc, char** argv) {
             break;            
         case 'p':
             is_paf = true;
+            break;
+        case 'C':
+            cut_mode = true;
             break;
         case 'b':
             min_block_len = std::stol(optarg);
@@ -311,18 +316,39 @@ int main(int argc, char** argv) {
                 }
             });
         bool is_dominant = true;
+        vector<const GafRecord*> dominators;
         for (const auto& ogi : overlapping) {
+            bool dom = true;
             if (ratio) {
-                is_dominant = dominates(gaf_records[i], *ogi.value, ratio);
+                dom = dominates(gaf_records[i], *ogi.value, ratio);
             }
-            if (is_dominant && min_overlap_len) {
-                is_dominant = dominates_mzgaf2paf(gaf_records[i], *ogi.value, min_overlap_len);
+            if (dom && min_overlap_len) {
+                dom = dominates_mzgaf2paf(gaf_records[i], *ogi.value, min_overlap_len);
             }
-            if (!is_dominant) {
-                break;
+            if (!dom) {
+                is_dominant = false;
+                dominators.push_back(ogi.value);
+                if (!cut_mode) break;
             }
         }
-        if (is_dominant) {
+        bool keep = is_dominant;
+        if (!is_dominant && cut_mode) {
+            // --cut: keep the record unless its whole query span is covered by its dominators
+            int64_t qs = gaf_records[i].query_start, qe = gaf_records[i].query_end;
+            vector<pair<int64_t, int64_t> > ivls;
+            for (const GafRecord* d : dominators) {
+                int64_t a = std::max(qs, d->query_start), b = std::min(qe, d->query_end);
+                if (a < b) ivls.push_back(make_pair(a, b));
+            }
+            sort(ivls.begin(), ivls.end());
+            int64_t covered_to = qs;
+            for (size_t j = 0; j < ivls.size(); ++j) {
+                if (ivls[j].first > covered_to) break;
+                if (ivls[j].second > covered_to) covered_to = ivls[j].second;
+            }
+            keep = covered_to < qe;
+        }
+        if (keep) {
             cout << print_record(gaf_records[i]) << "\n";
         } else {
             ++filter_count;
