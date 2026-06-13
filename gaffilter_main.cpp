@@ -84,8 +84,9 @@ static void help(char** argv) {
          << "    -q, --min-mapq N                Don't let an interval with MAPQ < N cause something to be filtered out" << endl
          << "    -b, --min-block-length N        Don't let an interval with block length < N cause something to be filtered out" << endl
          << "    -i, --min-identity N            Don't let an interval with identity < N cause something to be filtered out" << endl       
-         << "    -p, --paf                       Input is PAF, not GAF" << endl;
-}    
+         << "    -p, --paf                       Input is PAF, not GAF" << endl
+         << "    -C, --cut                       Instead of dropping a non-dominant overlapping record, keep it if part of its query interval is not covered by the dominating record(s)" << endl;
+}
 
 int main(int argc, char** argv) {
 
