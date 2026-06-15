@@ -85,7 +85,8 @@ static void help(char** argv) {
          << "    -b, --min-block-length N        Don't let an interval with block length < N cause something to be filtered out" << endl
          << "    -i, --min-identity N            Don't let an interval with identity < N cause something to be filtered out" << endl       
          << "    -p, --paf                       Input is PAF, not GAF" << endl
-         << "    -C, --cut                       Instead of dropping a non-dominant overlapping record, keep it if part of its query interval is not covered by the dominating record(s)" << endl;
+         << "    -C, --cut                       Instead of dropping a non-dominant overlapping record, keep it if part of its query interval is not covered by the dominating record(s)" << endl
+         << "    -Q, --cut-min-mapq N            With --cut, only keep a non-dominant record if its own MAPQ >= N (drops paralog/repeat mismappings that lost dominance on MAPQ) [0]" << endl;
 }
 
 int main(int argc, char** argv) {
@@ -100,6 +101,7 @@ int main(int argc, char** argv) {
     int c;
     bool is_paf = false;
     bool cut_mode = false;
+    int64_t cut_min_mapq = 0;
     optind = 1;
     while (true) {
 
@@ -113,12 +115,13 @@ int main(int argc, char** argv) {
             {"min-identity", required_argument, 0, 'i'},
             {"paf", no_argument, 0, 'p'},
             {"cut", no_argument, 0, 'C'},
+            {"cut-min-mapq", required_argument, 0, 'Q'},
             {0, 0, 0, 0}
         };
 
         int option_index = 0;
 
-        c = getopt_long (argc, argv, "h:r:m:pCo:b:q:i:",
+        c = getopt_long (argc, argv, "h:r:m:pCo:b:q:i:Q:",
                          long_options, &option_index);
 
         // Detect the end of the options.
@@ -141,6 +144,9 @@ int main(int argc, char** argv) {
             break;
         case 'C':
             cut_mode = true;
+            break;
+        case 'Q':
+            cut_min_mapq = std::stol(optarg);
             break;
         case 'b':
             min_block_len = std::stol(optarg);
@@ -333,7 +339,7 @@ int main(int argc, char** argv) {
             }
         }
         bool keep = is_dominant;
-        if (!is_dominant && cut_mode) {
+        if (!is_dominant && cut_mode && gaf_records[i].mapq >= cut_min_mapq) {
             // --cut: keep the record unless its whole query span is covered by its dominators
             int64_t qs = gaf_records[i].query_start, qe = gaf_records[i].query_end;
             vector<pair<int64_t, int64_t> > ivls;
