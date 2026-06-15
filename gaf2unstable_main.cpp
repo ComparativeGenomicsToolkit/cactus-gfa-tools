@@ -191,7 +191,7 @@ int main(int argc, char** argv) {
 
     string rgfa_path;
     string node_lengths_path;
-    bool rc_only;
+    bool rc_only = false;
     int c;
     optind = 1; 
     while (true) {
