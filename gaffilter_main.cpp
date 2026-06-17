@@ -6,6 +6,7 @@
 #include <getopt.h>
 #include <fstream>
 #include <unordered_map>
+#include <unordered_set>
 #include <algorithm>
 #include <list>
 #include <cassert>
@@ -86,7 +87,8 @@ static void help(char** argv) {
          << "    -i, --min-identity N            Don't let an interval with identity < N cause something to be filtered out" << endl       
          << "    -p, --paf                       Input is PAF, not GAF" << endl
          << "    -C, --cut                       Instead of dropping a non-dominant overlapping record, keep it if part of its query interval is not covered by the dominating record(s)" << endl
-         << "    -Q, --cut-min-mapq N            With --cut, only keep a non-dominant record if its own MAPQ >= N (drops paralog/repeat mismappings that lost dominance on MAPQ) [0]" << endl;
+         << "    -Q, --cut-min-mapq N            With --cut, only keep a non-dominant record if its own MAPQ >= N (drops paralog/repeat mismappings that lost dominance on MAPQ) [0]" << endl
+         << "    -A, --cut-allow-nodes FILE      With --cut, only keep a non-dominant record if its target node is in FILE (one bare node id per line); restricts cutting to curated loci (e.g. inversion edges). Empty/unset = cut everywhere." << endl;
 }
 
 int main(int argc, char** argv) {
@@ -102,6 +104,7 @@ int main(int argc, char** argv) {
     bool is_paf = false;
     bool cut_mode = false;
     int64_t cut_min_mapq = 0;
+    unordered_set<string> cut_allow_nodes;
     optind = 1;
     while (true) {
 
@@ -116,12 +119,13 @@ int main(int argc, char** argv) {
             {"paf", no_argument, 0, 'p'},
             {"cut", no_argument, 0, 'C'},
             {"cut-min-mapq", required_argument, 0, 'Q'},
+            {"cut-allow-nodes", required_argument, 0, 'A'},
             {0, 0, 0, 0}
         };
 
         int option_index = 0;
 
-        c = getopt_long (argc, argv, "h:r:m:pCo:b:q:i:Q:",
+        c = getopt_long (argc, argv, "h:r:m:pCo:b:q:i:Q:A:",
                          long_options, &option_index);
 
         // Detect the end of the options.
@@ -148,6 +152,19 @@ int main(int argc, char** argv) {
         case 'Q':
             cut_min_mapq = std::stol(optarg);
             break;
+        case 'A':
+        {
+            ifstream allow_file(optarg);
+            if (!allow_file) {
+                cerr << "[gaffilter] error: unable to open --cut-allow-nodes file: " << optarg << endl;
+                exit(1);
+            }
+            string allow_node;
+            while (allow_file >> allow_node) {
+                cut_allow_nodes.insert(allow_node);
+            }
+            break;
+        }
         case 'b':
             min_block_len = std::stol(optarg);
             break;
@@ -280,6 +297,23 @@ int main(int argc, char** argv) {
     int64_t filter_count = 0;
     int64_t filter_len_count = 0;
         
+    // --cut-allow-nodes: restrict --cut span-keeping to records whose target node is in the allowlist.
+    // bare node id = everything after the last '|' (e.g. id=_MINIGRAPH_|s123 -> s123).  empty allowlist => allow all.
+    auto bare_node = [](const string& n) -> string {
+        size_t p = n.rfind('|');
+        return p == string::npos ? n : n.substr(p + 1);
+    };
+    auto cut_allowed = [&](int64_t idx) -> bool {
+        if (cut_allow_nodes.empty()) return true;
+        if (is_paf) {
+            return cut_allow_nodes.count(bare_node(paf_records[gaf_records[idx].path_length].target_name)) > 0;
+        }
+        for (const auto& step : gaf_records[idx].path) {
+            if (cut_allow_nodes.count(bare_node(step.name)) > 0) return true;
+        }
+        return false;
+    };
+
     // simple algorithm:
     // for each record, scan its overlaps and flag it if it finds anything
     // that overlaps that isn't ratio X smaller.
@@ -339,7 +373,7 @@ int main(int argc, char** argv) {
             }
         }
         bool keep = is_dominant;
-        if (!is_dominant && cut_mode && gaf_records[i].mapq >= cut_min_mapq) {
+        if (!is_dominant && cut_mode && gaf_records[i].mapq >= cut_min_mapq && cut_allowed(i)) {
             // --cut: keep the record unless its whole query span is covered by its dominators
             int64_t qs = gaf_records[i].query_start, qe = gaf_records[i].query_end;
             vector<pair<int64_t, int64_t> > ivls;
