@@ -2,6 +2,7 @@
 #include <getopt.h>
 
 #include "pafmask.hpp"
+#include "pafcoverage.hpp"
 
 void help(char** argv) {
   cerr << "usage: " << argv[0] << " [options] <paf> <bed>" << endl
@@ -14,6 +15,10 @@ void help(char** argv) {
 }    
 
 int main(int argc, char** argv) {
+    // the result goes to standard output, and a failed write there is
+    // otherwise reported to nobody
+    check_stdout_at_exit();
+
 
     int64_t min_length = 1;
     int64_t padding = 100;

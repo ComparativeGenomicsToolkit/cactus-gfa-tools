@@ -24,6 +24,10 @@ void help(char** argv) {
 }    
 
 int main(int argc, char** argv) {
+    // the result goes to standard output, and a failed write there is
+    // otherwise reported to nobody
+    check_stdout_at_exit();
+
 
     string rgfa_path;
     int64_t max_rank = 0;

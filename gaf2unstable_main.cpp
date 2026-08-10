@@ -9,6 +9,7 @@
 #include "gfakluge.hpp"
 #include "gafkluge.hpp"
 #include "rgfa-split.hpp"
+#include "pafcoverage.hpp"
 
 //#define debug
 
@@ -184,6 +185,10 @@ void help(char** argv) {
 }    
 
 int main(int argc, char** argv) {
+    // the result goes to standard output, and a failed write there is
+    // otherwise reported to nobody
+    check_stdout_at_exit();
+
 
     string rgfa_path;
     string node_lengths_path;

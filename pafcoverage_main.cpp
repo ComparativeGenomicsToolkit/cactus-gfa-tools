@@ -18,6 +18,10 @@ void help(char** argv) {
 }    
 
 int main(int argc, char** argv) {
+    // the result goes to standard output, and a failed write there is
+    // otherwise reported to nobody
+    check_stdout_at_exit();
+
 
     string query_prefix;
     bool print_gaps = false;

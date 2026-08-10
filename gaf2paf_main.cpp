@@ -13,6 +13,7 @@
 
 #include "gafkluge.hpp"
 #include "paf.hpp"
+#include "pafcoverage.hpp"
 
 //#define debug
 
@@ -272,6 +273,10 @@ static void help(char** argv) {
 }    
 
 int main(int argc, char** argv) {
+    // the result goes to standard output, and a failed write there is
+    // otherwise reported to nobody
+    check_stdout_at_exit();
+
 
     string rgfa_path;
     string lengths_path;

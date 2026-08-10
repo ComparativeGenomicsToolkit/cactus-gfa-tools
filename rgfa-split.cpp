@@ -599,9 +599,20 @@ void paf_split(const string& input_paf_path,
         }
     }
 
-    // clean up the files
+    // clean up the files;  the delete is what closes them, and closing is
+    // where the last buffered records reach the operating system, so its
+    // failure has to be looked at rather than discarded with the object
     for (auto& ref_stream : out_files) {
-        delete ref_stream.second;
+        ofstream *out_paf_stream = ref_stream.second;
+        out_paf_stream->flush();
+        out_paf_stream->close();
+        bool failed = out_paf_stream->fail() || out_paf_stream->bad();
+        delete out_paf_stream;
+        if (failed) {
+            cerr << "error: failed to write output paf file: " << output_prefix
+                 << contigs[ref_stream.first] << ".paf" << endl;
+            exit(1);
+        }
     }
     out_files.clear();
 
@@ -718,8 +729,27 @@ void gfa_split(const string& rgfa_path,
         }
     }
 
-    // clean up the files
-    flush_files();
+    // Clean up the files.
+    //
+    // flush_files() only closes anything once more than a hundred are open,
+    // because it exists to stay under the descriptor limit.  Ending here with
+    // just that call left every stream leaked and unflushed whenever the split
+    // produced a hundred files or fewer -- which is the normal case -- so the
+    // tail of each output gfa was silently dropped, one buffer's worth, and
+    // the short file it left is still a parseable gfa.
+    for (auto& ref_stream : out_files) {
+        ofstream *out_gfa_stream = ref_stream.second;
+        out_gfa_stream->flush();
+        out_gfa_stream->close();
+        bool failed = out_gfa_stream->fail() || out_gfa_stream->bad();
+        delete out_gfa_stream;
+        if (failed) {
+            cerr << "error: failed to write output gfa file: " << output_prefix
+                 << contigs[ref_stream.first] << ".gfa" << endl;
+            exit(1);
+        }
+    }
+    out_files.clear();
 }
 
 int64_t count_small_gap_bases(const vector<string>& toks, int64_t max_gap_as_match) {
