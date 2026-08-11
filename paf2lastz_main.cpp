@@ -6,6 +6,7 @@
 #include <vector>
 
 #include "paf2lastz.hpp"
+#include "pafcoverage.hpp"
 
 using namespace std;
 
@@ -19,6 +20,10 @@ void help(char** argv) {
 }    
 
 int main(int argc, char** argv) {
+    // the result goes to standard output, and a failed write there is
+    // otherwise reported to nobody
+    check_stdout_at_exit();
+
 
     bool mapq_score = false;
     string secondary_path;
@@ -123,6 +128,13 @@ int main(int argc, char** argv) {
             }
         }
     }
-    
+
+    // closing is where the last buffered records reach the operating system,
+    // and leaving it to the destructor would discard a failure there
+    if (!close_output_file(secondary_file)) {
+        cerr << "[paf2lastz] error: failed to write secondary-file: " << secondary_path << endl;
+        return 1;
+    }
+
     return 0;
 }

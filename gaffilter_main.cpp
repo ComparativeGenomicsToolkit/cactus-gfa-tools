@@ -13,6 +13,7 @@
 #include "gafkluge.hpp"
 #include "paf.hpp"
 #include "IntervalTree.h"
+#include "pafcoverage.hpp"
 
 //#define debug
 
@@ -88,6 +89,10 @@ static void help(char** argv) {
 }    
 
 int main(int argc, char** argv) {
+    // the result goes to standard output, and a failed write there is
+    // otherwise reported to nobody
+    check_stdout_at_exit();
+
 
     double ratio = 0.;
     double min_overlap_pct = 0.;

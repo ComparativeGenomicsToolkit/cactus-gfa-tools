@@ -42,6 +42,10 @@ void help(char** argv) {
 }    
 
 int main(int argc, char** argv) {
+    // the result goes to standard output, and a failed write there is
+    // otherwise reported to nobody
+    check_stdout_at_exit();
+
 
     // input
     string rgfa_path;
@@ -285,6 +289,12 @@ int main(int argc, char** argv) {
         }
         for (auto& node_contig : partition.first) {
             output_contig_map_file << "S" << node_contig.first << "\t" << partition.second[node_contig.second] << "\n";
+        }
+        // the destructor would close this and discard any failure
+        if (!close_output_file(output_contig_map_file)) {
+            cerr << "[rgfa-split] error: failed to write output contig map file \""
+                 << output_contig_map_path << "\"" << endl;
+            return 1;
         }
     }
 
