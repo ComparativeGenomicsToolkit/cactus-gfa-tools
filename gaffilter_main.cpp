@@ -62,6 +62,20 @@ static bool dominates_mzgaf2paf(const GafRecord& gaf1, const GafRecord& gaf2, in
             gaf1.block_length < query_overlap_threshold && gaf2.block_length < query_overlap_threshold);
 }
 
+// do two records land on the same reference contig?  a record spanning more than one rank-0
+// contig carries no rc tag, and is treated as matching anything -- exactly as the original
+// same-contig test in the overlap loop did.
+static bool same_ref_contig(const GafRecord& gaf1, const GafRecord& gaf2) {
+    string rc1, rc2;
+    if (gaf1.opt_fields.count("rc")) {
+        rc1 = gaf1.opt_fields.at("rc").second;
+    }
+    if (gaf2.opt_fields.count("rc")) {
+        rc2 = gaf2.opt_fields.at("rc").second;
+    }
+    return rc1 == rc2 || rc1.empty() || rc2.empty();
+}
+
 // measure the overlap
 static int64_t overlap_size(const GafRecord& gaf1, const GafRecord& gaf2) {
     int64_t ostart = std::max(gaf1.query_start, gaf2.query_start);
@@ -85,7 +99,10 @@ static void help(char** argv) {
          << "    -q, --min-mapq N                Don't let an interval with MAPQ < N cause something to be filtered out" << endl
          << "    -b, --min-block-length N        Don't let an interval with block length < N cause something to be filtered out" << endl
          << "    -i, --min-identity N            Don't let an interval with identity < N cause something to be filtered out" << endl       
-         << "    -p, --paf                       Input is PAF, not GAF" << endl;
+         << "    -p, --paf                       Input is PAF, not GAF" << endl
+         << "    -x, --cross-contig-max-mapq N   Let records on a *different* reference contig (rc:Z:) act as dominators," << endl
+         << "                                    but only against records with MAPQ < N, and only when they strictly win." << endl
+         << "                                    Cross-contig ties never delete either side (0 = disable) [0]" << endl;
 }    
 
 int main(int argc, char** argv) {
@@ -100,6 +117,7 @@ int main(int argc, char** argv) {
     int64_t min_block_len = 0;
     int64_t min_mapq = 0;
     double min_identity = 0;
+    int64_t cross_contig_max_mapq = 0;
     
     int c;
     bool is_paf = false;
@@ -115,12 +133,13 @@ int main(int argc, char** argv) {
             {"min-mapq", required_argument, 0, 'q'},
             {"min-identity", required_argument, 0, 'i'},
             {"paf", no_argument, 0, 'p'},
+            {"cross-contig-max-mapq", required_argument, 0, 'x'},
             {0, 0, 0, 0}
         };
 
         int option_index = 0;
 
-        c = getopt_long (argc, argv, "h:r:m:po:b:q:i:",
+        c = getopt_long (argc, argv, "h:r:m:po:b:q:i:x:",
                          long_options, &option_index);
 
         // Detect the end of the options.
@@ -149,6 +168,9 @@ int main(int argc, char** argv) {
             break;
         case 'q':
             min_mapq = std::stol(optarg);
+            break;
+        case 'x':
+            cross_contig_max_mapq = std::stol(optarg);
             break;            
         case 'h':
         case '?':
@@ -304,8 +326,11 @@ int main(int argc, char** argv) {
                     if (interval.value->opt_fields.count("rc")) {
                         overlap_contig = interval.value->opt_fields.at("rc").second;
                     }
-                    // also ignore things that map to different contigs
-                    if (ref_contig == overlap_contig || ref_contig.empty() || overlap_contig.empty()) {
+                    // records on different reference contigs are normally not compared at all (that
+                    // decision belongs to rgfa-split, which needs both coverages to bin the contig).
+                    // -x lets them in, but only ever as a dominator -- see the loop below.
+                    if (ref_contig == overlap_contig || ref_contig.empty() || overlap_contig.empty() ||
+                        cross_contig_max_mapq > 0) {
                         int64_t overlap_bases = overlap_size(gaf_records[i], *interval.value);
                         // filter overlaps that are too small to matter (via min_overlap_pct)
                         if (gaf_records[i].block_length == 0 ||
@@ -317,11 +342,23 @@ int main(int argc, char** argv) {
             });
         bool is_dominant = true;
         for (const auto& ogi : overlapping) {
-            if (ratio) {
-                is_dominant = dominates(gaf_records[i], *ogi.value, ratio);
-            }
-            if (is_dominant && min_overlap_len) {
-                is_dominant = dominates_mzgaf2paf(gaf_records[i], *ogi.value, min_overlap_len);
+            if (!same_ref_contig(gaf_records[i], *ogi.value)) {
+                // cross-contig: only a strict loss counts, so a tie leaves both records alone
+                // rather than deleting them both.  and only when this record is not uniquely
+                // mapped -- a confident alignment that is merely shorter is not the bad one.
+                // note dominates() returns false both for "the other one wins" and for "neither
+                // wins", so the strict form has to be asked for in this direction.
+                if (ratio && gaf_records[i].mapq < cross_contig_max_mapq &&
+                    dominates(*ogi.value, gaf_records[i], ratio)) {
+                    is_dominant = false;
+                }
+            } else {
+                if (ratio) {
+                    is_dominant = dominates(gaf_records[i], *ogi.value, ratio);
+                }
+                if (is_dominant && min_overlap_len) {
+                    is_dominant = dominates_mzgaf2paf(gaf_records[i], *ogi.value, min_overlap_len);
+                }
             }
             if (!is_dominant) {
                 break;
