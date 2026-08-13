@@ -102,7 +102,12 @@ static void help(char** argv) {
          << "    -p, --paf                       Input is PAF, not GAF" << endl
          << "    -x, --cross-contig-max-mapq N   Let records on a *different* reference contig (rc:Z:) act as dominators," << endl
          << "                                    but only against records with MAPQ < N, and only when they strictly win." << endl
-         << "                                    Cross-contig ties never delete either side (0 = disable) [0]" << endl;
+         << "                                    Cross-contig ties never delete either side (0 = disable) [0]" << endl
+         << "                                    A record with no MAPQ (* / 255) is never removed by this: unknown" << endl
+         << "                                    confidence is not low confidence.  Requires -r." << endl
+         << "    -P, --protect-prefix STR        Never remove a record whose query name starts with STR.  It can still" << endl
+         << "                                    act as a dominator.  Used to keep the reference complete, since this" << endl
+         << "                                    tool otherwise has no notion of one [\"\"]" << endl;
 }    
 
 int main(int argc, char** argv) {
@@ -118,6 +123,7 @@ int main(int argc, char** argv) {
     int64_t min_mapq = 0;
     double min_identity = 0;
     int64_t cross_contig_max_mapq = 0;
+    string protect_prefix;
     
     int c;
     bool is_paf = false;
@@ -134,12 +140,13 @@ int main(int argc, char** argv) {
             {"min-identity", required_argument, 0, 'i'},
             {"paf", no_argument, 0, 'p'},
             {"cross-contig-max-mapq", required_argument, 0, 'x'},
+            {"protect-prefix", required_argument, 0, 'P'},
             {0, 0, 0, 0}
         };
 
         int option_index = 0;
 
-        c = getopt_long (argc, argv, "h:r:m:po:b:q:i:x:",
+        c = getopt_long (argc, argv, "h:r:m:po:b:q:i:x:P:",
                          long_options, &option_index);
 
         // Detect the end of the options.
@@ -171,6 +178,9 @@ int main(int argc, char** argv) {
             break;
         case 'x':
             cross_contig_max_mapq = std::stol(optarg);
+            break;
+        case 'P':
+            protect_prefix = optarg;
             break;            
         case 'h':
         case '?':
@@ -300,6 +310,14 @@ int main(int argc, char** argv) {
     // that overlaps that isn't ratio X smaller.
     // this is a really inefficient in worst-case (where everything overlaps) but that's not at all what we expect
     for (int64_t i = 0; i < gaf_records.size(); ++i) {
+        // protected records are never removed, but are still in the trees and so can still
+        // dominate.  this tool has no notion of a reference, while its caller exempts one from
+        // every other filter, so without this the overlap pass silently undoes that exemption
+        if (!protect_prefix.empty() &&
+            gaf_records[i].query_name.compare(0, protect_prefix.size(), protect_prefix) == 0) {
+            cout << print_record(gaf_records[i]) << "\n";
+            continue;
+        }
         int64_t end_point = gaf_records[i].query_end;
         if (end_point > gaf_records[i].query_start) {
             // interval tree expects closed coordinates.  but it also expects the end point >= start point
@@ -348,8 +366,19 @@ int main(int argc, char** argv) {
                 // mapped -- a confident alignment that is merely shorter is not the bad one.
                 // note dominates() returns false both for "the other one wins" and for "neither
                 // wins", so the strict form has to be asked for in this direction.
-                if (ratio && gaf_records[i].mapq < cross_contig_max_mapq &&
-                    dominates(*ogi.value, gaf_records[i], ratio)) {
+                //
+                // the !dominates() back-test is what makes the tie safe at every ratio.  dominates()
+                // is antisymmetric only for ratio > 1: at ratio <= 1 the MAPQ arm returns true in
+                // both directions, so without it two tied cross-contig records each delete the
+                // other -- destroying exactly the runner-up coverage the rc exemption protects.
+                //
+                // a missing MAPQ parses to -1, which is below every threshold.  that would make an
+                // unmeasured record permanently unprotectable, so require a real value: unknown
+                // confidence is not low confidence.
+                if (ratio && gaf_records[i].mapq >= 0 &&
+                    gaf_records[i].mapq < cross_contig_max_mapq &&
+                    dominates(*ogi.value, gaf_records[i], ratio) &&
+                    !dominates(gaf_records[i], *ogi.value, ratio)) {
                     is_dominant = false;
                 }
             } else {
