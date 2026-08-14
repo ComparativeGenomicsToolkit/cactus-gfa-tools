@@ -105,9 +105,10 @@ static void help(char** argv) {
          << "                                    Cross-contig ties never delete either side (0 = disable) [0]" << endl
          << "                                    A record with no MAPQ (* / 255) is never removed by this: unknown" << endl
          << "                                    confidence is not low confidence.  Requires -r." << endl
-         << "    -P, --protect-prefix STR        Never remove a record whose query name starts with STR.  It can still" << endl
-         << "                                    act as a dominator.  Used to keep the reference complete, since this" << endl
-         << "                                    tool otherwise has no notion of one [\"\"]" << endl;
+         << "    -P, --protect-prefix STR        Never remove a record whose query name starts with STR.  Overlaps are" << endl
+         << "                                    only ever compared within one query name, so this protects whole" << endl
+         << "                                    queries.  Used to keep the reference complete, since this tool" << endl
+         << "                                    otherwise has no notion of one [\"\"]" << endl;
 }    
 
 int main(int argc, char** argv) {
@@ -310,9 +311,9 @@ int main(int argc, char** argv) {
     // that overlaps that isn't ratio X smaller.
     // this is a really inefficient in worst-case (where everything overlaps) but that's not at all what we expect
     for (int64_t i = 0; i < gaf_records.size(); ++i) {
-        // protected records are never removed, but are still in the trees and so can still
-        // dominate.  this tool has no notion of a reference, while its caller exempts one from
-        // every other filter, so without this the overlap pass silently undoes that exemption
+        // this tool has no notion of a reference, while its caller exempts one from every other
+        // filter, so without this the overlap pass silently undoes that exemption.  note overlaps
+        // are only ever compared within one query name, so this protects whole queries
         if (!protect_prefix.empty() &&
             gaf_records[i].query_name.compare(0, protect_prefix.size(), protect_prefix) == 0) {
             cout << print_record(gaf_records[i]) << "\n";
