@@ -6,7 +6,7 @@ BASH_TAP_ROOT=./bash-tap
 PATH=..:$PATH
 PATH=../bin:$PATH
 
-plan tests 17
+plan tests 20
 
 # all fixtures are written here rather than checked in: they are a few lines each, and having the
 # expected geometry visible next to the assertion is the point of this file.  no external tools.
@@ -126,5 +126,30 @@ paf_line q6 50000  52000 t2 10 chrA >> $WORK/same.paf
 gaffilter $WORK/same.paf -p -r 5 -m 0 -q 5 > $WORK/same.x0 2>/dev/null
 gaffilter $WORK/same.paf -p -r 5 -m 0 -q 5 -x 60 > $WORK/same.x60 2>/dev/null
 is "$(diff -q $WORK/same.x0 $WORK/same.x60 > /dev/null; echo $?)" 0 "-x does not change same-contig results"
+
+########################################################################
+# the filter may trim, but it must not perforate.  each cross-contig removal
+# is individually justified, but one with alignment still standing on both
+# sides deletes the middle of a query and invents a breakpoint.  -m cannot see
+# this: it judges one pair at a time, and a hole is a property of the run.
+########################################################################
+
+# q7: a 40kb record loses to an off-contig one that outlives it, with kept
+# alignment before and after -- removing it would leave a 30kb hole
+paf_line q7      0 100000 t1 60 chrA  > $WORK/hole.paf
+paf_line q7 100000 140000 t2 10 chrA >> $WORK/hole.paf
+paf_line q7 130000 260000 t3 60 chrB >> $WORK/hole.paf
+paf_line q7 260000 360000 t4 60 chrA >> $WORK/hole.paf
+gaffilter $WORK/hole.paf -p -r 5 -m 0 -q 5 -x 60 > $WORK/hole.out 2>/dev/null
+is "$(count $WORK/hole.out)" 4 "a cross-contig removal that would perforate is not made"
+is "$(awk -F'\t' '$3==100000' $WORK/hole.out | wc -l | tr -d ' ')" 1 "the rescued record is the one in the middle"
+
+# q8: the same loss at the START of the query, where nothing survives before it,
+# is an end trim and must still be removed
+paf_line q8      0  40000 t1 10 chrA  > $WORK/trim2.paf
+paf_line q8   5000  40000 t2 60 chrB >> $WORK/trim2.paf
+paf_line q8  40000 140000 t3 60 chrA >> $WORK/trim2.paf
+gaffilter $WORK/trim2.paf -p -r 5 -m 0 -q 5 -x 60 > $WORK/trim2.out 2>/dev/null
+is "$(count $WORK/trim2.out)" 2 "the same loss at a query end is still removed"
 
 rm -rf $WORK

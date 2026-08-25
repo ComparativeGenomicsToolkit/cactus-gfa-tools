@@ -84,6 +84,38 @@ static int64_t overlap_size(const GafRecord& gaf1, const GafRecord& gaf2) {
     return oend - ostart;
 }
 
+// merge overlapping intervals
+static vector<pair<int64_t, int64_t>> merge_intervals(vector<pair<int64_t, int64_t>> ivs) {
+    std::sort(ivs.begin(), ivs.end());
+    vector<pair<int64_t, int64_t>> out;
+    for (const auto& iv : ivs) {
+        if (!out.empty() && iv.first <= out.back().second) {
+            out.back().second = std::max(out.back().second, iv.second);
+        } else {
+            out.push_back(iv);
+        }
+    }
+    return out;
+}
+
+// the parts of a that no interval of b covers.  b must be merged and sorted
+static vector<pair<int64_t, int64_t>> subtract_intervals(const vector<pair<int64_t, int64_t>>& a,
+                                                         const vector<pair<int64_t, int64_t>>& b) {
+    vector<pair<int64_t, int64_t>> out;
+    for (const auto& iv : a) {
+        int64_t cur = iv.first;
+        for (const auto& bv : b) {
+            if (bv.second <= cur) continue;
+            if (bv.first >= iv.second) break;
+            if (bv.first > cur) out.push_back(make_pair(cur, std::min(bv.first, iv.second)));
+            cur = std::max(cur, bv.second);
+            if (cur >= iv.second) break;
+        }
+        if (cur < iv.second) out.push_back(make_pair(cur, iv.second));
+    }
+    return out;
+}
+
 static void help(char** argv) {
     cerr << "usage: " << argv[0] << " [options] <gaf> > output.gaf" << endl
          << "Filter GAF record if its query interval overlaps another query interval and\n"
@@ -305,7 +337,14 @@ int main(int argc, char** argv) {
 
     int64_t filter_count = 0;
     int64_t filter_len_count = 0;
-        
+
+    // keep[i]: does the record survive.  cross_only[i]: it fails ONLY because of the -x
+    // cross-contig rule, so it is a candidate for the no-perforation rescue below.  a record that
+    // also loses under the ordinary same-contig rules stays removed, which keeps behaviour with
+    // -x 0 exactly as it was.
+    vector<char> keep(gaf_records.size(), 1);
+    vector<char> cross_only(gaf_records.size(), 0);
+
     // simple algorithm:
     // for each record, scan its overlaps and flag it if it finds anything
     // that overlaps that isn't ratio X smaller.
@@ -316,7 +355,6 @@ int main(int argc, char** argv) {
         // are only ever compared within one query name, so this protects whole queries
         if (!protect_prefix.empty() &&
             gaf_records[i].query_name.compare(0, protect_prefix.size(), protect_prefix) == 0) {
-            cout << print_record(gaf_records[i]) << "\n";
             continue;
         }
         int64_t end_point = gaf_records[i].query_end;
@@ -359,7 +397,10 @@ int main(int argc, char** argv) {
                     }
                 }
             });
-        bool is_dominant = true;
+        // survives the ordinary rules / survives the cross-contig rule.  both are needed rather
+        // than one flag, because the rescue may only undo a loss of the second kind
+        bool dom_same = true;
+        bool dom_cross = true;
         for (const auto& ogi : overlapping) {
             if (!same_ref_contig(gaf_records[i], *ogi.value)) {
                 // cross-contig: only a strict loss counts, so a tie leaves both records alone
@@ -380,21 +421,108 @@ int main(int argc, char** argv) {
                     gaf_records[i].mapq < cross_contig_max_mapq &&
                     dominates(*ogi.value, gaf_records[i], ratio) &&
                     !dominates(gaf_records[i], *ogi.value, ratio)) {
-                    is_dominant = false;
+                    dom_cross = false;
                 }
             } else {
+                bool d = true;
                 if (ratio) {
-                    is_dominant = dominates(gaf_records[i], *ogi.value, ratio);
+                    d = dominates(gaf_records[i], *ogi.value, ratio);
                 }
-                if (is_dominant && min_overlap_len) {
-                    is_dominant = dominates_mzgaf2paf(gaf_records[i], *ogi.value, min_overlap_len);
+                if (d && min_overlap_len) {
+                    d = dominates_mzgaf2paf(gaf_records[i], *ogi.value, min_overlap_len);
+                }
+                if (!d) {
+                    dom_same = false;
                 }
             }
-            if (!is_dominant) {
+            if (!dom_same && !dom_cross) {
                 break;
             }
         }
-        if (is_dominant) {
+        keep[i] = dom_same && dom_cross;
+        cross_only[i] = dom_same && !dom_cross;
+#ifdef debug
+        if (!keep[i]) {
+            cerr << "\nfiltering record " << i << " (" << &gaf_records[i] << ") because it doesn't dominate its "
+                 << overlapping.size() << " overlaps\n  " << print_record(gaf_records[i]) << endl;
+            int64_t ocount = 0;
+            for (const auto& ogi : overlapping) {
+                cerr << "overlap " << ocount++ << " (" << ogi.value << "):\n  " << print_record(*ogi.value) << endl;
+            }
+        }
+#endif
+    }
+
+    // the filter may trim, but it must not perforate.  each cross-contig removal above is
+    // individually justified, but a run of them with alignment still standing on both sides deletes
+    // the middle of a query and invents a breakpoint the assembly does not have.  the -m guard
+    // cannot see this: it judges one pair at a time, while a hole is a property of the run.
+    // measured against coverage rather than run boundaries, and iterated, because rescuing one run
+    // adds coverage that can turn a neighbouring end trim into an interior gap.
+    int64_t rescue_count = 0;
+    int64_t rescue_len_count = 0;
+    if (cross_contig_max_mapq > 0) {
+        unordered_map<string, vector<int64_t>> by_query;
+        for (int64_t i = 0; i < gaf_records.size(); ++i) {
+            by_query[gaf_records[i].query_name].push_back(i);
+        }
+        for (auto& q : by_query) {
+            bool converged = false;
+            for (int round = 0; round < 32 && !converged; ++round) {
+                vector<pair<int64_t, int64_t>> kept_iv, cand_iv;
+                for (int64_t i : q.second) {
+                    if (gaf_records[i].query_start >= gaf_records[i].query_end) {
+                        continue;
+                    }
+                    auto iv = make_pair(gaf_records[i].query_start, gaf_records[i].query_end);
+                    if (keep[i]) {
+                        kept_iv.push_back(iv);
+                    } else if (cross_only[i]) {
+                        cand_iv.push_back(iv);
+                    }
+                }
+                if (kept_iv.empty() || cand_iv.empty()) {
+                    break;
+                }
+                kept_iv = merge_intervals(kept_iv);
+                cand_iv = merge_intervals(cand_iv);
+                vector<pair<int64_t, int64_t>> gaps;
+                for (const auto& g : subtract_intervals(cand_iv, kept_iv)) {
+                    bool before = false;
+                    bool after = false;
+                    for (const auto& k : kept_iv) {
+                        if (k.second <= g.first) before = true;
+                        if (k.first >= g.second) after = true;
+                    }
+                    if (before && after) {
+                        gaps.push_back(g);
+                    }
+                }
+                if (gaps.empty()) {
+                    break;
+                }
+                converged = true;
+                for (int64_t i : q.second) {
+                    if (keep[i] || !cross_only[i]) {
+                        continue;
+                    }
+                    for (const auto& g : gaps) {
+                        if (g.first < gaf_records[i].query_end && gaf_records[i].query_start < g.second) {
+                            keep[i] = 1;
+                            cross_only[i] = 0;
+                            ++rescue_count;
+                            rescue_len_count += is_paf ? paf_records[i].num_bases : gaf_records[i].block_length;
+                            converged = false;
+                            break;
+                        }
+                    }
+                }
+            }
+        }
+    }
+
+    for (int64_t i = 0; i < gaf_records.size(); ++i) {
+        if (keep[i]) {
             cout << print_record(gaf_records[i]) << "\n";
         } else {
             ++filter_count;
@@ -403,14 +531,6 @@ int main(int argc, char** argv) {
             } else {
                 filter_len_count += gaf_records[i].block_length;
             }
-#ifdef debug
-            cerr << "\nfiltering record " << i << " (" << &gaf_records[i] << ") because it doesn't dominate its "
-                 << overlapping.size() << " overlaps\n  " << print_record(gaf_records[i]) << endl;
-            int64_t ocount = 0;
-            for (const auto& ogi : overlapping) {
-                cerr << "overlap " << ocount++ << " (" << ogi.value << "):\n  " << print_record(*ogi.value) << endl;
-            }
-#endif
         }
     }
 
@@ -419,5 +539,9 @@ int main(int argc, char** argv) {
     }
     
     cerr << "[gaffilter]: filtered " << filter_count << " / " << gaf_records.size() << ". total block lengths filtered: " << filter_len_count << endl;
+    if (rescue_count > 0) {
+        cerr << "[gaffilter]: kept " << rescue_count << " cross-contig record(s) (" << rescue_len_count
+             << " bp) whose removal would have punched a hole into the middle of a query" << endl;
+    }
     return 0;
 }
