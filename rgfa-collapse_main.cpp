@@ -86,12 +86,18 @@ struct Call {
     int64_t block_bp = 0, node_bp = 0;
     double ident = 0;
     string L, R;                   // snarl boundaries
-    size_t snarl_i = 0;
+    size_t snarl_i = 0, trav_i = 0;
     // the alt side in traversal coordinates, so it can be cut at the block boundary: the whole
     // ordered component, each node's [start,end) in the traversal, and the block's extent
     vector<string> trav_nodes;
     vector<pair<int64_t,int64_t>> trav_spans;
     int64_t q_start = 0, q_end = 0;
+    // The target is normally the reference, located by coordinate.  For a non-reference collapse
+    // it is another traversal's nodes -- a "representative" -- so carry them and the block's
+    // extent in that traversal's coordinates.  Empty target_nodes means the reference.
+    vector<string> target_nodes;
+    vector<pair<int64_t,int64_t>> target_spans;
+    int64_t t_start = 0, t_end = 0;
 };
 
 // RAII temp directory
@@ -126,6 +132,9 @@ static void help(char** argv) {
          << "  -C, --min-cover F      skip alleles whose block covers < F of their alt nodes.\n"
          << "                         Not needed now that alt nodes are split at the block\n"
          << "                         boundary -- only the inverted part is removed [0]\n"
+         << "  -A, --alt-rounds N     after the reference pass, collapse traversals that match no\n"
+         << "                         reference onto each other: N greedy rounds, each taking the\n"
+         << "                         longest remaining traversal in a snarl as representative [0]\n"
          << "  -D, --duplications     also collapse forward duplicates (UNSAFE without a\n"
          << "                         copy-number gate: deletes real tandem expansions) [off]\n"
          << "  -c, --max-components N skip snarls with more than N alt components [64]\n"
@@ -143,7 +152,7 @@ static void help(char** argv) {
 
 int main(int argc, char** argv) {
     int64_t min_block = 5000, max_trav = 5000000, chunk = 300;
-    int max_comp = 64, n_jobs = 4, threads = 2, mm_N = 50;
+    int max_comp = 64, n_jobs = 4, threads = 2, mm_N = 50, alt_rounds = 0;
     double min_ident = 0.95, min_alt = 0.5, min_cover = 0.0;
     bool do_dup = false, detect_only = false;
     string mm2 = "minimap2", preset = "asm20", report;
@@ -153,6 +162,7 @@ int main(int argc, char** argv) {
         static struct option lo[] = {
             {"min-block",required_argument,0,'b'},{"min-ident",required_argument,0,'i'},
             {"min-alt",required_argument,0,'a'},{"min-cover",required_argument,0,'C'},
+            {"alt-rounds",required_argument,0,'A'},
             {"duplications",no_argument,0,'D'},
             {"max-components",required_argument,0,'c'},{"max-traversal",required_argument,0,'L'},
             {"chunk",required_argument,0,'k'},{"jobs",required_argument,0,'j'},
@@ -160,13 +170,14 @@ int main(int argc, char** argv) {
             {"mm-preset",required_argument,0,'x'},
             {"minimap2",required_argument,0,'m'},{"report",required_argument,0,'r'},
             {"detect-only",no_argument,0,'d'},{"help",no_argument,0,'h'},{0,0,0,0}};
-        c = getopt_long(argc, argv, "b:i:a:C:Dc:L:k:j:t:N:x:m:r:dh", lo, 0);
+        c = getopt_long(argc, argv, "b:i:a:C:A:Dc:L:k:j:t:N:x:m:r:dh", lo, 0);
         if (c == -1) break;
         switch (c) {
             case 'b': min_block = stol(optarg); break;
             case 'i': min_ident = stod(optarg); break;
             case 'a': min_alt = stod(optarg); break;
             case 'C': min_cover = stod(optarg); break;
+            case 'A': alt_rounds = stoi(optarg); break;
             case 'D': do_dup = true; break;
             case 'c': max_comp = stoi(optarg); break;
             case 'L': max_trav = stol(optarg); break;
@@ -491,7 +502,7 @@ int main(int argc, char** argv) {
                     cl.trav_nodes = tm.nodes; cl.q_start = qs; cl.q_end = qe;
                     cl.sn = j.sn; cl.ref_start = j.lo + ts_; cl.ref_end = j.lo + te;
                     cl.inversion = (st == "-"); cl.nodes = hit; cl.block_bp = blk; cl.ident = id;
-                    cl.L = j.L; cl.R = j.R; cl.snarl_i = ji;
+                    cl.L = j.L; cl.R = j.R; cl.snarl_i = ji; cl.trav_i = ki;
                     set<string> hs;
                     for (auto& n : hit) { cl.node_bp += NI(n)->len; if (!NI(n)->sn.empty()) hs.insert(NI(n)->sn); }
                     for (auto& h : hs) { if (!cl.haps.empty()) cl.haps += ","; cl.haps += h; }
@@ -509,6 +520,142 @@ int main(int argc, char** argv) {
         });
         for (auto& th : pool) th.join();
     }
+
+    // ------------------------------------------------------------ non-reference rounds
+    //
+    // A novel insertion carried by many haplotypes is stored as many near-identical alt nodes,
+    // none matching the reference, so the pass above cannot see it (on HPRC chr15, 2.02 Mb of
+    // non-reference sequence >=1 kb has no reference match at all; on chr21, 52%).  Compare those
+    // traversals to EACH OTHER instead: greedily take the longest one in a snarl as the
+    // representative, collapse whatever matches it, and repeat on what is left.  All-vs-all would
+    // be quadratic; this is one batched pass per round over a shrinking set.
+    //
+    // Component BODIES are compared, not whole traversals -- traversals share reference flanks
+    // and would align through those whether or not the alleles are redundant.
+    if (alt_rounds > 0) {
+        set<pair<size_t,size_t>> resolved;          // (site, traversal) already collapsed or kept
+        for (auto& c : calls) resolved.insert({c.snarl_i, c.trav_i});
+        auto body_len = [&](size_t i, size_t j) {
+            int64_t L = 0; for (auto& n : jobs[i].travs[j].nodes) { auto q = NI(n); if (q) L += q->len; } return L;
+        };
+        for (int round = 1; round <= alt_rounds; ++round) {
+            struct AltJob { size_t i, repr; vector<size_t> q; };
+            vector<AltJob> aj;
+            for (size_t i = 0; i < jobs.size(); ++i) {
+                vector<size_t> open;
+                for (size_t j = 0; j < jobs[i].travs.size(); ++j)
+                    if (!resolved.count({i, j}) && body_len(i, j) >= min_block) open.push_back(j);
+                if (open.size() < 2) continue;
+                // longest wins; ties broken on the first node's name so rounds are reproducible
+                size_t best = open[0];
+                for (size_t j : open) {
+                    int64_t a = body_len(i, j), b = body_len(i, best);
+                    if (a > b || (a == b && jobs[i].travs[j].nodes[0] < jobs[i].travs[best].nodes[0]))
+                        best = j;
+                }
+                AltJob a; a.i = i; a.repr = best;
+                for (size_t j : open) if (j != best) a.q.push_back(j);
+                aj.push_back(move(a));
+            }
+            if (aj.empty()) { cerr << "[rgfa-collapse] round " << round << ": nothing left to compare\n"; break; }
+
+            size_t nchunk = (aj.size() + chunk - 1) / max<int64_t>(1, chunk);
+            atomic<size_t> next(0);
+            vector<thread> pool;
+            vector<Call> round_calls;
+            mutex rmx;
+            int J = max(1, min<int>(n_jobs, (int)max<size_t>(1, nchunk)));
+            for (int t = 0; t < J; ++t) pool.emplace_back([&, t]() {
+                while (true) {
+                    size_t ci = next++;
+                    if (ci >= nchunk) break;
+                    size_t b0 = ci * chunk, b1 = min(aj.size(), b0 + (size_t)chunk);
+                    string rf = tmp.path + "/ref" + to_string(t) + ".fa";
+                    string qf = tmp.path + "/alt" + to_string(t) + ".fa";
+                    {
+                        ofstream tf(rf), qfs(qf);
+                        for (size_t x = b0; x < b1; ++x) {
+                            const AltJob& a = aj[x];
+                            string rs; for (auto& n : jobs[a.i].travs[a.repr].nodes) rs += NI(n)->seq;
+                            tf << ">r" << x << "\n" << rs << "\n";
+                            for (size_t qi : a.q) {
+                                string qs2; for (auto& n : jobs[a.i].travs[qi].nodes) qs2 += NI(n)->seq;
+                                qfs << ">q" << x << "_" << qi << "\n" << qs2 << "\n";
+                            }
+                        }
+                    }
+                    stringstream cmd;
+                    cmd << mm2 << " -cx " << preset << " -t " << threads << " -N " << mm_N
+                        << " -p 0.01 " << rf << " " << qf << " 2>/dev/null";
+                    FILE* pf = popen(cmd.str().c_str(), "r");
+                    if (!pf) { cerr << "[rgfa-collapse] error: cannot run minimap2\n"; exit(1); }
+                    char* line = nullptr; size_t cap = 0;
+                    vector<Call> local;
+                    while (getline(&line, &cap, pf) > 0) {
+                        stringstream ss(line);
+                        string q, st, tn; int64_t ql, qs2, qe, tl, ts_, te, nm, al, mq;
+                        if (!(ss >> q >> ql >> qs2 >> qe >> st >> tn >> tl >> ts_ >> te >> nm >> al >> mq)) continue;
+                        if (q.empty() || q[0] != 'q') continue;
+                        size_t us = q.find('_');
+                        if (us == string::npos) continue;
+                        size_t xi = stoul(q.substr(1, us - 1)), qi = stoul(q.substr(us + 1));
+                        if (tn != "r" + to_string(xi) || xi >= aj.size()) continue;
+                        const AltJob& a = aj[xi];
+                        int64_t blk = qe - qs2;
+                        if (blk < min_block) continue;
+                        double id = al ? (double)nm / al : 0.0;
+                        if (id < min_ident) continue;
+                        const Job& jb = jobs[a.i];
+                        Call cl;
+                        { int64_t o2 = 0;
+                          for (auto& n : jb.travs[qi].nodes) { cl.trav_spans.push_back({o2, o2 + NI(n)->len}); o2 += NI(n)->len; }
+                          o2 = 0;
+                          for (auto& n : jb.travs[a.repr].nodes) { cl.target_spans.push_back({o2, o2 + NI(n)->len}); o2 += NI(n)->len; } }
+                        cl.trav_nodes = jb.travs[qi].nodes;
+                        cl.target_nodes = jb.travs[a.repr].nodes;
+                        cl.q_start = qs2; cl.q_end = qe; cl.t_start = ts_; cl.t_end = te;
+                        cl.sn = jb.sn; cl.ref_start = jb.lo; cl.ref_end = jb.hi;
+                        cl.inversion = (st == "-");
+                        cl.L = jb.L; cl.R = jb.R; cl.snarl_i = a.i; cl.trav_i = qi;
+                        cl.block_bp = blk; cl.ident = id;
+                        int64_t altov = 0;
+                        for (auto& pr : cl.trav_spans) {
+                            int64_t ov = min(qe, pr.second) - max(qs2, pr.first);
+                            if (ov > 0) altov += ov;
+                        }
+                        if ((double)altov / blk < min_alt) continue;
+                        for (size_t k = 0; k < cl.trav_nodes.size(); ++k)
+                            if (cl.trav_spans[k].first < qe && qs2 < cl.trav_spans[k].second)
+                                cl.nodes.push_back(cl.trav_nodes[k]);
+                        if (cl.nodes.empty()) continue;
+                        set<string> hs;
+                        for (auto& n : cl.nodes) { cl.node_bp += NI(n)->len; if (!NI(n)->sn.empty()) hs.insert(NI(n)->sn); }
+                        for (auto& h : hs) { if (!cl.haps.empty()) cl.haps += ","; cl.haps += h; }
+                        local.push_back(move(cl));
+                    }
+                    free(line);
+                    int rc = pclose(pf);
+                    if (rc != 0) { cerr << "[rgfa-collapse] error: minimap2 exited " << rc << "\n"; exit(1); }
+                    { lock_guard<mutex> g(rmx); for (auto& c2 : local) round_calls.push_back(move(c2)); }
+                }
+            });
+            for (auto& th : pool) th.join();
+            // representatives are retired whether or not anything matched them, so a later round
+            // cannot pick one again or treat it as a query
+            for (auto& a : aj) resolved.insert({a.i, a.repr});
+            int64_t added = 0, added_bp = 0;
+            for (auto& c : round_calls) {
+                if (!resolved.insert({c.snarl_i, c.trav_i}).second) continue;   // one call per traversal
+                added_bp += c.node_bp; ++added;
+                calls.push_back(move(c));
+            }
+            cerr << "[rgfa-collapse] round " << round << ": " << aj.size() << " site(s), "
+                 << added << " traversal(s) collapsed onto a non-reference representative, "
+                 << added_bp << " bp\n";
+            if (added == 0) break;
+        }
+    }
+
     cerr << "[rgfa-collapse] " << calls.size() << " raw call(s)\n";
 
     // ------------------------------------------------------------ dedup
@@ -603,6 +750,13 @@ int main(int argc, char** argv) {
             int64_t a0 = c.trav_spans[k].first, b0 = c.trav_spans[k].second;
             for (int64_t bp : {c.q_start, c.q_end})
                 if (bp > a0 && bp < b0) cuts[c.trav_nodes[k]].insert(bp - a0);
+        }
+        // a non-reference target is cut the same way, so the wired chain is exactly the part
+        // the query matched rather than the representative's whole component
+        for (size_t k = 0; k < c.target_nodes.size(); ++k) {
+            int64_t a0 = c.target_spans[k].first, b0 = c.target_spans[k].second;
+            for (int64_t bp : {c.t_start, c.t_end})
+                if (bp > a0 && bp < b0) cuts[c.target_nodes[k]].insert(bp - a0);
         }
     }
     // name -> the pieces it became, with each piece's offset range in the original
@@ -702,12 +856,25 @@ int main(int argc, char** argv) {
             // Links are needed in the forward case too once alt nodes are split: without them a
             // surviving A_pre is a dead end and A_post has nothing entering it.  (Deleting the
             // whole alt node needed no links, because the reference path L->R was already there.)
-            auto& rv = ref_by_sn[c.sn];
-            auto it = lower_bound(rv.begin(), rv.end(), make_pair(c.ref_start, string()));
             vector<string> chain;
-            for (auto k = it; k != rv.end() && k->first < c.ref_end; ++k) {
-                auto p = NI(k->second);
-                if (p && k->first >= c.ref_start && k->first + p->len <= c.ref_end) chain.push_back(k->second);
+            if (c.target_nodes.empty()) {
+                auto& rv = ref_by_sn[c.sn];
+                auto it = lower_bound(rv.begin(), rv.end(), make_pair(c.ref_start, string()));
+                for (auto k = it; k != rv.end() && k->first < c.ref_end; ++k) {
+                    auto p = NI(k->second);
+                    if (p && k->first >= c.ref_start && k->first + p->len <= c.ref_end) chain.push_back(k->second);
+                }
+            } else {
+                // the representative's pieces covered by the matched block, in traversal order
+                for (size_t k = 0; k < c.target_nodes.size(); ++k) {
+                    int64_t base = c.target_spans[k].first;
+                    for (auto& pr : expand(c.target_nodes[k])) {
+                        auto pn = NI(pr.second);
+                        if (!pn) continue;
+                        int64_t a0 = base + pr.first, b0 = a0 + pn->len;
+                        if (a0 >= c.t_start && b0 <= c.t_end) chain.push_back(pr.second);
+                    }
+                }
             }
             if (chain.empty()) { ++skipped_nochain; continue; }
             // entry / exit: the alt pieces either side of the removed run, else the snarl flanks
