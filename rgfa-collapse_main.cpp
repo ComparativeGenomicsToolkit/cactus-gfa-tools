@@ -81,12 +81,17 @@ struct Call {
     string sn;                     // reference sequence the snarl sits on
     int64_t ref_start = 0, ref_end = 0;
     bool inversion = false;
-    vector<string> nodes;
+    vector<string> nodes;          // alt nodes the block touches, in traversal order
     string haps;
     int64_t block_bp = 0, node_bp = 0;
     double ident = 0;
-    string L, R;
+    string L, R;                   // snarl boundaries
     size_t snarl_i = 0;
+    // the alt side in traversal coordinates, so it can be cut at the block boundary: the whole
+    // ordered component, each node's [start,end) in the traversal, and the block's extent
+    vector<string> trav_nodes;
+    vector<pair<int64_t,int64_t>> trav_spans;
+    int64_t q_start = 0, q_end = 0;
 };
 
 // RAII temp directory
@@ -118,6 +123,9 @@ static void help(char** argv) {
          << "  -b, --min-block N      minimum aligned block to call [5000]\n"
          << "  -i, --min-ident F      minimum block identity [0.95]\n"
          << "  -a, --min-alt F        block must be >= F alt sequence, not reference flank [0.5]\n"
+         << "  -C, --min-cover F      skip alleles whose block covers < F of their alt nodes.\n"
+         << "                         Not needed now that alt nodes are split at the block\n"
+         << "                         boundary -- only the inverted part is removed [0]\n"
          << "  -D, --duplications     also collapse forward duplicates (UNSAFE without a\n"
          << "                         copy-number gate: deletes real tandem expansions) [off]\n"
          << "  -c, --max-components N skip snarls with more than N alt components [64]\n"
@@ -134,7 +142,7 @@ static void help(char** argv) {
 int main(int argc, char** argv) {
     int64_t min_block = 5000, max_trav = 5000000, chunk = 300;
     int max_comp = 64, n_jobs = 4, threads = 2;
-    double min_ident = 0.95, min_alt = 0.5;
+    double min_ident = 0.95, min_alt = 0.5, min_cover = 0.0;
     bool do_dup = false, detect_only = false;
     string mm2 = "minimap2", preset = "asm20", report;
 
@@ -142,18 +150,20 @@ int main(int argc, char** argv) {
     while (true) {
         static struct option lo[] = {
             {"min-block",required_argument,0,'b'},{"min-ident",required_argument,0,'i'},
-            {"min-alt",required_argument,0,'a'},{"duplications",no_argument,0,'D'},
+            {"min-alt",required_argument,0,'a'},{"min-cover",required_argument,0,'C'},
+            {"duplications",no_argument,0,'D'},
             {"max-components",required_argument,0,'c'},{"max-traversal",required_argument,0,'L'},
             {"chunk",required_argument,0,'k'},{"jobs",required_argument,0,'j'},
             {"threads",required_argument,0,'t'},{"mm-preset",required_argument,0,'x'},
             {"minimap2",required_argument,0,'m'},{"report",required_argument,0,'r'},
             {"detect-only",no_argument,0,'d'},{"help",no_argument,0,'h'},{0,0,0,0}};
-        c = getopt_long(argc, argv, "b:i:a:Dc:L:k:j:t:x:m:r:dh", lo, 0);
+        c = getopt_long(argc, argv, "b:i:a:C:Dc:L:k:j:t:x:m:r:dh", lo, 0);
         if (c == -1) break;
         switch (c) {
             case 'b': min_block = stol(optarg); break;
             case 'i': min_ident = stod(optarg); break;
             case 'a': min_alt = stod(optarg); break;
+            case 'C': min_cover = stod(optarg); break;
             case 'D': do_dup = true; break;
             case 'c': max_comp = stoi(optarg); break;
             case 'L': max_trav = stol(optarg); break;
@@ -471,7 +481,11 @@ int main(int argc, char** argv) {
                         if (ov > 0) { altov += ov; hit.push_back(n); }
                     }
                     if (hit.empty() || (double)altov / blk < min_alt) continue;
-                    Call cl; cl.sn = j.sn; cl.ref_start = j.lo + ts_; cl.ref_end = j.lo + te;
+                    Call cl;
+                    { int64_t o2 = tm.pa;
+                      for (auto& n : tm.nodes) { cl.trav_spans.push_back({o2, o2 + NI(n)->len}); o2 += NI(n)->len; } }
+                    cl.trav_nodes = tm.nodes; cl.q_start = qs; cl.q_end = qe;
+                    cl.sn = j.sn; cl.ref_start = j.lo + ts_; cl.ref_end = j.lo + te;
                     cl.inversion = (st == "-"); cl.nodes = hit; cl.block_bp = blk; cl.ident = id;
                     cl.L = j.L; cl.R = j.R; cl.snarl_i = ji;
                     set<string> hs;
@@ -555,70 +569,82 @@ int main(int argc, char** argv) {
 
     // ------------------------------------------------------------ repair
 
-    // Split reference nodes at inversion boundaries.
+    // Split nodes so an inverted allele can be removed exactly.
     //
-    // An inversion does not have to align to whole reference nodes.  On HPRC chr15 one sits
-    // entirely inside a single 17,712 bp node, so no node is fully contained in the interval and
-    // there is no chain to reverse.  These are hotspots of assembly and graph trouble and worth
-    // supporting, so cut the reference at the boundaries first; afterwards every inverted
-    // interval is exactly a run of whole nodes.  rGFA edges attach only at node ends, so a split
-    // is safe: in-edges go to the first piece, out-edges leave the last, and the pieces are
-    // chained.  Done before the repair loop so chains are exact for every site.
-    {
-        map<string, set<int64_t>> cuts;                 // reference node -> internal offsets
-        for (auto& s2 : sites) {
-            if (!s2.inversion) continue;
-            auto& rv = ref_by_sn[s2.sn];
-            for (int64_t bp : {s2.start, s2.end}) {
-                auto it = upper_bound(rv.begin(), rv.end(), make_pair(bp, string("\xff")));
-                if (it == rv.begin()) continue;
-                --it;
-                const Node* p = NI(it->second);
-                if (!p) continue;
-                if (bp > p->so && bp < p->so + p->len) cuts[it->second].insert(bp - p->so);
-            }
+    // Two reasons.  On the REFERENCE side an inversion need not align to whole nodes -- on HPRC
+    // chr15 one sits entirely inside a single 17,712 bp node, leaving no chain to reverse.  On
+    // the ALT side the node holding the inversion often carries sequence beyond it: a yeast
+    // chrXIV node is 23,061 bp for a 5,914 bp inverted block, and on chr15 seven of thirteen
+    // sites would have had 243,585 bp of genuine novel sequence deleted with the inversion.
+    //
+    // After cutting both sides at the block boundaries the repair is exact:
+    //
+    //     before:  L -> [A_pre | A_inv | A_post] -> M   and   L -> ...R... -> M
+    //     after:   L -> A_pre -> reverse(R) -> A_post -> M
+    //
+    // A_pre / A_post attach to the reversed reference chain; when the block covers the whole alt
+    // component they are empty and the links come from the reference flanks instead.
+    map<string, set<int64_t>> cuts;
+    for (auto& c : calls) {
+        if (!c.inversion && !do_dup) continue;
+        auto& rv = ref_by_sn[c.sn];
+        for (int64_t bp : {c.ref_start, c.ref_end}) {
+            auto it = upper_bound(rv.begin(), rv.end(), make_pair(bp, string("\xff")));
+            if (it == rv.begin()) continue;
+            --it;
+            const Node* p = NI(it->second);
+            if (p && bp > p->so && bp < p->so + p->len) cuts[it->second].insert(bp - p->so);
         }
+        for (size_t k = 0; k < c.trav_nodes.size(); ++k) {
+            int64_t a0 = c.trav_spans[k].first, b0 = c.trav_spans[k].second;
+            for (int64_t bp : {c.q_start, c.q_end})
+                if (bp > a0 && bp < b0) cuts[c.trav_nodes[k]].insert(bp - a0);
+        }
+    }
+    // name -> the pieces it became, with each piece's offset range in the original
+    map<string, vector<pair<int64_t,string>>> pieces;
+    {
         int64_t n_split = 0, n_pieces = 0;
         for (auto& kv : cuts) {
-            const string& nm = kv.first;
-            auto i2 = idx.find(nm);
-            if (i2 == idx.end()) continue;
-            Node orig = nodes[i2->second];              // copy: nodes may reallocate below
+            auto i2 = idx.find(kv.first);
+            if (i2 == idx.end() || nodes[i2->second].deleted) continue;
+            Node orig = nodes[i2->second];
             vector<int64_t> off(kv.second.begin(), kv.second.end());
             off.insert(off.begin(), 0); off.push_back(orig.len);
-            vector<string> pieces;
+            vector<string> pl;
             for (size_t k = 0; k + 1 < off.size(); ++k) {
                 Node pn;
                 pn.name = orig.name + "." + to_string(k + 1);
                 pn.seq = orig.seq.substr(off[k], off[k + 1] - off[k]);
                 pn.len = pn.seq.size();
-                pn.rank = orig.rank; pn.sn = orig.sn; pn.so = orig.so + off[k];
-                pn.raw_tags = {"LN:i:" + to_string(pn.len), "SN:Z:" + pn.sn,
-                               "SO:i:" + to_string(pn.so), "SR:i:" + to_string(pn.rank)};
+                pn.rank = orig.rank; pn.sn = orig.sn;
+                pn.so = orig.so >= 0 ? orig.so + off[k] : -1;
+                pn.raw_tags = {"LN:i:" + to_string(pn.len)};
+                if (!pn.sn.empty()) pn.raw_tags.push_back("SN:Z:" + pn.sn);
+                if (pn.so >= 0) pn.raw_tags.push_back("SO:i:" + to_string(pn.so));
+                pn.raw_tags.push_back("SR:i:" + to_string(pn.rank));
                 idx[pn.name] = nodes.size(); nodes.push_back(move(pn));
-                pieces.push_back(orig.name + "." + to_string(k + 1));
+                pieces[orig.name].push_back({off[k], orig.name + "." + to_string(k + 1)});
+                pl.push_back(orig.name + "." + to_string(k + 1));
                 ++n_pieces;
             }
-            nodes[i2->second].deleted = true;           // retire the original
-            // rewire: edges into the original enter piece 1, edges out leave the last piece
-            for (size_t ei : node_edges[nm]) {
+            nodes[i2->second].deleted = true;
+            for (size_t ei : node_edges[kv.first]) {
                 Edge& e = edges[ei];
                 if (e.deleted) continue;
-                if (e.to == nm && e.from == nm) { e.deleted = true; continue; }
-                if (e.to == nm) e.to = pieces.front();
-                else if (e.from == nm) e.from = pieces.back();
-                // L1/L2 record the lengths of the two nodes a link joins; after a split they
-                // would still name the original node's length.
+                if (e.to == kv.first && e.from == kv.first) { e.deleted = true; continue; }
+                // re-register under the new endpoint, or deleting that piece later will not
+                // mark this edge deleted and it is left pointing at a removed node
+                if (e.to == kv.first)        { e.to = pl.front();  node_edges[e.to].push_back(ei); }
+                else if (e.from == kv.first) { e.from = pl.back(); node_edges[e.from].push_back(ei); }
                 for (auto& t : e.raw_tags) {
-                    if (t.compare(0, 5, "L1:i:") == 0 && NI(e.from))
-                        t = "L1:i:" + to_string(NI(e.from)->len);
-                    else if (t.compare(0, 5, "L2:i:") == 0 && NI(e.to))
-                        t = "L2:i:" + to_string(NI(e.to)->len);
+                    if (t.compare(0, 5, "L1:i:") == 0 && NI(e.from)) t = "L1:i:" + to_string(NI(e.from)->len);
+                    else if (t.compare(0, 5, "L2:i:") == 0 && NI(e.to)) t = "L2:i:" + to_string(NI(e.to)->len);
                 }
             }
-            for (size_t k = 0; k + 1 < pieces.size(); ++k) {
-                Edge e; e.from = pieces[k]; e.from_fwd = true;
-                e.to = pieces[k + 1]; e.to_fwd = true; e.sr_rank = orig.rank;
+            for (size_t k = 0; k + 1 < pl.size(); ++k) {
+                Edge e; e.from = pl[k]; e.from_fwd = true; e.to = pl[k + 1]; e.to_fwd = true;
+                e.sr_rank = orig.rank; e.raw_tags = {"SR:i:" + to_string(orig.rank)};
                 edges.push_back(e);
                 node_edges[e.from].push_back(edges.size() - 1);
                 node_edges[e.to].push_back(edges.size() - 1);
@@ -626,8 +652,8 @@ int main(int argc, char** argv) {
             ++n_split;
         }
         if (n_split) {
-            cerr << "[rgfa-collapse] split " << n_split << " reference node(s) into "
-                 << n_pieces << " piece(s) at inversion boundaries\n";
+            cerr << "[rgfa-collapse] split " << n_split << " node(s) into " << n_pieces
+                 << " piece(s) at block boundaries\n";
             ref_by_sn.clear();
             for (const Node& n : nodes)
                 if (!n.deleted && n.rank == 0 && n.so >= 0 && !n.sn.empty())
@@ -635,36 +661,55 @@ int main(int argc, char** argv) {
             for (auto& kv : ref_by_sn) sort(kv.second.begin(), kv.second.end());
         }
     }
+    // expand a node into its pieces, each tagged with its offset within the original
+    auto expand = [&](const string& n) {
+        vector<pair<int64_t,string>> out;
+        auto it = pieces.find(n);
+        if (it == pieces.end()) out.push_back({0, n});
+        else out = it->second;
+        return out;
+    };
 
     vector<Edge> new_edges;
     int64_t did_inv = 0, did_dup = 0, bp_removed = 0, skipped_nochain = 0;
-    for (auto& s2 : sites) {
-        if (!s2.inversion && !do_dup) continue;
-        if (s2.inversion) {
-            // reference nodes the inverted allele covers, and the flanks either side of them
-            auto& rv = ref_by_sn[s2.sn];
-            auto it = lower_bound(rv.begin(), rv.end(), make_pair(s2.start, string()));
+    for (auto& c : calls) {
+        if (!c.inversion && !do_dup) continue;
+        // alt pieces lying inside the block, in traversal order
+        vector<string> del; string before, after;
+        for (size_t k = 0; k < c.trav_nodes.size(); ++k) {
+            int64_t base = c.trav_spans[k].first;
+            for (auto& pr : expand(c.trav_nodes[k])) {
+                auto pn = NI(pr.second);
+                if (!pn) continue;
+                int64_t a0 = base + pr.first, b0 = a0 + pn->len;
+                if (a0 >= c.q_start && b0 <= c.q_end) del.push_back(pr.second);
+                else if (b0 <= c.q_start) before = pr.second;          // last piece before
+                else if (a0 >= c.q_end && after.empty()) after = pr.second;  // first piece after
+            }
+        }
+        if (del.empty()) { ++skipped_nochain; continue; }
+        if (c.inversion) {
+            auto& rv = ref_by_sn[c.sn];
+            auto it = lower_bound(rv.begin(), rv.end(), make_pair(c.ref_start, string()));
             vector<string> chain;
-            for (auto k = it; k != rv.end() && k->first < s2.end; ++k) {
+            for (auto k = it; k != rv.end() && k->first < c.ref_end; ++k) {
                 auto p = NI(k->second);
-                if (p && k->first >= s2.start && k->first + p->len <= s2.end) chain.push_back(k->second);
+                if (p && k->first >= c.ref_start && k->first + p->len <= c.ref_end) chain.push_back(k->second);
             }
             if (chain.empty()) { ++skipped_nochain; continue; }
-            // flank before the chain and after it
-            auto cf = lower_bound(rv.begin(), rv.end(), make_pair(NI(chain.front())->so, string()));
-            if (cf == rv.begin()) { ++skipped_nochain; continue; }
-            string lf = (cf - 1)->second;
-            auto cl = lower_bound(rv.begin(), rv.end(), make_pair(NI(chain.back())->so, string()));
-            if (cl == rv.end() || cl + 1 == rv.end()) { ++skipped_nochain; continue; }
-            string rf2 = (cl + 1)->second;
-            Edge e1; e1.from = lf; e1.from_fwd = true;  e1.to = chain.back();  e1.to_fwd = false;
-            Edge e2; e2.from = chain.front(); e2.from_fwd = false; e2.to = rf2; e2.to_fwd = true;
-            int64_t rk = 0; for (auto& n : s2.nodes) rk = max(rk, NI(n)->rank);
-            e1.sr_rank = rk; e2.sr_rank = rk;
+            // entry / exit: the alt pieces either side of the removed run, else the snarl flanks
+            string X = before.empty() ? c.L : before;
+            string Y = after.empty()  ? c.R : after;
+            if (before.empty()) { auto pl = expand(c.L); X = pl.back().second; }
+            if (after.empty())  { auto pl = expand(c.R); Y = pl.front().second; }
+            if (!NI(X) || !NI(Y)) { ++skipped_nochain; continue; }
+            int64_t rk = 0; for (auto& n : del) if (NI(n)) rk = max(rk, NI(n)->rank);
+            Edge e1; e1.from = X; e1.from_fwd = true;  e1.to = chain.back();  e1.to_fwd = false; e1.sr_rank = rk;
+            Edge e2; e2.from = chain.front(); e2.from_fwd = false; e2.to = Y; e2.to_fwd = true;  e2.sr_rank = rk;
             new_edges.push_back(e1); new_edges.push_back(e2);
             ++did_inv;
         } else ++did_dup;
-        for (auto& n : s2.nodes) {
+        for (auto& n : del) {
             auto i2 = idx.find(n); if (i2 == idx.end()) continue;
             Node& N = nodes[i2->second];
             if (N.deleted) continue;
@@ -672,10 +717,10 @@ int main(int argc, char** argv) {
             for (size_t ei : node_edges[n]) edges[ei].deleted = true;
         }
     }
-    cerr << "[rgfa-collapse] repaired " << did_inv << " inversion(s)";
+    cerr << "[rgfa-collapse] repaired " << did_inv << " inversion allele(s)";
     if (do_dup) cerr << " and " << did_dup << " duplication(s)";
     cerr << "; " << bp_removed << " bp removed";
-    if (skipped_nochain) cerr << "; " << skipped_nochain << " site(s) had no usable reference chain";
+    if (skipped_nochain) cerr << "; " << skipped_nochain << " skipped (no chain or no alt piece inside the block)";
     cerr << "\n";
 
     // Collapsing can orphan alt nodes that only existed inside the redundant sequence -- nested
@@ -729,7 +774,17 @@ int main(int argc, char** argv) {
         for (auto& t : e.raw_tags) cout << "\t" << t;
         cout << "\n";
     }
+    // A link emitted for one allele can reference a piece that a later allele removes (calls at
+    // one locus share nodes).  Drop any whose endpoints did not survive.
+    int64_t dropped = 0;
+    for (auto& e : new_edges) {
+        const Node* f = NI(e.from); const Node* t = NI(e.to);
+        if (!f || !t || f->deleted || t->deleted) { e.deleted = true; ++dropped; }
+    }
+    if (dropped) cerr << "[rgfa-collapse] dropped " << dropped
+                      << " synthesised link(s) whose endpoints were removed by another allele\n";
     for (auto& e : new_edges)
+        if (!e.deleted)
         cout << "L\t" << e.from << "\t" << (e.from_fwd ? '+' : '-') << "\t"
              << e.to << "\t" << (e.to_fwd ? '+' : '-') << "\t0M\tSR:i:" << e.sr_rank
              << "\tL1:i:" << NI(e.from)->len << "\tL2:i:" << NI(e.to)->len << "\n";
