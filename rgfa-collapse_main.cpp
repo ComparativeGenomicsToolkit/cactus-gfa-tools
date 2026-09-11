@@ -829,11 +829,11 @@ int main(int argc, char** argv) {
     };
 
     vector<Edge> new_edges;
-    int64_t did_inv = 0, did_dup = 0, bp_removed = 0, skipped_nochain = 0;
+    int64_t did_inv = 0, did_dup = 0, bp_removed = 0, skipped_nochain = 0, skipped_tandem = 0;
     for (auto& c : calls) {
         if (!c.inversion && !do_dup) continue;
         // alt pieces lying inside the block, in traversal order
-        vector<string> del; string before, after;
+        vector<string> del;
         for (size_t k = 0; k < c.trav_nodes.size(); ++k) {
             int64_t base = c.trav_spans[k].first;
             for (auto& pr : expand(c.trav_nodes[k])) {
@@ -841,8 +841,6 @@ int main(int argc, char** argv) {
                 if (!pn) continue;
                 int64_t a0 = base + pr.first, b0 = a0 + pn->len;
                 if (a0 >= c.q_start && b0 <= c.q_end) del.push_back(pr.second);
-                else if (b0 <= c.q_start) before = pr.second;          // last piece before
-                else if (a0 >= c.q_end && after.empty()) after = pr.second;  // first piece after
             }
         }
         if (del.empty()) { ++skipped_nochain; continue; }
@@ -877,18 +875,58 @@ int main(int argc, char** argv) {
                 }
             }
             if (chain.empty()) { ++skipped_nochain; continue; }
-            // entry / exit: the alt pieces either side of the removed run, else the snarl flanks
-            string X = before, Y = after;
-            if (X.empty()) { auto pl = expand(c.L); X = pl.back().second; }
-            if (Y.empty()) { auto pl = expand(c.R); Y = pl.front().second; }
-            if (!NI(X) || !NI(Y)) { ++skipped_nochain; continue; }
+            // Entry / exit.  A traversal is a connected component ordered best effort, not a
+            // real path, so the piece adjacent to the removed run in traversal order need not be
+            // its neighbour in the graph.  Take the neighbours from the live edges instead; the
+            // snarl flanks are only a fallback for a run with nothing else attached.  (Wiring the
+            // exit to the flank when the run was merely last in the component order is what cost
+            // NA18948.2 69,723bp at chr15:82,389,348 -- it skipped the 17kb of alt sequence the
+            // haplotype still carries between the inversion and the far end of the snarl.)
+            unordered_set<string> dset(del.begin(), del.end());
+            auto live_node = [&](const string& n) { auto p = NI(n); return p && !p->deleted; };
+            vector<string> Xs, Ys;
+            {
+                unordered_set<string> xs, ys;
+                for (auto& n : del) {
+                    auto it = node_edges.find(n);
+                    if (it == node_edges.end()) continue;
+                    for (size_t ei : it->second) {
+                        const Edge& e = edges[ei];
+                        if (e.deleted || !e.from_fwd || !e.to_fwd) continue;
+                        if (e.to == n && !dset.count(e.from) && live_node(e.from) && xs.insert(e.from).second)
+                            Xs.push_back(e.from);
+                        if (e.from == n && !dset.count(e.to) && live_node(e.to) && ys.insert(e.to).second)
+                            Ys.push_back(e.to);
+                    }
+                }
+            }
+            if (Xs.empty()) { auto pl = expand(c.L); if (live_node(pl.back().second))  Xs.push_back(pl.back().second); }
+            if (Ys.empty()) { auto pl = expand(c.R); if (live_node(pl.front().second)) Ys.push_back(pl.front().second); }
+            if (Xs.empty() || Ys.empty()) { ++skipped_nochain; continue; }
+            // An endpoint that is itself part of the chain means the copy sits immediately beside
+            // the sequence it duplicates -- a tandem expansion.  Routing through the chain would
+            // then need a cycle (s248+ -> s248+), and the extra copy is a real copy-number
+            // difference minigraph inserted on purpose, not a misrepresented alignment.  Leave it.
+            {
+                unordered_set<string> cs(chain.begin(), chain.end());
+                bool touches = false;
+                for (auto& x : Xs) if (cs.count(x)) touches = true;
+                for (auto& y : Ys) if (cs.count(y)) touches = true;
+                if (touches) { ++skipped_tandem; continue; }
+            }
+            sort(Xs.begin(), Xs.end()); sort(Ys.begin(), Ys.end());
             int64_t rk = 0; for (auto& n : del) if (NI(n)) rk = max(rk, NI(n)->rank);
             const string& first_hop = c.inversion ? chain.back() : chain.front();
             const string& last_hop  = c.inversion ? chain.front() : chain.back();
             const bool orient = !c.inversion;              // '+' forward, '-' reversed
-            Edge e1; e1.from = X; e1.from_fwd = true;   e1.to = first_hop; e1.to_fwd = orient; e1.sr_rank = rk;
-            Edge e2; e2.from = last_hop; e2.from_fwd = orient; e2.to = Y;  e2.to_fwd = true;   e2.sr_rank = rk;
-            new_edges.push_back(e1); new_edges.push_back(e2);
+            for (auto& X : Xs) {
+                Edge e1; e1.from = X; e1.from_fwd = true; e1.to = first_hop; e1.to_fwd = orient; e1.sr_rank = rk;
+                new_edges.push_back(e1);
+            }
+            for (auto& Y : Ys) {
+                Edge e2; e2.from = last_hop; e2.from_fwd = orient; e2.to = Y; e2.to_fwd = true; e2.sr_rank = rk;
+                new_edges.push_back(e2);
+            }
             if (c.inversion) ++did_inv; else ++did_dup;
         }
         for (auto& n : del) {
@@ -903,6 +941,7 @@ int main(int argc, char** argv) {
     if (do_dup) cerr << " and " << did_dup << " duplication(s)";
     cerr << "; " << bp_removed << " bp removed";
     if (skipped_nochain) cerr << "; " << skipped_nochain << " skipped (no chain or no alt piece inside the block)";
+    if (skipped_tandem) cerr << "; " << skipped_tandem << " skipped (tandem: copy adjacent to its source)";
     cerr << "\n";
 
     // Collapsing can orphan alt nodes that only existed inside the redundant sequence -- nested
@@ -958,13 +997,28 @@ int main(int argc, char** argv) {
     }
     // A link emitted for one allele can reference a piece that a later allele removes (calls at
     // one locus share nodes).  Drop any whose endpoints did not survive.
-    int64_t dropped = 0;
+    int64_t dropped = 0, deduped = 0;
     for (auto& e : new_edges) {
         const Node* f = NI(e.from); const Node* t = NI(e.to);
         if (!f || !t || f->deleted || t->deleted) { e.deleted = true; ++dropped; }
     }
+    // Calls at one locus share endpoints, so the same link can be synthesised several times, and
+    // it can restate a link the graph already has.  Emit each at most once.
+    {
+        auto key = [](const Edge& e) {
+            return e.from + (e.from_fwd ? '+' : '-') + '\t' + e.to + (e.to_fwd ? '+' : '-');
+        };
+        unordered_set<string> seen;
+        for (const Edge& e : edges) if (!e.deleted) seen.insert(key(e));
+        for (auto& e : new_edges) {
+            if (e.deleted) continue;
+            if (!seen.insert(key(e)).second) { e.deleted = true; ++deduped; }
+        }
+    }
     if (dropped) cerr << "[rgfa-collapse] dropped " << dropped
                       << " synthesised link(s) whose endpoints were removed by another allele\n";
+    if (deduped) cerr << "[rgfa-collapse] dropped " << deduped
+                      << " synthesised link(s) already present or synthesised twice\n";
     for (auto& e : new_edges)
         if (!e.deleted)
         cout << "L\t" << e.from << "\t" << (e.from_fwd ? '+' : '-') << "\t"
