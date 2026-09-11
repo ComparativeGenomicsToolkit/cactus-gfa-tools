@@ -389,6 +389,10 @@ int main(int argc, char** argv) {
         });
         for (auto& th : pool) th.join();
         for (auto& v : per) for (auto& j : v) jobs.push_back(move(j));
+        // Gathering from per-thread vectors is completion-ordered, so chunk composition -- and
+        // therefore which alignments minimap2 reports -- would vary run to run.  Sort so the
+        // output is reproducible.
+        sort(jobs.begin(), jobs.end(), [](const Job& a, const Job& b) { return a.snarl_i < b.snarl_i; });
     }
     cerr << "[rgfa-collapse] " << jobs.size() << " site(s) to align; skipped:"
          << " boundary=" << sk_bound << " diff-seq=" << sk_diffseq << " no-span=" << sk_nospan
@@ -550,6 +554,87 @@ int main(int argc, char** argv) {
     if (detect_only) return 0;
 
     // ------------------------------------------------------------ repair
+
+    // Split reference nodes at inversion boundaries.
+    //
+    // An inversion does not have to align to whole reference nodes.  On HPRC chr15 one sits
+    // entirely inside a single 17,712 bp node, so no node is fully contained in the interval and
+    // there is no chain to reverse.  These are hotspots of assembly and graph trouble and worth
+    // supporting, so cut the reference at the boundaries first; afterwards every inverted
+    // interval is exactly a run of whole nodes.  rGFA edges attach only at node ends, so a split
+    // is safe: in-edges go to the first piece, out-edges leave the last, and the pieces are
+    // chained.  Done before the repair loop so chains are exact for every site.
+    {
+        map<string, set<int64_t>> cuts;                 // reference node -> internal offsets
+        for (auto& s2 : sites) {
+            if (!s2.inversion) continue;
+            auto& rv = ref_by_sn[s2.sn];
+            for (int64_t bp : {s2.start, s2.end}) {
+                auto it = upper_bound(rv.begin(), rv.end(), make_pair(bp, string("\xff")));
+                if (it == rv.begin()) continue;
+                --it;
+                const Node* p = NI(it->second);
+                if (!p) continue;
+                if (bp > p->so && bp < p->so + p->len) cuts[it->second].insert(bp - p->so);
+            }
+        }
+        int64_t n_split = 0, n_pieces = 0;
+        for (auto& kv : cuts) {
+            const string& nm = kv.first;
+            auto i2 = idx.find(nm);
+            if (i2 == idx.end()) continue;
+            Node orig = nodes[i2->second];              // copy: nodes may reallocate below
+            vector<int64_t> off(kv.second.begin(), kv.second.end());
+            off.insert(off.begin(), 0); off.push_back(orig.len);
+            vector<string> pieces;
+            for (size_t k = 0; k + 1 < off.size(); ++k) {
+                Node pn;
+                pn.name = orig.name + "." + to_string(k + 1);
+                pn.seq = orig.seq.substr(off[k], off[k + 1] - off[k]);
+                pn.len = pn.seq.size();
+                pn.rank = orig.rank; pn.sn = orig.sn; pn.so = orig.so + off[k];
+                pn.raw_tags = {"LN:i:" + to_string(pn.len), "SN:Z:" + pn.sn,
+                               "SO:i:" + to_string(pn.so), "SR:i:" + to_string(pn.rank)};
+                idx[pn.name] = nodes.size(); nodes.push_back(move(pn));
+                pieces.push_back(orig.name + "." + to_string(k + 1));
+                ++n_pieces;
+            }
+            nodes[i2->second].deleted = true;           // retire the original
+            // rewire: edges into the original enter piece 1, edges out leave the last piece
+            for (size_t ei : node_edges[nm]) {
+                Edge& e = edges[ei];
+                if (e.deleted) continue;
+                if (e.to == nm && e.from == nm) { e.deleted = true; continue; }
+                if (e.to == nm) e.to = pieces.front();
+                else if (e.from == nm) e.from = pieces.back();
+                // L1/L2 record the lengths of the two nodes a link joins; after a split they
+                // would still name the original node's length.
+                for (auto& t : e.raw_tags) {
+                    if (t.compare(0, 5, "L1:i:") == 0 && NI(e.from))
+                        t = "L1:i:" + to_string(NI(e.from)->len);
+                    else if (t.compare(0, 5, "L2:i:") == 0 && NI(e.to))
+                        t = "L2:i:" + to_string(NI(e.to)->len);
+                }
+            }
+            for (size_t k = 0; k + 1 < pieces.size(); ++k) {
+                Edge e; e.from = pieces[k]; e.from_fwd = true;
+                e.to = pieces[k + 1]; e.to_fwd = true; e.sr_rank = orig.rank;
+                edges.push_back(e);
+                node_edges[e.from].push_back(edges.size() - 1);
+                node_edges[e.to].push_back(edges.size() - 1);
+            }
+            ++n_split;
+        }
+        if (n_split) {
+            cerr << "[rgfa-collapse] split " << n_split << " reference node(s) into "
+                 << n_pieces << " piece(s) at inversion boundaries\n";
+            ref_by_sn.clear();
+            for (const Node& n : nodes)
+                if (!n.deleted && n.rank == 0 && n.so >= 0 && !n.sn.empty())
+                    ref_by_sn[n.sn].push_back({n.so, n.name});
+            for (auto& kv : ref_by_sn) sort(kv.second.begin(), kv.second.end());
+        }
+    }
 
     vector<Edge> new_edges;
     int64_t did_inv = 0, did_dup = 0, bp_removed = 0, skipped_nochain = 0;
