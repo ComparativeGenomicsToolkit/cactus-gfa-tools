@@ -133,6 +133,8 @@ static void help(char** argv) {
          << "  -k, --chunk N          snarls per minimap2 invocation [300]\n"
          << "  -j, --jobs N           concurrent minimap2 invocations [4]\n"
          << "  -t, --threads N        threads per minimap2 [2]\n"
+         << "  -N, --mm-secondary N   minimap2 -N: alignments retained per query.  A site can\n"
+         << "                         lose its self-hit when homologous sites share an index [50]\n"
          << "  -x, --mm-preset STR    minimap2 preset [asm20]\n"
          << "  -m, --minimap2 PATH    minimap2 binary [minimap2]\n"
          << "  -r, --report FILE      write a TSV of every call\n"
@@ -141,7 +143,7 @@ static void help(char** argv) {
 
 int main(int argc, char** argv) {
     int64_t min_block = 5000, max_trav = 5000000, chunk = 300;
-    int max_comp = 64, n_jobs = 4, threads = 2;
+    int max_comp = 64, n_jobs = 4, threads = 2, mm_N = 50;
     double min_ident = 0.95, min_alt = 0.5, min_cover = 0.0;
     bool do_dup = false, detect_only = false;
     string mm2 = "minimap2", preset = "asm20", report;
@@ -154,10 +156,11 @@ int main(int argc, char** argv) {
             {"duplications",no_argument,0,'D'},
             {"max-components",required_argument,0,'c'},{"max-traversal",required_argument,0,'L'},
             {"chunk",required_argument,0,'k'},{"jobs",required_argument,0,'j'},
-            {"threads",required_argument,0,'t'},{"mm-preset",required_argument,0,'x'},
+            {"threads",required_argument,0,'t'},{"mm-secondary",required_argument,0,'N'},
+            {"mm-preset",required_argument,0,'x'},
             {"minimap2",required_argument,0,'m'},{"report",required_argument,0,'r'},
             {"detect-only",no_argument,0,'d'},{"help",no_argument,0,'h'},{0,0,0,0}};
-        c = getopt_long(argc, argv, "b:i:a:C:Dc:L:k:j:t:x:m:r:dh", lo, 0);
+        c = getopt_long(argc, argv, "b:i:a:C:Dc:L:k:j:t:N:x:m:r:dh", lo, 0);
         if (c == -1) break;
         switch (c) {
             case 'b': min_block = stol(optarg); break;
@@ -170,6 +173,7 @@ int main(int argc, char** argv) {
             case 'k': chunk = stol(optarg); break;
             case 'j': n_jobs = stoi(optarg); break;
             case 't': threads = stoi(optarg); break;
+            case 'N': mm_N = stoi(optarg); break;
             case 'x': preset = optarg; break;
             case 'm': mm2 = optarg; break;
             case 'r': report = optarg; break;
