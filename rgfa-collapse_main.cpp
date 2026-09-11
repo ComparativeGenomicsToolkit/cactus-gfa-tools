@@ -692,7 +692,16 @@ int main(int argc, char** argv) {
             }
         }
         if (del.empty()) { ++skipped_nochain; continue; }
-        if (c.inversion) {
+        {
+            // The wiring is the same for both directions -- route the haplotype through the
+            // reference the allele duplicates, forwards or reversed:
+            //
+            //   inversion:   X -> chain_last(-)   chain_first(-) -> Y
+            //   duplication: X -> chain_first(+)  chain_last(+)  -> Y
+            //
+            // Links are needed in the forward case too once alt nodes are split: without them a
+            // surviving A_pre is a dead end and A_post has nothing entering it.  (Deleting the
+            // whole alt node needed no links, because the reference path L->R was already there.)
             auto& rv = ref_by_sn[c.sn];
             auto it = lower_bound(rv.begin(), rv.end(), make_pair(c.ref_start, string()));
             vector<string> chain;
@@ -702,17 +711,19 @@ int main(int argc, char** argv) {
             }
             if (chain.empty()) { ++skipped_nochain; continue; }
             // entry / exit: the alt pieces either side of the removed run, else the snarl flanks
-            string X = before.empty() ? c.L : before;
-            string Y = after.empty()  ? c.R : after;
-            if (before.empty()) { auto pl = expand(c.L); X = pl.back().second; }
-            if (after.empty())  { auto pl = expand(c.R); Y = pl.front().second; }
+            string X = before, Y = after;
+            if (X.empty()) { auto pl = expand(c.L); X = pl.back().second; }
+            if (Y.empty()) { auto pl = expand(c.R); Y = pl.front().second; }
             if (!NI(X) || !NI(Y)) { ++skipped_nochain; continue; }
             int64_t rk = 0; for (auto& n : del) if (NI(n)) rk = max(rk, NI(n)->rank);
-            Edge e1; e1.from = X; e1.from_fwd = true;  e1.to = chain.back();  e1.to_fwd = false; e1.sr_rank = rk;
-            Edge e2; e2.from = chain.front(); e2.from_fwd = false; e2.to = Y; e2.to_fwd = true;  e2.sr_rank = rk;
+            const string& first_hop = c.inversion ? chain.back() : chain.front();
+            const string& last_hop  = c.inversion ? chain.front() : chain.back();
+            const bool orient = !c.inversion;              // '+' forward, '-' reversed
+            Edge e1; e1.from = X; e1.from_fwd = true;   e1.to = first_hop; e1.to_fwd = orient; e1.sr_rank = rk;
+            Edge e2; e2.from = last_hop; e2.from_fwd = orient; e2.to = Y;  e2.to_fwd = true;   e2.sr_rank = rk;
             new_edges.push_back(e1); new_edges.push_back(e2);
-            ++did_inv;
-        } else ++did_dup;
+            if (c.inversion) ++did_inv; else ++did_dup;
+        }
         for (auto& n : del) {
             auto i2 = idx.find(n); if (i2 == idx.end()) continue;
             Node& N = nodes[i2->second];
