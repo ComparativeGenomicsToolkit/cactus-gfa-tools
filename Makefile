@@ -35,7 +35,7 @@ CXXFLAGS := -O3 -Werror=return-type -std=c++14 -ggdb -g -MMD -MP $(PARALLEL_FLAG
 LIB_FLAGS = $(LIBS)
 INC_FLAGS = -I$(CWD)
 
-all: mzgaf2paf gaf2paf pafcoverage rgfa-split paf2lastz rgfa2paf pafmask paf2stable gaf2unstable gaffilter
+all: mzgaf2paf gaf2paf pafcoverage rgfa-split paf2lastz rgfa2paf pafmask paf2stable gaf2unstable gaffilter rgfa-collapse
 
 mzgaf2paf: mzgaf2paf.o mzgaf2paf_main.o
 	$(CXX) $(INCLUDE_FLAGS) $(CXXFLAGS) $(CPPFLAGS) -o mzgaf2paf mzgaf2paf_main.o mzgaf2paf.o $(LIB_FLAGS)
@@ -107,6 +107,12 @@ gaf2unstable: gaf2unstable_main.o rgfa-split.o pafcoverage.o
 	$(CXX) $(INCLUDE_FLAGS) $(CXXFLAGS) $(CPPFLAGS) -o gaf2unstable gaf2unstable_main.o rgfa-split.o $(INC_FLAGS)
 
 gaffilter: gaffilter_main.o gafkluge.hpp paf.hpp IntervalTree.h
+
+rgfa-collapse_main.o:$(LIB_DEPS) rgfa-collapse_main.cpp gfakluge.hpp
+	$(CXX) $(CXXFLAGS) -c rgfa-collapse_main.cpp $(INC_FLAGS)
+
+rgfa-collapse: rgfa-collapse_main.o
+	$(CXX) $(CXXFLAGS) -o rgfa-collapse rgfa-collapse_main.o $(INC_FLAGS) $(LDFLAGS)
 	$(CXX) $(INCLUDE_FLAGS) $(CXXFLAGS) $(CPPFLAGS) -o gaffilter gaffilter_main.cpp $(INC_FLAGS)
 
 test : all paf2lastz_test pafmask_test
