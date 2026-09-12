@@ -145,7 +145,15 @@ static void help(char** argv) {
          << "  -N, --mm-secondary N   minimap2 -N: alignments retained per query.  A site can\n"
          << "                         lose its self-hit when homologous sites share an index [50]\n"
          << "  -x, --mm-preset STR    minimap2 preset [asm20]\n"
+         << "  -P, --mm-p F           minimap2 -p: min secondary-to-primary score ratio.  Low by\n"
+         << "                         default because sibling bubbles ARE homologous [0.01]\n"
+         << "  -X, --mm-extra STR     extra minimap2 arguments, appended last (so they override\n"
+         << "                         the settings above); for parameter sweeps [none]\n"
          << "  -m, --minimap2 PATH    minimap2 binary [minimap2]\n"
+         << "  -R, --call-report FILE one row per CALL, before merging, with its outcome.  The\n"
+         << "                         merged report cannot be arbitrated: a haplotype feeding\n"
+         << "                         several calls in one window has its nodes concatenated\n"
+         << "                         into a sequence that was never a single allele [none]\n"
          << "  -r, --report FILE      write a TSV of every call\n"
          << "  -d, --detect-only      report only, do not rewrite\n";
 }
@@ -155,7 +163,8 @@ int main(int argc, char** argv) {
     int max_comp = 64, n_jobs = 4, threads = 2, mm_N = 50, alt_rounds = 0;
     double min_ident = 0.95, min_alt = 0.5, min_cover = 0.0;
     bool do_dup = false, detect_only = false;
-    string mm2 = "minimap2", preset = "asm20", report;
+    string mm2 = "minimap2", preset = "asm20", report, call_report, mm_extra;
+    double mm_p = 0.01;
 
     int c;
     while (true) {
@@ -168,9 +177,11 @@ int main(int argc, char** argv) {
             {"chunk",required_argument,0,'k'},{"jobs",required_argument,0,'j'},
             {"threads",required_argument,0,'t'},{"mm-secondary",required_argument,0,'N'},
             {"mm-preset",required_argument,0,'x'},
+            {"mm-p",required_argument,0,'P'},{"mm-extra",required_argument,0,'X'},
+            {"call-report",required_argument,0,'R'},
             {"minimap2",required_argument,0,'m'},{"report",required_argument,0,'r'},
             {"detect-only",no_argument,0,'d'},{"help",no_argument,0,'h'},{0,0,0,0}};
-        c = getopt_long(argc, argv, "b:i:a:C:A:Dc:L:k:j:t:N:x:m:r:dh", lo, 0);
+        c = getopt_long(argc, argv, "b:i:a:C:A:Dc:L:k:j:t:N:x:P:X:m:r:R:dh", lo, 0);
         if (c == -1) break;
         switch (c) {
             case 'b': min_block = stol(optarg); break;
@@ -186,6 +197,9 @@ int main(int argc, char** argv) {
             case 't': threads = stoi(optarg); break;
             case 'N': mm_N = stoi(optarg); break;
             case 'x': preset = optarg; break;
+            case 'P': mm_p = stod(optarg); break;
+            case 'X': mm_extra = optarg; break;
+            case 'R': call_report = optarg; break;
             case 'm': mm2 = optarg; break;
             case 'r': report = optarg; break;
             case 'd': detect_only = true; break;
@@ -462,7 +476,8 @@ int main(int argc, char** argv) {
                     }
                 }
                 stringstream cmd;
-                cmd << mm2 << " -cx " << preset << " -t " << threads << " -N 50 -p 0.01 "
+                cmd << mm2 << " -cx " << preset << " -t " << threads << " -N " << mm_N
+                    << " -p " << mm_p << " " << mm_extra << " "
                     << rf << " " << qf << " 2>/dev/null";
                 FILE* pf = popen(cmd.str().c_str(), "r");
                 if (!pf) { cerr << "[rgfa-collapse] error: cannot run minimap2\n"; exit(1); }
@@ -586,7 +601,8 @@ int main(int argc, char** argv) {
                     }
                     stringstream cmd;
                     cmd << mm2 << " -cx " << preset << " -t " << threads << " -N " << mm_N
-                        << " -p 0.01 " << rf << " " << qf << " 2>/dev/null";
+                        << " -p " << mm_p << " " << mm_extra << " "
+                        << rf << " " << qf << " 2>/dev/null";
                     FILE* pf = popen(cmd.str().c_str(), "r");
                     if (!pf) { cerr << "[rgfa-collapse] error: cannot run minimap2\n"; exit(1); }
                     char* line = nullptr; size_t cap = 0;
@@ -829,9 +845,23 @@ int main(int argc, char** argv) {
     };
 
     vector<Edge> new_edges;
-    int64_t did_inv = 0, did_dup = 0, bp_removed = 0, skipped_nochain = 0, skipped_tandem = 0;
-    for (auto& c : calls) {
-        if (!c.inversion && !do_dup) continue;
+    int64_t did_inv = 0, did_dup = 0, bp_removed = 0;
+    // Refusals are counted per orientation and in bp.  A single combined count is actively
+    // misleading: on CHM13 chr17 asm10 refused 47 calls against asm20's 25, which made asm20
+    // look like it detected 3 more inversion alleles when the difference was entirely in what
+    // was declined after detection.
+    int64_t skip_nochain_inv = 0, skip_nochain_dup = 0;
+    int64_t skip_tandem_inv = 0, skip_tandem_dup = 0;
+    int64_t bp_tandem_inv = 0, bp_tandem_dup = 0;
+    auto del_bp = [&](const vector<string>& v) {
+        int64_t b = 0; for (auto& n : v) { auto p2 = NI(n); if (p2 && !p2->deleted) b += p2->len; } return b;
+    };
+    // One outcome per call, so -R can say what happened to each rather than only what the merged
+    // site looks like.
+    vector<string> outcome(calls.size(), "not-attempted");
+    for (size_t ci = 0; ci < calls.size(); ++ci) {
+        Call& c = calls[ci];
+        if (!c.inversion && !do_dup) { outcome[ci] = "duplications-disabled"; continue; }
         // alt pieces lying inside the block, in traversal order
         vector<string> del;
         for (size_t k = 0; k < c.trav_nodes.size(); ++k) {
@@ -843,7 +873,7 @@ int main(int argc, char** argv) {
                 if (a0 >= c.q_start && b0 <= c.q_end) del.push_back(pr.second);
             }
         }
-        if (del.empty()) { ++skipped_nochain; continue; }
+        if (del.empty()) { outcome[ci] = "no-alt-piece"; if (c.inversion) ++skip_nochain_inv; else ++skip_nochain_dup; continue; }
         {
             // The wiring is the same for both directions -- route the haplotype through the
             // reference the allele duplicates, forwards or reversed:
@@ -874,7 +904,7 @@ int main(int argc, char** argv) {
                     }
                 }
             }
-            if (chain.empty()) { ++skipped_nochain; continue; }
+            if (chain.empty()) { outcome[ci] = "no-chain"; if (c.inversion) ++skip_nochain_inv; else ++skip_nochain_dup; continue; }
             // Entry / exit.  A traversal is a connected component ordered best effort, not a
             // real path, so the piece adjacent to the removed run in traversal order need not be
             // its neighbour in the graph.  Take the neighbours from the live edges instead; the
@@ -902,7 +932,7 @@ int main(int argc, char** argv) {
             }
             if (Xs.empty()) { auto pl = expand(c.L); if (live_node(pl.back().second))  Xs.push_back(pl.back().second); }
             if (Ys.empty()) { auto pl = expand(c.R); if (live_node(pl.front().second)) Ys.push_back(pl.front().second); }
-            if (Xs.empty() || Ys.empty()) { ++skipped_nochain; continue; }
+            if (Xs.empty() || Ys.empty()) { outcome[ci] = "no-endpoint"; if (c.inversion) ++skip_nochain_inv; else ++skip_nochain_dup; continue; }
             // An endpoint that is itself part of the chain means the copy sits immediately beside
             // the sequence it duplicates -- a tandem expansion.  Routing through the chain would
             // then need a cycle (s248+ -> s248+), and the extra copy is a real copy-number
@@ -912,7 +942,12 @@ int main(int argc, char** argv) {
                 bool touches = false;
                 for (auto& x : Xs) if (cs.count(x)) touches = true;
                 for (auto& y : Ys) if (cs.count(y)) touches = true;
-                if (touches) { ++skipped_tandem; continue; }
+                if (touches) {
+                    outcome[ci] = "refused-tandem";
+                    if (c.inversion) { ++skip_tandem_inv; bp_tandem_inv += del_bp(del); }
+                    else             { ++skip_tandem_dup; bp_tandem_dup += del_bp(del); }
+                    continue;
+                }
             }
             sort(Xs.begin(), Xs.end()); sort(Ys.begin(), Ys.end());
             int64_t rk = 0; for (auto& n : del) if (NI(n)) rk = max(rk, NI(n)->rank);
@@ -927,6 +962,7 @@ int main(int argc, char** argv) {
                 Edge e2; e2.from = last_hop; e2.from_fwd = orient; e2.to = Y; e2.to_fwd = true; e2.sr_rank = rk;
                 new_edges.push_back(e2);
             }
+            outcome[ci] = "repaired";
             if (c.inversion) ++did_inv; else ++did_dup;
         }
         for (auto& n : del) {
@@ -937,11 +973,44 @@ int main(int argc, char** argv) {
             for (size_t ei : node_edges[n]) edges[ei].deleted = true;
         }
     }
+    // Per-call report.  One row per call, pre-merge, so each row is exactly one claim: this
+    // haplotype's traversal matches this reference window, in this orientation, over this block.
+    // That is what an independent aligner can check; the merged report cannot be checked, because
+    // a haplotype feeding several calls in one window has its nodes glued into a sequence that was
+    // never a single allele.
+    if (!call_report.empty()) {
+        ofstream cf(call_report);
+        if (!cf) { cerr << "[rgfa-collapse] error: cannot write " << call_report << "\n"; exit(1); }
+        cf << "#call\tseq\tref_start\tref_end\ttype\thaplotypes\tnodes\tnode_bp\tblock_bp"
+              "\tident\tsnarl_L\tsnarl_R\tq_start\tq_end\ttarget_kind\toutcome\tnode_ids\n";
+        for (size_t ci = 0; ci < calls.size(); ++ci) {
+            const Call& c = calls[ci];
+            cf << ci << "\t" << c.sn << "\t" << c.ref_start << "\t" << c.ref_end << "\t"
+               << (c.inversion ? "INV" : "DUP") << "\t" << c.haps << "\t" << c.nodes.size()
+               << "\t" << c.node_bp << "\t" << c.block_bp << "\t" << c.ident << "\t"
+               << c.L << "\t" << c.R << "\t" << c.q_start << "\t" << c.q_end << "\t"
+               << (c.target_nodes.empty() ? "reference" : "alt-representative") << "\t"
+               << outcome[ci] << "\t";
+            bool f = true; for (auto& n : c.nodes) { if (!f) cf << ","; cf << n; f = false; }
+            cf << "\n";
+        }
+        cf.flush();
+        if (!cf) { cerr << "[rgfa-collapse] error: failed writing " << call_report << "\n"; exit(1); }
+        map<string,int64_t> oc;
+        for (auto& o : outcome) ++oc[o];
+        cerr << "[rgfa-collapse] wrote " << call_report << " (" << calls.size() << " call(s):";
+        for (auto& kv : oc) cerr << " " << kv.first << "=" << kv.second;
+        cerr << ")\n";
+    }
     cerr << "[rgfa-collapse] repaired " << did_inv << " inversion allele(s)";
     if (do_dup) cerr << " and " << did_dup << " duplication(s)";
     cerr << "; " << bp_removed << " bp removed";
-    if (skipped_nochain) cerr << "; " << skipped_nochain << " skipped (no chain or no alt piece inside the block)";
-    if (skipped_tandem) cerr << "; " << skipped_tandem << " skipped (tandem: copy adjacent to its source)";
+    cerr << "\n[rgfa-collapse] refused as tandem (copy adjacent to its source): "
+         << skip_tandem_inv << " inversion allele(s) / " << bp_tandem_inv << " bp, "
+         << skip_tandem_dup << " duplication(s) / " << bp_tandem_dup << " bp";
+    if (skip_nochain_inv || skip_nochain_dup)
+        cerr << "\n[rgfa-collapse] skipped (no chain or no alt piece inside the block): "
+             << skip_nochain_inv << " inversion, " << skip_nochain_dup << " duplication";
     cerr << "\n";
 
     // Collapsing can orphan alt nodes that only existed inside the redundant sequence -- nested
