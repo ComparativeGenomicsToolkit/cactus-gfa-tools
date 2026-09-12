@@ -110,7 +110,7 @@ gaffilter: gaffilter_main.o gafkluge.hpp paf.hpp IntervalTree.h
 	$(CXX) $(INCLUDE_FLAGS) $(CXXFLAGS) $(CPPFLAGS) -o gaffilter gaffilter_main.cpp $(INC_FLAGS)
 
 test : all paf2lastz_test pafmask_test
-	cd test && prove -v test.t && prove -v gaf2paf.t
+	cd test && prove -v test.t && prove -v gaf2paf.t && prove -v gaffilter.t
 
 paf2lastz_test: mapqTest scoreTest
 	rm -f test/paf2lastz/out_mapq test/paf2lastz/out_score
