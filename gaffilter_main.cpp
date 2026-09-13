@@ -387,6 +387,7 @@ static void help(char** argv) {
          << "    -t, --trim                      Instead of deleting a record that loses an overlap, cut the contested span out of it and keep the rest (GAF input only)" << endl
          << "    -g, --trim-min-gap N            With -t, only a hole longer than N, with alignment still on both sides, is worth closing at all (see -R); shorter ones do not split a path downstream [10000]" << endl
          << "    -l, --node-lengths FILE         Node lengths (as written by gaf2unstable -o). Needed by -t on an unstable GAF, whose path names carry no interval" << endl
+         << "    -Q, --trim-min-mapq N           With -t, a record that loses an overlap and whose OWN mapq is under N is deleted whole, as it would be without -t. Losing an overlap and being poorly placed are two marks against it, and the flanks of a record that is wrong along its length are not worth keeping [0]" << endl
          << "    -e, --trim-edge N               With -t, also cut N bases beyond each side of a contested span. The bases abutting an overlap are the least trustworthy part of the alignment, and cactus keeps unaligned stretches shorter than its own clip threshold anyway [5000]" << endl
          << "    -R, --rescue-weak               With -t, close such a hole by giving the span to the best claimant (primary, then MAPQ, then block length). Off by default, because no such choice can meet the bar -r sets: leaving a hole clips sequence out, but a wrong placement puts a wrong alignment in" << endl
          << "    -p, --paf                       Input is PAF, not GAF" << endl;
@@ -408,6 +409,7 @@ int main(int argc, char** argv) {
     bool rescue_weak = false;
     int64_t trim_min_gap = 10000;
     int64_t trim_edge = 5000;
+    int64_t trim_min_mapq = 0;
     string node_lengths_path;
 
     int c;
@@ -427,6 +429,7 @@ int main(int argc, char** argv) {
             {"trim-min-gap", required_argument, 0, 'g'},
             {"rescue-weak", no_argument, 0, 'R'},
             {"trim-edge", required_argument, 0, 'e'},
+            {"trim-min-mapq", required_argument, 0, 'Q'},
             {"node-lengths", required_argument, 0, 'l'},
             {"paf", no_argument, 0, 'p'},
             {0, 0, 0, 0}
@@ -434,7 +437,7 @@ int main(int argc, char** argv) {
 
         int option_index = 0;
 
-        c = getopt_long (argc, argv, "h:r:m:po:b:q:i:tg:l:Re:",
+        c = getopt_long (argc, argv, "h:r:m:po:b:q:i:tg:l:Re:Q:",
                          long_options, &option_index);
 
         // Detect the end of the options.
@@ -478,6 +481,9 @@ int main(int argc, char** argv) {
             break;
         case 'e':
             trim_edge = std::stol(optarg);
+            break;
+        case 'Q':
+            trim_min_mapq = std::stol(optarg);
             break;
         case 'h':
         case '?':
@@ -656,6 +662,7 @@ int main(int argc, char** argv) {
     int64_t rescue_count = 0;
     int64_t rescue_declined = 0;
     int64_t holes_opened = 0;
+    int64_t mapq_deleted = 0;
     int64_t holes_opened_bp = 0;
     int64_t trim_fail_count = 0;
 
@@ -870,6 +877,17 @@ int main(int argc, char** argv) {
     }
 
     for (int64_t i = 0; i < (int64_t)gaf_records.size(); ++i) {
+        // A record that loses an overlap AND is poorly placed in its own right has two marks
+        // against it, and the parts of it nothing contested are no more trustworthy than the part
+        // that lost.  Whole-record deletion treated the overlap as a quality signal about the
+        // whole record; -Q keeps that reading for records below the bar, so the trim only ever
+        // applies to a record that stands up on its own.
+        if (trim_mode && !contested[i].empty() && trim_min_mapq > 0 &&
+            gaf_records[i].mapq < trim_min_mapq) {
+            contested[i].clear();
+            keep[i] = 0;
+            ++mapq_deleted;
+        }
         // a survivor with nothing to give up goes out untouched.  this is decided on the verdict
         // and not on whether the record has any query span left, because a record with an empty
         // query interval yields no fragments and the old code still printed it
@@ -922,6 +940,11 @@ int main(int argc, char** argv) {
                  << " ambiguous"
                  << (rescue_weak ? "" : " (-R would close them, on evidence this filter rejects)")
                  << ", " << holes_opened << " spanned by no single record" << endl;
+        }
+        if (mapq_deleted) {
+            cerr << "[gaffilter]: deleted " << mapq_deleted << " record(s) whole rather than "
+                 << "trimming them: they lost an overlap and their own mapq is under "
+                 << trim_min_mapq << endl;
         }
         if (trim_fail_count) {
             cerr << "[gaffilter]: warning: " << trim_fail_count << " record(s) could not be cut "

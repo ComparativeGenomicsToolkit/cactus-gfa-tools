@@ -6,7 +6,7 @@ BASH_TAP_ROOT=./bash-tap
 PATH=../bin:$PATH
 PATH=../:$PATH
 
-plan tests 32
+plan tests 37
 
 # A three-record query: two long alignments that overlap at a seam, plus a bystander.  The seam is
 # what the filter is for; the flanks are what -t stops it from taking as well.
@@ -169,5 +169,27 @@ EOF
 gaffilter trim_tmp/edgetie.gaf -r 5 -m 0 -t -e 1000 2>/dev/null > trim_tmp/et.out
 is $(awk '$3==33000 && $4==38000' trim_tmp/et.out | wc -l) 1 "a tie pulls the left record back by -e too"
 is $(awk '$3==41000 && $4==46000' trim_tmp/et.out | wc -l) 1 "and the right record forward by -e"
+
+# -Q: a record that loses an overlap AND is poorly placed in its own right keeps the old
+# treatment, deleted whole.  The overlap was always a signal about the record, not just about the
+# overlapping part, and the flanks of a record that is wrong along its length are not worth having.
+cat > trim_tmp/lowq.gaf <<'EOF'
+q	200000	0	40000	+	>n1:0-40000	40000	0	40000	40000	40000	60	cg:Z:40000=
+q	200000	39000	46000	+	>n2:0-7000	7000	0	7000	7000	7000	9	cg:Z:7000=
+EOF
+gaffilter trim_tmp/lowq.gaf -r 5 -m 0 -t -e 0 -Q 0 2>/dev/null > trim_tmp/q0.out
+gaffilter trim_tmp/lowq.gaf -r 5 -m 0 -t -e 0 -Q 20 2>trim_tmp/q20.err > trim_tmp/q20.out
+is $(awk '$3==40000 && $4==46000' trim_tmp/q0.out | wc -l) 1 "-Q 0 trims a low-mapq loser like any other"
+is $(wc -l < trim_tmp/q20.out) 1 "-Q 20 deletes it whole instead"
+is $(awk '$3==0 && $4==40000' trim_tmp/q20.out | wc -l) 1 "and the record that won is untouched"
+is $(grep -c 'their own mapq is under 20' trim_tmp/q20.err) 1 "and says so"
+
+# the bar applies to the record's OWN mapq, not the winner's: a mapq-60 loser is still trimmed
+cat > trim_tmp/hiq.gaf <<'EOF'
+q	200000	0	40000	+	>n1:0-40000	40000	0	40000	40000	40000	60	cg:Z:40000=
+q	200000	39000	46000	+	>n2:0-7000	7000	0	7000	7000	7000	60	cg:Z:7000=
+EOF
+gaffilter trim_tmp/hiq.gaf -r 5 -m 0 -t -e 0 -Q 20 2>/dev/null > trim_tmp/hiq.out
+is $(awk '$3==40000 && $4==46000' trim_tmp/hiq.out | wc -l) 1 "a loser that is itself mapq 60 is still trimmed under -Q 20"
 
 rm -rf trim_tmp
