@@ -6,7 +6,7 @@ BASH_TAP_ROOT=./bash-tap
 PATH=../bin:$PATH
 PATH=../:$PATH
 
-plan tests 27
+plan tests 32
 
 # A three-record query: two long alignments that overlap at a seam, plus a bystander.  The seam is
 # what the filter is for; the flanks are what -t stops it from taking as well.
@@ -23,7 +23,7 @@ is $(wc -l < trim_tmp/notrim.gaf) 1 "without -t a tie deletes both records"
 is $(awk '$3==2500' trim_tmp/notrim.gaf | wc -l) 1 "the record with no overlap is kept"
 
 # with -t, both survive, each having given up only the contested 200 bp
-gaffilter trim_tmp/in.gaf -r 5 -m 0 -t 2>/dev/null > trim_tmp/trim.gaf
+gaffilter trim_tmp/in.gaf -r 5 -m 0 -t -e 0 2>/dev/null > trim_tmp/trim.gaf
 is $(wc -l < trim_tmp/trim.gaf) 3 "with -t no record is deleted"
 is $(awk '$1=="q" && $3==0 && $4==1000' trim_tmp/trim.gaf | wc -l) 1 "the first record is trimmed to the seam"
 is $(awk '$1=="q" && $3==1200 && $4==2200' trim_tmp/trim.gaf | wc -l) 1 "the second record is trimmed to the seam"
@@ -40,7 +40,7 @@ cat > trim_tmp/dom.gaf <<'EOF'
 q	20000	0	14000	+	>n1:0-14000	14000	0	14000	14000	14000	60	cg:Z:14000=
 q	20000	600	2000	+	>n2:0-1400	1400	0	1400	1400	1400	60	cg:Z:1400=
 EOF
-gaffilter trim_tmp/dom.gaf -r 5 -m 0 -t -g 100 2>trim_tmp/dom.err > trim_tmp/dom.out
+gaffilter trim_tmp/dom.gaf -r 5 -m 0 -t -e 0 -g 100 2>trim_tmp/dom.err > trim_tmp/dom.out
 is $(awk '$3==0 && $4==14000' trim_tmp/dom.out | wc -l) 1 "a dominating record is not trimmed, so no hole opens"
 is $(grep -c 'hole(s)' trim_tmp/dom.err) 0 "and nothing is reported as a hole"
 
@@ -50,12 +50,12 @@ cat > trim_tmp/hole.gaf <<'EOF'
 q	3000	0	1400	+	>n1:0-1400	1400	0	1400	1400	1400	60	cg:Z:1400=
 q	3000	600	2000	+	>n2:0-1400	1400	0	1400	1400	1400	60	cg:Z:1400=
 EOF
-gaffilter trim_tmp/hole.gaf -r 5 -m 0 -t -g 100 2>trim_tmp/hole.err > trim_tmp/hole.out
+gaffilter trim_tmp/hole.gaf -r 5 -m 0 -t -e 0 -g 100 2>trim_tmp/hole.err > trim_tmp/hole.out
 is $(grep -c 'rescued 0 contested spans' trim_tmp/hole.err) 1 "an ambiguous hole is not closed by guessing"
 is $(grep -c 'ambiguous' trim_tmp/hole.err) 1 "and the hole it leaves is reported, not silent"
 
 # -R opts in to closing it anyway, on the filter's own ordering rather than raw block length
-gaffilter trim_tmp/hole.gaf -r 5 -m 0 -t -g 100 -R 2>trim_tmp/weak.err > /dev/null
+gaffilter trim_tmp/hole.gaf -r 5 -m 0 -t -e 0 -g 100 -R 2>trim_tmp/weak.err > /dev/null
 is $(grep -c 'rescued 1 contested spans' trim_tmp/weak.err) 1 "-R closes an ambiguous hole"
 
 # a secondary must never take a span from a primary, whatever the block lengths say
@@ -64,7 +64,7 @@ q	4000	0	3000	+	>n1:0-3000	3000	0	3000	3000	3000	60	cg:Z:3000=	tp:A:P
 q	4000	0	3200	+	>n2:0-3200	3200	0	3200	3200	3200	60	cg:Z:3200=	tp:A:S
 q	4000	1000	2000	+	>n3:0-1000	1000	0	1000	1000	1000	60	cg:Z:1000=	tp:A:P
 EOF
-gaffilter trim_tmp/sec.gaf -r 5 -m 0 -t -g 100 -R 2>/dev/null > trim_tmp/sec.out
+gaffilter trim_tmp/sec.gaf -r 5 -m 0 -t -e 0 -g 100 -R 2>/dev/null > trim_tmp/sec.out
 is $(awk '$3==1000 && $4==2000 && /tp:A:S/' trim_tmp/sec.out | wc -l) 0 "a secondary does not take the span from a primary"
 
 # a hole spanned by no single record cannot be closed by any one claimant; it must still be counted
@@ -74,11 +74,11 @@ q	4000	500	1500	+	>n2:0-1000	1000	0	1000	1000	1000	60	cg:Z:1000=
 q	4000	1500	3000	+	>n3:0-1500	1500	0	1500	1500	1500	60	cg:Z:1500=
 q	4000	1500	2500	+	>n4:0-1000	1000	0	1000	1000	1000	60	cg:Z:1000=
 EOF
-gaffilter trim_tmp/two.gaf -r 5 -m 0 -t -g 100 2>trim_tmp/two.err > /dev/null
+gaffilter trim_tmp/two.gaf -r 5 -m 0 -t -e 0 -g 100 2>trim_tmp/two.err > /dev/null
 is $(grep -c 'spanned by no single record' trim_tmp/two.err) 1 "a hole no single record spans is reported"
 
 # a hole shorter than -g is left alone, since cactus-graphmap-join will not split a path on it
-gaffilter trim_tmp/hole.gaf -r 5 -m 0 -t -g 10000 2>trim_tmp/nohole.err > /dev/null
+gaffilter trim_tmp/hole.gaf -r 5 -m 0 -t -e 0 -g 10000 2>trim_tmp/nohole.err > /dev/null
 is $(grep -c 'rescued 0 contested spans' trim_tmp/nohole.err) 1 "a hole shorter than -g is not rescued"
 is $(grep -c 'hole(s)' trim_tmp/nohole.err) 0 "and a sub-threshold hole is not reported as one"
 
@@ -90,10 +90,10 @@ q	9000	2000	3000	+	>n2:0-1000	1000	0	1000	1000	1000	60	cg:Z:1000=
 r	9000	0	1000	+	>n3:0-1000	1000	0	1000	1000	1000	60	cg:Z:1000=
 EOF
 gaffilter trim_tmp/disjoint.gaf -r 5 -m 0 -q 5 -b 250000 -i 0.5 2>/dev/null > trim_tmp/a.gaf
-gaffilter trim_tmp/disjoint.gaf -r 5 -m 0 -q 5 -b 250000 -i 0.5 -t 2>/dev/null > trim_tmp/b.gaf
+gaffilter trim_tmp/disjoint.gaf -r 5 -m 0 -q 5 -b 250000 -i 0.5 -t -e 0 2>/dev/null > trim_tmp/b.gaf
 is $(cmp -s trim_tmp/a.gaf trim_tmp/b.gaf && echo same) "same" "-t is byte-identical when no record loses an overlap"
 is $(wc -l < trim_tmp/b.gaf) 3 "and nothing is dropped"
-gaffilter trim_tmp/in.gaf -r 5 -m 0 -t -p 2>trim_tmp/paf.err > /dev/null || true
+gaffilter trim_tmp/in.gaf -r 5 -m 0 -t -e 0 -p 2>trim_tmp/paf.err > /dev/null || true
 is $(grep -c 'cannot be used with -p' trim_tmp/paf.err) 1 "-t is refused with -p"
 
 # a record with an empty query interval yields no fragment to trim, but it is still a survivor.
@@ -102,7 +102,7 @@ cat > trim_tmp/empty.gaf <<'EOF'
 q	1000	500	500	+	>n1:0-10	10	0	10	10	10	60	cg:Z:10=
 q	1000	0	400	+	>n2:0-400	400	0	400	400	400	60	cg:Z:400=
 EOF
-gaffilter trim_tmp/empty.gaf -r 5 -m 0 -t 2>/dev/null > trim_tmp/empty.out
+gaffilter trim_tmp/empty.gaf -r 5 -m 0 -t -e 0 2>/dev/null > trim_tmp/empty.out
 is $(wc -l < trim_tmp/empty.out) 2 "a kept record with an empty query interval is not dropped by -t"
 
 # The lengths file -t needs is written by the upstream process of the same pipe
@@ -121,20 +121,20 @@ n4	1200
 ' > trim_tmp/lengths.src
 
 rm -f trim_tmp/late.tsv
-( sleep 1; cp trim_tmp/lengths.src trim_tmp/late.tsv; cat trim_tmp/bare.gaf )   | gaffilter - -r 5 -m 0 -t -l trim_tmp/late.tsv 2>/dev/null > trim_tmp/late.out
+( sleep 1; cp trim_tmp/lengths.src trim_tmp/late.tsv; cat trim_tmp/bare.gaf )   | gaffilter - -r 5 -m 0 -t -e 0 -l trim_tmp/late.tsv 2>/dev/null > trim_tmp/late.out
 is $(awk '$3==0 && $4==1000' trim_tmp/late.out | wc -l) 1 "a lengths file that only appears after the input is still read"
 
 # the cut drops the path steps it left behind, so the record stays canonical for gaf2paf
 is "$(awk '$3==0 && $4==1000 {print $6 "/" $7}' trim_tmp/late.out)" ">n1/1200" "the trimmed path drops the step the cut left behind"
 
 # without -l a bare multi-step path cannot be rebased; that must degrade to the old behaviour
-gaffilter trim_tmp/bare.gaf -r 5 -m 0 -t 2>trim_tmp/nolen.err > trim_tmp/nolen.out
+gaffilter trim_tmp/bare.gaf -r 5 -m 0 -t -e 0 2>trim_tmp/nolen.err > trim_tmp/nolen.out
 is $(grep -c 'could not be cut' trim_tmp/nolen.err) 1 "without -l an uncuttable record is deleted whole, with a warning"
 
 # -l is documented across these tools as accepting a .fai, which has five columns.  Reading it
 # with >> took columns 3 and 4 of line 1 as the next pair and silently produced a garbage map.
 printf 'n1\t1200\t10\t60\t61\nn2\t1200\t20\t60\t61\nn3\t1200\t30\t60\t61\nn4\t1200\t40\t60\t61\n' > trim_tmp/lengths.fai
-gaffilter trim_tmp/bare.gaf -r 5 -m 0 -t -l trim_tmp/lengths.fai 2>trim_tmp/fai.err > trim_tmp/fai.out
+gaffilter trim_tmp/bare.gaf -r 5 -m 0 -t -e 0 -l trim_tmp/lengths.fai 2>trim_tmp/fai.err > trim_tmp/fai.out
 is $(grep -c 'Loaded 4 node lengths' trim_tmp/fai.err) 1 "a .fai-shaped lengths file is read, not mis-parsed"
 is $(awk '$3==0 && $4==1000' trim_tmp/fai.out | wc -l) 1 "and the trim still happens with it"
 
@@ -145,7 +145,29 @@ cat > trim_tmp/inf.gaf <<'EOF'
 q	5000	0	200	+	>x>a0	300	0	200	200	200	1	cg:Z:200=
 q	5000	0	150	+	>blk:0-150	150	0	150	150	150	60	cg:Z:150=
 EOF
-gaffilter trim_tmp/inf.gaf -r 5 -m 0 -t -g -1 -l trim_tmp/part.tsv 2>/dev/null > trim_tmp/inf.out
+gaffilter trim_tmp/inf.gaf -r 5 -m 0 -t -e 0 -g -1 -l trim_tmp/part.tsv 2>/dev/null > trim_tmp/inf.out
 is $(grep -c '>x' trim_tmp/inf.out) 0 "a multi-step path with an unknown step length is not cut on a guess"
+
+# -e widens each contested span on both sides: the bases butting up against an overlap are the
+# least trustworthy part of the alignment.  Clipped to the record's own span, so only the interior
+# border actually moves, and the dominating record -- which was never contested -- does not move.
+cat > trim_tmp/edge.gaf <<'EOF'
+q	200000	0	40000	+	>n1:0-40000	40000	0	40000	40000	40000	60	cg:Z:40000=
+q	200000	39000	46000	+	>n2:0-7000	7000	0	7000	7000	7000	60	cg:Z:7000=
+EOF
+gaffilter trim_tmp/edge.gaf -r 5 -m 0 -t -e 0 2>/dev/null > trim_tmp/e0.out
+gaffilter trim_tmp/edge.gaf -r 5 -m 0 -t -e 5000 2>/dev/null > trim_tmp/e5.out
+is $(awk '$3==40000 && $4==46000' trim_tmp/e0.out | wc -l) 1 "-e 0 trims exactly the contested span"
+is $(awk '$3==45000 && $4==46000' trim_tmp/e5.out | wc -l) 1 "-e 5000 trims 5000 further past the border"
+is $(awk '$3==0 && $4==40000' trim_tmp/e5.out | wc -l) 1 "and the record that was never contested does not move"
+
+# in a tie both sides pull back, so the hole widens by 2*-e rather than -e
+cat > trim_tmp/edgetie.gaf <<'EOF'
+q	200000	33000	40000	+	>n1:0-7000	7000	0	7000	7000	7000	60	cg:Z:7000=
+q	200000	39000	46000	+	>n2:0-7000	7000	0	7000	7000	7000	60	cg:Z:7000=
+EOF
+gaffilter trim_tmp/edgetie.gaf -r 5 -m 0 -t -e 1000 2>/dev/null > trim_tmp/et.out
+is $(awk '$3==33000 && $4==38000' trim_tmp/et.out | wc -l) 1 "a tie pulls the left record back by -e too"
+is $(awk '$3==41000 && $4==46000' trim_tmp/et.out | wc -l) 1 "and the right record forward by -e"
 
 rm -rf trim_tmp

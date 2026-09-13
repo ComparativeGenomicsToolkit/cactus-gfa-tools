@@ -387,6 +387,7 @@ static void help(char** argv) {
          << "    -t, --trim                      Instead of deleting a record that loses an overlap, cut the contested span out of it and keep the rest (GAF input only)" << endl
          << "    -g, --trim-min-gap N            With -t, only a hole longer than N, with alignment still on both sides, is worth closing at all (see -R); shorter ones do not split a path downstream [10000]" << endl
          << "    -l, --node-lengths FILE         Node lengths (as written by gaf2unstable -o). Needed by -t on an unstable GAF, whose path names carry no interval" << endl
+         << "    -e, --trim-edge N               With -t, also cut N bases beyond each side of a contested span. The bases abutting an overlap are the least trustworthy part of the alignment, and cactus keeps unaligned stretches shorter than its own clip threshold anyway [5000]" << endl
          << "    -R, --rescue-weak               With -t, close such a hole by giving the span to the best claimant (primary, then MAPQ, then block length). Off by default, because no such choice can meet the bar -r sets: leaving a hole clips sequence out, but a wrong placement puts a wrong alignment in" << endl
          << "    -p, --paf                       Input is PAF, not GAF" << endl;
 }    
@@ -406,6 +407,7 @@ int main(int argc, char** argv) {
     bool trim_mode = false;
     bool rescue_weak = false;
     int64_t trim_min_gap = 10000;
+    int64_t trim_edge = 5000;
     string node_lengths_path;
 
     int c;
@@ -424,6 +426,7 @@ int main(int argc, char** argv) {
             {"trim", no_argument, 0, 't'},
             {"trim-min-gap", required_argument, 0, 'g'},
             {"rescue-weak", no_argument, 0, 'R'},
+            {"trim-edge", required_argument, 0, 'e'},
             {"node-lengths", required_argument, 0, 'l'},
             {"paf", no_argument, 0, 'p'},
             {0, 0, 0, 0}
@@ -431,7 +434,7 @@ int main(int argc, char** argv) {
 
         int option_index = 0;
 
-        c = getopt_long (argc, argv, "h:r:m:po:b:q:i:tg:l:R",
+        c = getopt_long (argc, argv, "h:r:m:po:b:q:i:tg:l:Re:",
                          long_options, &option_index);
 
         // Detect the end of the options.
@@ -472,6 +475,9 @@ int main(int argc, char** argv) {
             break;
         case 'R':
             rescue_weak = true;
+            break;
+        case 'e':
+            trim_edge = std::stol(optarg);
             break;
         case 'h':
         case '?':
@@ -721,6 +727,21 @@ int main(int argc, char** argv) {
         }
         if (trim_mode) {
             contested[i] = merge_intervals(contested[i]);
+            // Widen each contested span by -e before anything downstream looks at it, so the
+            // rescue and the emit loop agree on what is actually given up.  The bases butting up
+            // against an overlap are where the alignment is least certain, and cactus will carry
+            // an unaligned stretch shorter than its clip threshold regardless.  Clipping to the
+            // record's own span makes the outer side a no-op, so in practice only the interior
+            // borders move; a record shorter than the widening is given up whole.
+            if (trim_edge > 0 && !contested[i].empty()) {
+                vector<QueryInterval> widened;
+                for (const auto& c : contested[i]) {
+                    widened.push_back(make_pair(
+                        std::max(gaf_records[i].query_start, c.first - trim_edge),
+                        std::min(gaf_records[i].query_end, c.second + trim_edge)));
+                }
+                contested[i] = merge_intervals(widened);
+            }
         }
 #ifdef debug
         if (!keep[i] || !contested[i].empty()) {
