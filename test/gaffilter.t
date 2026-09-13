@@ -6,7 +6,7 @@ BASH_TAP_ROOT=./bash-tap
 PATH=../bin:$PATH
 PATH=../:$PATH
 
-plan tests 37
+plan tests 39
 
 # A three-record query: two long alignments that overlap at a seam, plus a bystander.  The seam is
 # what the filter is for; the flanks are what -t stops it from taking as well.
@@ -55,8 +55,8 @@ is $(grep -c 'rescued 0 contested spans' trim_tmp/hole.err) 1 "an ambiguous hole
 is $(grep -c 'ambiguous' trim_tmp/hole.err) 1 "and the hole it leaves is reported, not silent"
 
 # -R opts in to closing it anyway, on the filter's own ordering rather than raw block length
-gaffilter trim_tmp/hole.gaf -r 5 -m 0 -t -e 0 -g 100 -R 2>trim_tmp/weak.err > /dev/null
-is $(grep -c 'rescued 1 contested spans' trim_tmp/weak.err) 1 "-R closes an ambiguous hole"
+gaffilter trim_tmp/hole.gaf -r 5 -m 0 -t -e 0 -g 100 --close-holes 2>trim_tmp/weak.err > /dev/null
+is $(grep -c 'rescued 1 contested spans' trim_tmp/weak.err) 1 "--close-holes closes an ambiguous hole"
 
 # a secondary must never take a span from a primary, whatever the block lengths say
 cat > trim_tmp/sec.gaf <<'EOF'
@@ -191,5 +191,15 @@ q	200000	39000	46000	+	>n2:0-7000	7000	0	7000	7000	7000	60	cg:Z:7000=
 EOF
 gaffilter trim_tmp/hiq.gaf -r 5 -m 0 -t -e 0 -Q 20 2>/dev/null > trim_tmp/hiq.out
 is $(awk '$3==40000 && $4==46000' trim_tmp/hiq.out | wc -l) 1 "a loser that is itself mapq 60 is still trimmed under -Q 20"
+
+# getopt_long resolves unique prefixes, so a new long option can silently break an old
+# abbreviation.  --r was a unique prefix of --ratio until a --rescue-weak was added next to it,
+# which turned a working invocation into a fatal parse error.  The option is now --close-holes.
+cat > trim_tmp/one.gaf <<'EOF'
+q1	100	0	50	+	>s1:0-50	50	0	50	50	50	60	cg:Z:50=
+EOF
+gaffilter trim_tmp/one.gaf --r 5 > trim_tmp/abbrev.out 2>/dev/null
+is $? 0 "--r is still an unambiguous abbreviation of --ratio"
+is $(wc -l < trim_tmp/abbrev.out) 1 "and still filters"
 
 rm -rf trim_tmp

@@ -389,7 +389,7 @@ static void help(char** argv) {
          << "    -l, --node-lengths FILE         Node lengths (as written by gaf2unstable -o). Needed by -t on an unstable GAF, whose path names carry no interval" << endl
          << "    -Q, --trim-min-mapq N           With -t, a record that loses an overlap and whose OWN mapq is under N is deleted whole, as it would be without -t. Losing an overlap and being poorly placed are two marks against it, and the flanks of a record that is wrong along its length are not worth keeping [0]" << endl
          << "    -e, --trim-edge N               With -t, also cut N bases beyond each side of a contested span. The bases abutting an overlap are the least trustworthy part of the alignment, and cactus keeps unaligned stretches shorter than its own clip threshold anyway [5000]" << endl
-         << "    -R, --rescue-weak               With -t, close such a hole by giving the span to the best claimant (primary, then MAPQ, then block length). Off by default, because no such choice can meet the bar -r sets: leaving a hole clips sequence out, but a wrong placement puts a wrong alignment in" << endl
+         << "    -R, --close-holes               With -t, close such a hole by giving the span to the best claimant (primary, then MAPQ, then block length). Off by default, because no such choice can meet the bar -r sets: leaving a hole clips sequence out, but a wrong placement puts a wrong alignment in" << endl
          << "    -p, --paf                       Input is PAF, not GAF" << endl;
 }    
 
@@ -427,7 +427,10 @@ int main(int argc, char** argv) {
             {"min-identity", required_argument, 0, 'i'},
             {"trim", no_argument, 0, 't'},
             {"trim-min-gap", required_argument, 0, 'g'},
-            {"rescue-weak", no_argument, 0, 'R'},
+            // NOT "rescue-weak": getopt_long resolves unique prefixes, and an r-prefixed name
+            // makes "--r" ambiguous with the long-standing "--ratio", turning a working
+            // invocation into a fatal parse error
+            {"close-holes", no_argument, 0, 'R'},
             {"trim-edge", required_argument, 0, 'e'},
             {"trim-min-mapq", required_argument, 0, 'Q'},
             {"node-lengths", required_argument, 0, 'l'},
