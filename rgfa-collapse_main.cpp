@@ -185,17 +185,23 @@ int main(int argc, char** argv) {
     // Cactus's own lastz settings for its most-similar distance class ("one" in
     // <lastzArguments>), which is the right template: these alignments are ~99% identical.
     // --ambiguous=iupac matters because assembly-derived graph sequence carries IUPAC codes.
-    // --masking=500 is not cactus's, and it is required: without it lastz aborts outright on
-    // CHM13 satellite -- "table size (4,869,542,152 for 101,448,794 segments) exceeds allocation
-    // limit of 4,294,967,279" from add_segment(), a hard 2^32 internal cap.  Masking target
-    // positions hit more than 500 times keeps the seed table bounded.  (An HSP limit such as
-    // cactus's --queryhsplimit=keep,nowarn does NOT help: it acts after segment accumulation.)
+    // KNOWN LIMITATION on satellite.  lastz aborts outright on some CHM13 sites:
+    //   "table size (4,869,542,152 for 101,448,794 segments) exceeds allocation limit of
+    //    4,294,967,279"  -- add_segment(), a hard 2^32 internal cap.
+    // Neither --masking nor an HSP limit avoids it: masking is applied dynamically as queries
+    // stream, so it cannot help the query that explodes, and --queryhsplimit acts only after
+    // segments have accumulated.  Measured on CHM13 chr9, --masking=500 and =100 give a
+    // byte-identical failure, the same 101,448,794 segments.  lastz also tries to allocate
+    // ~4.8 GB for that table, so several concurrent jobs can exhaust a node.
+    // The failing chunk is skipped and counted (see the aligner-failure handling below), but
+    // 8 of chr9's 15 chunks are lost that way, so lastz is NOT currently suitable as the
+    // default aligner for CHM13-referenced graphs.  minimap2 has no such limit.
     // --queryhspbest is the throughput control -- cactus uses 100000 for whole chromosomes, but
     // these windows are small and 100 is ample: it caps how many HSPs reach gapped extension,
     // which takes this graph from 564s to 7s for byte-identical bp removed.  NOT --chain: see
     // the invocation below.
     string lastz_args = "--step=2 --ambiguous=iupac,100,100 --ydrop=3000 --notransition"
-                        " --queryhspbest=100 --masking=500";
+                        " --queryhspbest=100";
     double mm_p = 0.01;
 
     int c;
