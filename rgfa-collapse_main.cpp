@@ -150,6 +150,16 @@ static void help(char** argv) {
          << "  -X, --mm-extra STR     extra minimap2 arguments, appended last (so they override\n"
          << "                         the settings above); for parameter sweeps [none]\n"
          << "  -m, --minimap2 PATH    minimap2 binary [minimap2]\n"
+         << "  -z, --lastz PATH       align with lastz instead of minimap2.  lastz builds no\n"
+         << "                         index shared across sites, so its results do not depend on\n"
+         << "                         what else lands in a chunk -- which is where minimap2 is\n"
+         << "                         fragile: -x asm20 finds 507 inversion alleles on HPRC\n"
+         << "                         GRCh38 per-chromosome and 241 whole-genome, on the same\n"
+         << "                         graph.  Emits the same PAF columns via --format=paf:wfmash,\n"
+         << "                         so -b/-i/-a apply unchanged.  -k, -N, -p, -x and -X do not.\n"
+         << "  -Z, --lastz-extra STR  extra lastz arguments, appended last, so they override the\n"
+         << "                         built-in set, which is cactus's own most-similar-distance\n"
+         << "                         lastzArguments with a tighter --queryhspbest [none]\n"
          << "  -R, --call-report FILE one row per CALL, before merging, with its outcome.  The\n"
          << "                         merged report cannot be arbitrated: a haplotype feeding\n"
          << "                         several calls in one window has its nodes concatenated\n"
@@ -164,6 +174,16 @@ int main(int argc, char** argv) {
     double min_ident = 0.95, min_alt = 0.5, min_cover = 0.0;
     bool do_dup = false, detect_only = false;
     string mm2 = "minimap2", preset = "asm20", report, call_report, mm_extra;
+    string lastz, lastz_extra;
+    // Cactus's own lastz settings for its most-similar distance class ("one" in
+    // <lastzArguments>), which is the right template: these alignments are ~99% identical.
+    // --ambiguous=iupac matters because assembly-derived graph sequence carries IUPAC codes.
+    // --queryhspbest is the throughput control -- cactus uses 100000 for whole chromosomes, but
+    // these windows are small and 100 is ample: it caps how many HSPs reach gapped extension,
+    // which takes this graph from 564s to 7s for byte-identical bp removed.  NOT --chain: see
+    // the invocation below.
+    string lastz_args = "--step=2 --ambiguous=iupac,100,100 --ydrop=3000 --notransition"
+                        " --queryhspbest=100";
     double mm_p = 0.01;
 
     int c;
@@ -179,9 +199,10 @@ int main(int argc, char** argv) {
             {"mm-preset",required_argument,0,'x'},
             {"mm-p",required_argument,0,'P'},{"mm-extra",required_argument,0,'X'},
             {"call-report",required_argument,0,'R'},
+            {"lastz",required_argument,0,'z'},{"lastz-extra",required_argument,0,'Z'},
             {"minimap2",required_argument,0,'m'},{"report",required_argument,0,'r'},
             {"detect-only",no_argument,0,'d'},{"help",no_argument,0,'h'},{0,0,0,0}};
-        c = getopt_long(argc, argv, "b:i:a:C:A:Dc:L:k:j:t:N:x:P:X:m:r:R:dh", lo, 0);
+        c = getopt_long(argc, argv, "b:i:a:C:A:Dc:L:k:j:t:N:x:P:X:m:r:R:z:Z:dh", lo, 0);
         if (c == -1) break;
         switch (c) {
             case 'b': min_block = stol(optarg); break;
@@ -200,6 +221,8 @@ int main(int argc, char** argv) {
             case 'P': mm_p = stod(optarg); break;
             case 'X': mm_extra = optarg; break;
             case 'R': call_report = optarg; break;
+            case 'z': lastz = optarg; break;
+            case 'Z': lastz_extra = optarg; break;
             case 'm': mm2 = optarg; break;
             case 'r': report = optarg; break;
             case 'd': detect_only = true; break;
@@ -455,77 +478,121 @@ int main(int argc, char** argv) {
                 size_t b0 = ci * chunk, b1 = min(jobs.size(), b0 + (size_t)chunk);
                 string rf = tmp.path + "/ref" + to_string(t) + ".fa";
                 string qf = tmp.path + "/alt" + to_string(t) + ".fa";
-                // A single global minimap2 index does not work: snarls are homologous to one
-                // another, so with many targets a query's own site is often not among the
-                // reported hits and a same-site filter then discards everything.  Each batch is
-                // aligned against only its own references.
-                {
-                    ofstream tf(rf), qfs(qf);
-                    for (size_t i = b0; i < b1; ++i) {
-                        const Job& j = jobs[i];
-                        string rs; rs.reserve(j.reflen);
-                        for (auto& n : j.refp) rs += NI(n)->seq;
-                        tf << ">r" << i << "\n" << rs << "\n";
-                        for (size_t k = 0; k < j.travs.size(); ++k) {
-                            const TravMeta& tm = j.travs[k];
-                            string body; for (auto& n : tm.nodes) body += NI(n)->seq;
-                            // reference prefix + the alt component + reference suffix
-                            string ts = rs.substr(0, tm.pa) + body + rs.substr(tm.pb);
-                            qfs << ">q" << i << "_" << k << "\n" << ts << "\n";
+                vector<Call> local;
+                // One parser for both aligners: lastz --format=paf:wfmash emits the same twelve
+                // PAF columns in the same order as minimap2, so nothing downstream changes.
+                auto parse_paf = [&](FILE* pf, const char* who) {
+                    char* line = nullptr; size_t cap = 0;
+                    while (getline(&line, &cap, pf) > 0) {
+                        stringstream ss(line);
+                        string q, st, tn; int64_t ql, qs, qe, tl, ts_, te, nm, al, mq;
+                        if (!(ss >> q >> ql >> qs >> qe >> st >> tn >> tl >> ts_ >> te >> nm >> al >> mq)) continue;
+                        if (q.empty() || q[0] != 'q') continue;
+                        size_t us = q.find('_');
+                        if (us == string::npos) continue;
+                        size_t ji = stoul(q.substr(1, us - 1));
+                        size_t ki = stoul(q.substr(us + 1));
+                        if (tn != "r" + to_string(ji)) continue;          // must be its own site
+                        if (ji >= jobs.size()) continue;
+                        const Job& j = jobs[ji];
+                        if (ki >= j.travs.size()) continue;
+                        int64_t blk = qe - qs;
+                        if (blk < min_block) continue;
+                        double id = al ? (double)nm / al : 0.0;
+                        if (id < min_ident) continue;
+                        // the block must be mostly ALT sequence: a traversal aligns to its own
+                        // reference by construction, so otherwise every traversal yields a large
+                        // spurious forward "duplication" that merely clips an alt node at the edge
+                        const TravMeta& tm = j.travs[ki];
+                        int64_t off = tm.pa, altov = 0; vector<string> hit;
+                        for (auto& n : tm.nodes) {
+                            int64_t a = off, b = off + NI(n)->len; off = b;
+                            int64_t ov = min(qe, b) - max(qs, a);
+                            if (ov > 0) { altov += ov; hit.push_back(n); }
+                        }
+                        if (hit.empty() || (double)altov / blk < min_alt) continue;
+                        Call cl;
+                        { int64_t o2 = tm.pa;
+                          for (auto& n : tm.nodes) { cl.trav_spans.push_back({o2, o2 + NI(n)->len}); o2 += NI(n)->len; } }
+                        cl.trav_nodes = tm.nodes; cl.q_start = qs; cl.q_end = qe;
+                        cl.sn = j.sn; cl.ref_start = j.lo + ts_; cl.ref_end = j.lo + te;
+                        cl.inversion = (st == "-"); cl.nodes = hit; cl.block_bp = blk; cl.ident = id;
+                        cl.L = j.L; cl.R = j.R; cl.snarl_i = ji; cl.trav_i = ki;
+                        set<string> hs;
+                        for (auto& n : hit) { cl.node_bp += NI(n)->len; if (!NI(n)->sn.empty()) hs.insert(NI(n)->sn); }
+                        for (auto& h : hs) { if (!cl.haps.empty()) cl.haps += ","; cl.haps += h; }
+                        local.push_back(move(cl));
+                    }
+                    free(line);
+                    int rc = pclose(pf);
+                    if (rc != 0) { cerr << "[rgfa-collapse] error: " << who << " exited "
+                                        << rc << "\n"; exit(1); }
+                };
+                auto site_ref = [&](const Job& j) {
+                    string rs; rs.reserve(j.reflen);
+                    for (auto& n : j.refp) rs += NI(n)->seq;
+                    return rs;
+                };
+                auto trav_query = [&](const string& rs, const TravMeta& tm) {
+                    string body2; for (auto& n : tm.nodes) body2 += NI(n)->seq;
+                    return rs.substr(0, tm.pa) + body2 + rs.substr(tm.pb);
+                };
+                if (lastz.empty()) {
+                    // A single global minimap2 index does not work: snarls are homologous to one
+                    // another, so with many targets a query's own site is often not among the
+                    // reported hits and a same-site filter then discards everything.  Each batch
+                    // is aligned against only its own references.
+                    {
+                        ofstream tf(rf), qfs(qf);
+                        for (size_t i = b0; i < b1; ++i) {
+                            const Job& j = jobs[i];
+                            string rs = site_ref(j);
+                            tf << ">r" << i << "\n" << rs << "\n";
+                            for (size_t k = 0; k < j.travs.size(); ++k)
+                                qfs << ">q" << i << "_" << k << "\n"
+                                    << trav_query(rs, j.travs[k]) << "\n";
                         }
                     }
-                }
-                stringstream cmd;
-                cmd << mm2 << " -cx " << preset << " -t " << threads << " -N " << mm_N
-                    << " -p " << mm_p << " " << mm_extra << " "
-                    << rf << " " << qf << " 2>/dev/null";
-                FILE* pf = popen(cmd.str().c_str(), "r");
-                if (!pf) { cerr << "[rgfa-collapse] error: cannot run minimap2\n"; exit(1); }
-                char* line = nullptr; size_t cap = 0;
-                vector<Call> local;
-                while (getline(&line, &cap, pf) > 0) {
-                    stringstream ss(line);
-                    string q, st, tn; int64_t ql, qs, qe, tl, ts_, te, nm, al, mq;
-                    if (!(ss >> q >> ql >> qs >> qe >> st >> tn >> tl >> ts_ >> te >> nm >> al >> mq)) continue;
-                    if (q.empty() || q[0] != 'q') continue;
-                    size_t us = q.find('_');
-                    if (us == string::npos) continue;
-                    size_t ji = stoul(q.substr(1, us - 1));
-                    size_t ki = stoul(q.substr(us + 1));
-                    if (tn != "r" + to_string(ji)) continue;          // must be its own site
-                    if (ji >= jobs.size()) continue;
-                    const Job& j = jobs[ji];
-                    if (ki >= j.travs.size()) continue;
-                    int64_t blk = qe - qs;
-                    if (blk < min_block) continue;
-                    double id = al ? (double)nm / al : 0.0;
-                    if (id < min_ident) continue;
-                    // the block must be mostly ALT sequence: a traversal aligns to its own
-                    // reference by construction, so otherwise every traversal yields a large
-                    // spurious forward "duplication" that merely clips an alt node at the edge
-                    const TravMeta& tm = j.travs[ki];
-                    int64_t off = tm.pa, altov = 0; vector<string> hit;
-                    for (auto& n : tm.nodes) {
-                        int64_t a = off, b = off + NI(n)->len; off = b;
-                        int64_t ov = min(qe, b) - max(qs, a);
-                        if (ov > 0) { altov += ov; hit.push_back(n); }
+                    stringstream cmd;
+                    cmd << mm2 << " -cx " << preset << " -t " << threads << " -N " << mm_N
+                        << " -p " << mm_p << " " << mm_extra << " "
+                        << rf << " " << qf << " 2>/dev/null";
+                    FILE* pf = popen(cmd.str().c_str(), "r");
+                    if (!pf) { cerr << "[rgfa-collapse] error: cannot run minimap2\n"; exit(1); }
+                    parse_paf(pf, "minimap2");
+                } else {
+                    // lastz keeps no index across sites, which is exactly why it is immune to
+                    // chunk composition -- but it also means handing it a whole chunk would
+                    // align every query against every target, ~300x the needed work.  So one
+                    // invocation per site: that site's reference, and only its own traversals.
+                    // [multiple] is mandatory; without it lastz silently reads just the first
+                    // record of a FASTA.
+                    for (size_t i = b0; i < b1; ++i) {
+                        const Job& j = jobs[i];
+                        string rs = site_ref(j);
+                        {
+                            ofstream tf(rf); tf << ">r" << i << "\n" << rs << "\n";
+                            ofstream qfs(qf);
+                            for (size_t k = 0; k < j.travs.size(); ++k)
+                                qfs << ">q" << i << "_" << k << "\n"
+                                    << trav_query(rs, j.travs[k]) << "\n";
+                        }
+                        stringstream cmd;
+                        // Deliberately NOT --chain.  lastz chaining keeps one best chain per
+                        // query/target pair, and an inverted block loses to the forward-matching
+                        // reference flanks that surround it in the query: with --chain this graph
+                        // yielded 5 inversions and 1 duplication, without it 9 and 7 (and
+                        // minimap2 gets 7 and 7).  Relaxing -a does not recover them, because the
+                        // alignments are discarded rather than down-weighted.  The tool wants
+                        // every candidate HSP and applies its own -b/-i/-a gates.
+                        cmd << lastz << " " << rf << "[multiple] " << qf << "[multiple]"
+                            << " --strand=both --gapped " << lastz_args
+                            << " --format=paf:wfmash " << lastz_extra << " 2>/dev/null";
+                        FILE* pf = popen(cmd.str().c_str(), "r");
+                        if (!pf) { cerr << "[rgfa-collapse] error: cannot run lastz\n"; exit(1); }
+                        parse_paf(pf, "lastz");
                     }
-                    if (hit.empty() || (double)altov / blk < min_alt) continue;
-                    Call cl;
-                    { int64_t o2 = tm.pa;
-                      for (auto& n : tm.nodes) { cl.trav_spans.push_back({o2, o2 + NI(n)->len}); o2 += NI(n)->len; } }
-                    cl.trav_nodes = tm.nodes; cl.q_start = qs; cl.q_end = qe;
-                    cl.sn = j.sn; cl.ref_start = j.lo + ts_; cl.ref_end = j.lo + te;
-                    cl.inversion = (st == "-"); cl.nodes = hit; cl.block_bp = blk; cl.ident = id;
-                    cl.L = j.L; cl.R = j.R; cl.snarl_i = ji; cl.trav_i = ki;
-                    set<string> hs;
-                    for (auto& n : hit) { cl.node_bp += NI(n)->len; if (!NI(n)->sn.empty()) hs.insert(NI(n)->sn); }
-                    for (auto& h : hs) { if (!cl.haps.empty()) cl.haps += ","; cl.haps += h; }
-                    local.push_back(move(cl));
                 }
-                free(line);
-                int rc = pclose(pf);
-                if (rc != 0) { cerr << "[rgfa-collapse] error: minimap2 exited " << rc << "\n"; exit(1); }
                 { lock_guard<mutex> g(call_mx);
                   for (auto& c2 : local) calls.push_back(move(c2)); }
                 int64_t d = ++done;
