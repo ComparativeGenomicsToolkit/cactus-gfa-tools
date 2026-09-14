@@ -135,6 +135,13 @@ static void help(char** argv) {
          << "  -A, --alt-rounds N     after the reference pass, collapse traversals that match no\n"
          << "                         reference onto each other: N greedy rounds, each taking the\n"
          << "                         longest remaining traversal in a snarl as representative [0]\n"
+         << "  -M, --max-removed F    refuse a call that would delete more than F times the\n"
+         << "                         sequence the reference supplies in its place.  A tandem array\n"
+         << "                         with 3 copies in the alt and 2 in the reference must lose only\n"
+         << "                         2; collapsing the whole alt destroys a copy.  On HPRC GRCh38\n"
+         << "                         this refuses 53 of 2181 calls -- all duplications, no\n"
+         << "                         inversions -- saving 640 kb.  The worst removes 1288x what it\n"
+         << "                         supplies.  -M 0 disables the check. [1.05]\n"
          << "  -D, --duplications     also collapse forward duplicates (UNSAFE without a\n"
          << "                         copy-number gate: deletes real tandem expansions) [off]\n"
          << "  -c, --max-components N skip snarls with more than N alt components [64]\n"
@@ -171,7 +178,7 @@ static void help(char** argv) {
 int main(int argc, char** argv) {
     int64_t min_block = 5000, max_trav = 5000000, chunk = 300;
     int max_comp = 64, n_jobs = 4, threads = 2, mm_N = 50, alt_rounds = 0;
-    double min_ident = 0.95, min_alt = 0.5, min_cover = 0.0;
+    double min_ident = 0.95, min_alt = 0.5, min_cover = 0.0, max_removed = 1.05;
     bool do_dup = false, detect_only = false;
     string mm2 = "minimap2", preset = "asm20", report, call_report, mm_extra;
     string lastz, lastz_extra;
@@ -191,6 +198,7 @@ int main(int argc, char** argv) {
         static struct option lo[] = {
             {"min-block",required_argument,0,'b'},{"min-ident",required_argument,0,'i'},
             {"min-alt",required_argument,0,'a'},{"min-cover",required_argument,0,'C'},
+            {"max-removed",required_argument,0,'M'},
             {"alt-rounds",required_argument,0,'A'},
             {"duplications",no_argument,0,'D'},
             {"max-components",required_argument,0,'c'},{"max-traversal",required_argument,0,'L'},
@@ -202,13 +210,14 @@ int main(int argc, char** argv) {
             {"lastz",required_argument,0,'z'},{"lastz-extra",required_argument,0,'Z'},
             {"minimap2",required_argument,0,'m'},{"report",required_argument,0,'r'},
             {"detect-only",no_argument,0,'d'},{"help",no_argument,0,'h'},{0,0,0,0}};
-        c = getopt_long(argc, argv, "b:i:a:C:A:Dc:L:k:j:t:N:x:P:X:m:r:R:z:Z:dh", lo, 0);
+        c = getopt_long(argc, argv, "b:i:a:C:M:A:Dc:L:k:j:t:N:x:P:X:m:r:R:z:Z:dh", lo, 0);
         if (c == -1) break;
         switch (c) {
             case 'b': min_block = stol(optarg); break;
             case 'i': min_ident = stod(optarg); break;
             case 'a': min_alt = stod(optarg); break;
             case 'C': min_cover = stod(optarg); break;
+            case 'M': max_removed = stod(optarg); break;
             case 'A': alt_rounds = stoi(optarg); break;
             case 'D': do_dup = true; break;
             case 'c': max_comp = stoi(optarg); break;
@@ -919,6 +928,57 @@ int main(int argc, char** argv) {
     // was declined after detection.
     int64_t skip_nochain_inv = 0, skip_nochain_dup = 0;
     int64_t skip_tandem_inv = 0, skip_tandem_dup = 0;
+    int64_t skip_loss_inv = 0, skip_loss_dup = 0, bp_loss_inv = 0, bp_loss_dup = 0;
+    // reference each haplotype has already consumed, keyed by haplotype + reference sequence
+    map<string, vector<pair<int64_t,int64_t>>> hap_budget;
+    // Budget decided in a PRE-PASS.  Deciding it inside the loop would mean reordering the loop
+    // to spend the budget best-first, and the loop mutates shared nodes as it goes: a big call
+    // deletes alt pieces that later overlapping calls need, so reordering silently changed chr19
+    // from 473 duplications to 122.  Decide first, leave the mutation order untouched.
+    vector<char> budget_ok(calls.size(), 1);
+    if (max_removed > 0) {          // -M 0 disables the budget entirely
+        auto hap_keys = [&](const Call& c) {
+            vector<string> keys; stringstream hs(c.haps); string h;
+            while (getline(hs, h, ',')) if (!h.empty()) {
+                size_t a = h.find('#');
+                size_t b = a == string::npos ? string::npos : h.find('#', a + 1);
+                keys.push_back((b == string::npos ? h : h.substr(0, b)) + "\t" + c.sn);
+            }
+            sort(keys.begin(), keys.end());
+            keys.erase(unique(keys.begin(), keys.end()), keys.end());
+            return keys;
+        };
+        vector<size_t> ord(calls.size());
+        for (size_t i = 0; i < ord.size(); ++i) ord[i] = i;
+        stable_sort(ord.begin(), ord.end(), [&](size_t a, size_t b) {
+            if (calls[a].block_bp != calls[b].block_bp) return calls[a].block_bp > calls[b].block_bp;
+            if (calls[a].snarl_i  != calls[b].snarl_i)  return calls[a].snarl_i  < calls[b].snarl_i;
+            return calls[a].trav_i < calls[b].trav_i;
+        });
+        for (size_t i : ord) {
+            const Call& c = calls[i];
+            if (!c.inversion && !do_dup) continue;
+            // Charge the ALIGNED BLOCK, not the whole alt node: splitting removes only the
+            // matched part, so node_bp overstates it and wrongly refused inversions whose node
+            // extends past the block (chr15: node 52,029 bp against a 49,202 bp window).
+            int64_t rm = c.block_bp;
+            bool over = false;
+            auto keys = hap_keys(c);
+            for (auto& k : keys) {
+                int64_t claimed = 0;
+                auto it = hap_budget.find(k);
+                if (it != hap_budget.end())
+                    for (auto& iv : it->second) {
+                        int64_t a2 = max(c.ref_start, iv.first), b2 = min(c.ref_end, iv.second);
+                        if (b2 > a2) claimed += b2 - a2;
+                    }
+                int64_t avail = (c.ref_end - c.ref_start) - claimed;
+                if ((double)rm > max_removed * (double)max<int64_t>(avail, 0)) { over = true; break; }
+            }
+            if (over) { budget_ok[i] = 0; continue; }
+            for (auto& k : keys) hap_budget[k].push_back({c.ref_start, c.ref_end});
+        }
+    }
     int64_t bp_tandem_inv = 0, bp_tandem_dup = 0;
     auto del_bp = [&](const vector<string>& v) {
         int64_t b = 0; for (auto& n : v) { auto p2 = NI(n); if (p2 && !p2->deleted) b += p2->len; } return b;
@@ -1016,6 +1076,51 @@ int main(int argc, char** argv) {
                     continue;
                 }
             }
+            if (!budget_ok[ci]) {
+                outcome[ci] = "refused-would-lose-sequence";
+                int64_t rm = 0; for (auto& n : del) { auto p2 = NI(n); if (p2) rm += p2->len; }
+                if (c.inversion) { ++skip_loss_inv; bp_loss_inv += rm; }
+                else             { ++skip_loss_dup; bp_loss_dup += rm; }
+                continue;
+            }
+            if (false) {
+                // Conservation, per haplotype and CUMULATIVE.  A single call always looks fine --
+                // the alignment matched alt to reference 1:1, so what it deletes equals what the
+                // chain supplies by construction.  The damage is collective: at the chr19:37.26 Mb
+                // array NA19338#1 gets 31 individually-conserving calls that together remove 29.8x
+                // the 34,832 bp window, because every copy of the array collapses onto the same
+                // reference copies.  So budget each haplotype to the reference it has not already
+                // consumed: with 3 copies in the alt and 2 in the reference it may collapse 2.
+                bool over = false; int64_t rm = 0;
+                for (auto& n : del) { auto p2 = NI(n); if (p2) rm += p2->len; }
+                vector<string> keys;
+                { stringstream hs(c.haps); string h;
+                  while (getline(hs, h, ',')) if (!h.empty()) {
+                      size_t a = h.find('#');
+                      size_t b = a == string::npos ? string::npos : h.find('#', a + 1);
+                      keys.push_back((b == string::npos ? h : h.substr(0, b)) + "\t" + c.sn);
+                  } }
+                sort(keys.begin(), keys.end());
+                keys.erase(unique(keys.begin(), keys.end()), keys.end());
+                for (auto& k : keys) {
+                    int64_t claimed = 0;
+                    auto it = hap_budget.find(k);
+                    if (it != hap_budget.end())
+                        for (auto& iv : it->second) {
+                            int64_t a2 = max(c.ref_start, iv.first), b2 = min(c.ref_end, iv.second);
+                            if (b2 > a2) claimed += b2 - a2;
+                        }
+                    int64_t avail = (c.ref_end - c.ref_start) - claimed;
+                    if ((double)rm > max_removed * (double)max<int64_t>(avail, 0)) { over = true; break; }
+                }
+                if (over) {
+                    outcome[ci] = "refused-would-lose-sequence";
+                    if (c.inversion) { ++skip_loss_inv; bp_loss_inv += rm; }
+                    else             { ++skip_loss_dup; bp_loss_dup += rm; }
+                    continue;
+                }
+                for (auto& k : keys) hap_budget[k].push_back({c.ref_start, c.ref_end});
+            }
             sort(Xs.begin(), Xs.end()); sort(Ys.begin(), Ys.end());
             int64_t rk = 0; for (auto& n : del) if (NI(n)) rk = max(rk, NI(n)->rank);
             const string& first_hop = c.inversion ? chain.back() : chain.front();
@@ -1075,6 +1180,10 @@ int main(int argc, char** argv) {
     cerr << "\n[rgfa-collapse] refused as tandem (copy adjacent to its source): "
          << skip_tandem_inv << " inversion allele(s) / " << bp_tandem_inv << " bp, "
          << skip_tandem_dup << " duplication(s) / " << bp_tandem_dup << " bp";
+    if (skip_loss_inv || skip_loss_dup)
+        cerr << "\n[rgfa-collapse] refused (would delete more than the reference supplies): "
+             << skip_loss_inv << " inversion allele(s) / " << bp_loss_inv << " bp, "
+             << skip_loss_dup << " duplication(s) / " << bp_loss_dup << " bp";
     if (skip_nochain_inv || skip_nochain_dup)
         cerr << "\n[rgfa-collapse] skipped (no chain or no alt piece inside the block): "
              << skip_nochain_inv << " inversion, " << skip_nochain_dup << " duplication";
