@@ -185,12 +185,17 @@ int main(int argc, char** argv) {
     // Cactus's own lastz settings for its most-similar distance class ("one" in
     // <lastzArguments>), which is the right template: these alignments are ~99% identical.
     // --ambiguous=iupac matters because assembly-derived graph sequence carries IUPAC codes.
+    // --masking=500 is not cactus's, and it is required: without it lastz aborts outright on
+    // CHM13 satellite -- "table size (4,869,542,152 for 101,448,794 segments) exceeds allocation
+    // limit of 4,294,967,279" from add_segment(), a hard 2^32 internal cap.  Masking target
+    // positions hit more than 500 times keeps the seed table bounded.  (An HSP limit such as
+    // cactus's --queryhsplimit=keep,nowarn does NOT help: it acts after segment accumulation.)
     // --queryhspbest is the throughput control -- cactus uses 100000 for whole chromosomes, but
     // these windows are small and 100 is ample: it caps how many HSPs reach gapped extension,
     // which takes this graph from 564s to 7s for byte-identical bp removed.  NOT --chain: see
     // the invocation below.
     string lastz_args = "--step=2 --ambiguous=iupac,100,100 --ydrop=3000 --notransition"
-                        " --queryhspbest=100";
+                        " --queryhspbest=100 --masking=500";
     double mm_p = 0.01;
 
     int c;
@@ -473,6 +478,8 @@ int main(int argc, char** argv) {
     // ------------------------------------------------------------ align, chunked and parallel
 
     TmpDir tmp;
+    atomic<int64_t> aligner_failures(0);
+    const bool aligner_fail_ok = true;     // skip a failing chunk rather than aborting the run
     vector<Call> calls;
     mutex call_mx;
     {
@@ -490,6 +497,7 @@ int main(int argc, char** argv) {
                 vector<Call> local;
                 // One parser for both aligners: lastz --format=paf:wfmash emits the same twelve
                 // PAF columns in the same order as minimap2, so nothing downstream changes.
+                string errf = tmp.path + "/alnerr" + to_string(t) + ".txt";
                 auto parse_paf = [&](FILE* pf, const char* who) {
                     char* line = nullptr; size_t cap = 0;
                     while (getline(&line, &cap, pf) > 0) {
@@ -534,8 +542,29 @@ int main(int argc, char** argv) {
                     }
                     free(line);
                     int rc = pclose(pf);
-                    if (rc != 0) { cerr << "[rgfa-collapse] error: " << who << " exited "
-                                        << rc << "\n"; exit(1); }
+                    if (rc != 0 && aligner_fail_ok) {
+                        // One pathological site must not abort a run that is otherwise fine.
+                        // Report loudly and keep going; the count is printed at the end.
+                        ++aligner_failures;
+                        cerr << "[rgfa-collapse] warning: " << who << " exited " << rc
+                             << " on a chunk; skipping it\n";
+                        ifstream ef2(errf); string ln2;
+                        for (int k = 0; k < 3 && getline(ef2, ln2); ++k)
+                            cerr << "[rgfa-collapse]   " << who << ": " << ln2 << "\n";
+                        return;
+                    }
+                    if (rc != 0) {
+                        // Report what the aligner actually said.  Discarding its stderr made a
+                        // CHM13 lastz failure ("exited 256" after 50/158 chunks) undiagnosable.
+                        cerr << "[rgfa-collapse] error: " << who << " exited " << rc << "\n";
+                        ifstream ef(errf);
+                        if (ef) {
+                            vector<string> tail; string ln;
+                            while (getline(ef, ln)) { tail.push_back(ln); if (tail.size() > 12) tail.erase(tail.begin()); }
+                            for (auto& x : tail) cerr << "[rgfa-collapse]   " << who << ": " << x << "\n";
+                        }
+                        exit(1);
+                    }
                 };
                 auto site_ref = [&](const Job& j) {
                     string rs; rs.reserve(j.reflen);
@@ -565,7 +594,7 @@ int main(int argc, char** argv) {
                     stringstream cmd;
                     cmd << mm2 << " -cx " << preset << " -t " << threads << " -N " << mm_N
                         << " -p " << mm_p << " " << mm_extra << " "
-                        << rf << " " << qf << " 2>/dev/null";
+                        << rf << " " << qf << " 2>" << errf;
                     FILE* pf = popen(cmd.str().c_str(), "r");
                     if (!pf) { cerr << "[rgfa-collapse] error: cannot run minimap2\n"; exit(1); }
                     parse_paf(pf, "minimap2");
@@ -596,7 +625,7 @@ int main(int argc, char** argv) {
                         // every candidate HSP and applies its own -b/-i/-a gates.
                         cmd << lastz << " " << rf << "[multiple] " << qf << "[multiple]"
                             << " --strand=both --gapped " << lastz_args
-                            << " --format=paf:wfmash " << lastz_extra << " 2>/dev/null";
+                            << " --format=paf:wfmash " << lastz_extra << " 2>" << errf;
                         FILE* pf = popen(cmd.str().c_str(), "r");
                         if (!pf) { cerr << "[rgfa-collapse] error: cannot run lastz\n"; exit(1); }
                         parse_paf(pf, "lastz");
@@ -748,6 +777,9 @@ int main(int argc, char** argv) {
         }
     }
 
+    if (aligner_failures)
+        cerr << "[rgfa-collapse] WARNING: " << aligner_failures
+             << " chunk(s) skipped after an aligner failure -- those sites were not examined\n";
     cerr << "[rgfa-collapse] " << calls.size() << " raw call(s)\n";
 
     // ------------------------------------------------------------ dedup
@@ -950,7 +982,13 @@ int main(int argc, char** argv) {
         };
         vector<size_t> ord(calls.size());
         for (size_t i = 0; i < ord.size(); ++i) ord[i] = i;
+        // Inversions claim budget BEFORE duplications.  Sorting purely by block length lets a
+        // large duplication consume a haplotype's reference at a window and starve an inversion
+        // there: on HPRC GRCh38, 18 of the 67 refused-inversion windows had a duplication
+        // repaired at the same window (median block 11,496 bp).  Inversions are the in-scope,
+        // end-to-end-validated case; duplications are the extension, so they yield.
         stable_sort(ord.begin(), ord.end(), [&](size_t a, size_t b) {
+            if (calls[a].inversion != calls[b].inversion) return calls[a].inversion;
             if (calls[a].block_bp != calls[b].block_bp) return calls[a].block_bp > calls[b].block_bp;
             if (calls[a].snarl_i  != calls[b].snarl_i)  return calls[a].snarl_i  < calls[b].snarl_i;
             return calls[a].trav_i < calls[b].trav_i;
