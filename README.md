@@ -71,6 +71,35 @@ Filter a GAF so that there are no overlapping query intervals.  It uses simple h
 
 This tool can also run on PAFs (expecting to use the original GAF block length stored in a "gl" tag) by adding the `-p` option. In practice, this will perform a more fine-grained filter and should remove fewer alignments. 
 
+#### Trimming instead of deleting (`-t`)
+
+The action above is to delete the whole record, which also throws away the part of it that nothing
+overlapped.  On contiguous assemblies that is most of it: on HPRC v2.1 chr15 at 464 haplotypes the
+filter deletes 1.373 Gb of query sequence and about half of that was never contested by anything.
+
+`-t` cuts out only the contested span and keeps the rest.  GAF input only -- it needs the record's
+cigar and path, which the `-p` output path does not carry.
+
+* `-l FILE` node lengths, as written by `gaf2unstable -o`.  Needed on an unstable GAF, whose path
+  names carry no interval, so the trimmed record's path can be rebased onto the steps it still
+  traverses.  Read after the input is consumed, so it may be the file the upstream process of the
+  same pipe is writing.
+* `-e N` also cut `N` bases past each side of a contested span (default 5000).  The bases abutting
+  an overlap are the least trustworthy part of the alignment.
+* `-Q N` a record that loses an overlap and whose own mapq is under `N` is deleted whole, as it
+  would be without `-t`.  Losing an overlap is evidence about the whole record, not only about the
+  overlapping part, so the trim is confined to records that stand up on their own.
+* `-g N` only a hole longer than `N` left by the cut, with alignment still on both sides, is worth
+  closing at all (default 10000).
+* `--close-holes` close such a hole by giving the span to the best claimant.  Off by default: a
+  hole only forms where every record spanning it lost to a record it does not dominate, so no
+  claimant can ever meet the bar `-r` sets, and closing one always means choosing on evidence this
+  filter rejects.  A hole clips sequence out of the graph; a wrong placement puts a wrong alignment
+  into it.
+
+A record whose cigar cannot be reconciled with its own columns is deleted whole rather than cut.
+Without `-t` the output is unchanged.
+
 ### paf2lastz
 
 *(Cactus now works with PAF natively, so this tool is no longer needed)*
