@@ -100,6 +100,30 @@ struct Call {
     int64_t t_start = 0, t_end = 0;
 };
 
+// A total order on calls, and it has to be total.  Worker threads append to the shared `calls`
+// vector in completion order, so the order the rewiring loop sees is thread scheduling, not the
+// input -- and the rewiring loop mutates shared nodes as it runs, so order changes results.  The
+// dedup below sorted only by (sn, inversion, ref_start), which leaves genuine ties in racy order,
+// and a merged site takes its L/R boundary from whichever tying call happened to sort first.  On
+// whole-genome GRCh38 two runs with identical input, identical snarls and identical flags found a
+// byte-identical SET of 2705 calls but flipped 287 of them between repaired and refused-tandem.
+// Leading with the three dedup keys keeps the interval merge below unchanged; everything after
+// them is a tiebreak, and every field is a pure function of the input.
+static bool call_less(const Call& a, const Call& b) {
+    if (a.sn != b.sn)                 return a.sn < b.sn;
+    if (a.inversion != b.inversion)   return a.inversion > b.inversion;
+    if (a.ref_start != b.ref_start)   return a.ref_start < b.ref_start;
+    if (a.ref_end != b.ref_end)       return a.ref_end < b.ref_end;
+    if (a.snarl_i != b.snarl_i)       return a.snarl_i < b.snarl_i;
+    if (a.trav_i != b.trav_i)         return a.trav_i < b.trav_i;
+    if (a.q_start != b.q_start)       return a.q_start < b.q_start;
+    if (a.q_end != b.q_end)           return a.q_end < b.q_end;
+    if (a.block_bp != b.block_bp)     return a.block_bp > b.block_bp;
+    if (a.L != b.L)                   return a.L < b.L;
+    if (a.R != b.R)                   return a.R < b.R;
+    return a.nodes < b.nodes;
+}
+
 // RAII temp directory
 struct TmpDir {
     string path;
@@ -770,6 +794,9 @@ int main(int argc, char** argv) {
             // representatives are retired whether or not anything matched them, so a later round
             // cannot pick one again or treat it as a query
             for (auto& a : aj) resolved.insert({a.i, a.repr});
+            // only one call per traversal survives below, so which one it is must not be decided
+            // by whichever thread finished first
+            sort(round_calls.begin(), round_calls.end(), call_less);
             int64_t added = 0, added_bp = 0;
             for (auto& c : round_calls) {
                 if (!resolved.insert({c.snarl_i, c.trav_i}).second) continue;   // one call per traversal
@@ -799,11 +826,7 @@ int main(int argc, char** argv) {
     };
     vector<Site> sites;
     {
-        sort(calls.begin(), calls.end(), [](const Call& a, const Call& b) {
-            if (a.sn != b.sn) return a.sn < b.sn;
-            if (a.inversion != b.inversion) return a.inversion > b.inversion;
-            return a.ref_start < b.ref_start;
-        });
+        sort(calls.begin(), calls.end(), call_less);
         for (auto& c : calls) {
             if (!sites.empty() && sites.back().sn == c.sn && sites.back().inversion == c.inversion
                 && c.ref_start <= sites.back().end) {
