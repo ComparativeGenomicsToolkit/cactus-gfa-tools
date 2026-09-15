@@ -916,6 +916,27 @@ int main(int argc, char** argv) {
     map<string, vector<pair<int64_t,string>>> pieces;
     {
         int64_t n_split = 0, n_pieces = 0;
+        // Split pieces get fresh s<N> names rather than "s537.1".  Cactus's rGFA convention is
+        // s<integer> throughout, and cactus_graphmap_join.merge_sv_gfa renumbers segments by
+        // adding an integer offset to the digits after the 's' so that per-chromosome graphs can
+        // be concatenated without colliding -- int("537.1") raises, and the whole --mgSplit join
+        // dies on a graph this tool touched.  Any other consumer that treats the id as a number
+        // would break the same way, so keep the names numeric.  Start above every id already in
+        // the graph; names that are not s<int> (nothing cactus produces) fall back to the suffix.
+        int64_t next_id = 0;
+        bool numeric_names = true;
+        for (auto& n : nodes) {
+            if (n.name.size() < 2 || n.name[0] != 's') { numeric_names = false; break; }
+            char* endp = nullptr;
+            long long v = strtoll(n.name.c_str() + 1, &endp, 10);
+            if (!endp || *endp != '\0' || v < 0) { numeric_names = false; break; }
+            next_id = max(next_id, (int64_t)v);
+        }
+        ++next_id;
+        auto piece_name = [&](const Node& orig, size_t k) {
+            return numeric_names ? "s" + to_string(next_id++)
+                                 : orig.name + "." + to_string(k + 1);
+        };
         for (auto& kv : cuts) {
             auto i2 = idx.find(kv.first);
             if (i2 == idx.end() || nodes[i2->second].deleted) continue;
@@ -925,7 +946,7 @@ int main(int argc, char** argv) {
             vector<string> pl;
             for (size_t k = 0; k + 1 < off.size(); ++k) {
                 Node pn;
-                pn.name = orig.name + "." + to_string(k + 1);
+                pn.name = piece_name(orig, k);
                 pn.seq = orig.seq.substr(off[k], off[k + 1] - off[k]);
                 pn.len = pn.seq.size();
                 pn.rank = orig.rank; pn.sn = orig.sn;
@@ -934,9 +955,10 @@ int main(int argc, char** argv) {
                 if (!pn.sn.empty()) pn.raw_tags.push_back("SN:Z:" + pn.sn);
                 if (pn.so >= 0) pn.raw_tags.push_back("SO:i:" + to_string(pn.so));
                 pn.raw_tags.push_back("SR:i:" + to_string(pn.rank));
-                idx[pn.name] = nodes.size(); nodes.push_back(move(pn));
-                pieces[orig.name].push_back({off[k], orig.name + "." + to_string(k + 1)});
-                pl.push_back(orig.name + "." + to_string(k + 1));
+                string pname = pn.name;
+                idx[pname] = nodes.size(); nodes.push_back(move(pn));
+                pieces[orig.name].push_back({off[k], pname});
+                pl.push_back(pname);
                 ++n_pieces;
             }
             nodes[i2->second].deleted = true;
