@@ -1335,7 +1335,10 @@ int main(int argc, char** argv) {
         for (const Edge& e : edges) if (!e.deleted) { live[e.from].push_back(e.to); live[e.to].push_back(e.from); }
         for (const Edge& e : new_edges) { live[e.from].push_back(e.to); live[e.to].push_back(e.from); }
         int64_t raised = 0;
-        for (int round = 0; round < 8; ++round) {
+        // 64 rounds, not 8: raising a node strips the same-rank support its neighbours were placed
+        // through, so one repair can make another necessary.  chr1 needed more than eight and left
+        // three nodes behind, which the assertion below then refused to emit.
+        for (int round = 0; round < 64; ++round) {
             map<int64_t, vector<string>> by_rank;
             for (const Node& n0 : nodes)
                 if (!n0.deleted && n0.rank > 0) by_rank[n0.rank].push_back(n0.name);
@@ -1368,16 +1371,21 @@ int main(int argc, char** argv) {
             for (const string& x : stuck) {
                 auto xi = idx.find(x); if (xi == idx.end()) continue;
                 Node& M = nodes[xi->second];
-                int64_t lo = -1;
+                // Above EVERY live neighbour, not just the lowest.  A cluster of mutually adjacent
+                // same-rank nodes with no lower-rank neighbour is the case that matters: lifting one
+                // member by a single step leaves it level with the rest and still unplaceable, so a
+                // cluster of N took N rounds and chr1 ran out.  Going above the whole neighbourhood
+                // places this node at once, and its neighbours then cascade off it in the same round.
+                int64_t hi = -1;
                 auto li = live.find(x);
                 if (li != live.end())
                     for (auto& y : li->second) {
                         auto q2 = NI(y);
                         if (!q2 || q2->deleted || q2->rank < 0) continue;
-                        if (lo < 0 || q2->rank < lo) lo = q2->rank;
+                        if (q2->rank > hi) hi = q2->rank;
                     }
-                if (lo < 0) continue;                          // no live neighbour at all
-                int64_t want = lo + 1;
+                if (hi < 0) continue;                          // no live neighbour at all
+                int64_t want = hi + 1;
                 if (want <= M.rank) want = M.rank + 1;         // must strictly exceed some neighbour
                 M.rank = want;
                 for (auto& t : M.raw_tags)
