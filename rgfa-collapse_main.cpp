@@ -1313,127 +1313,64 @@ int main(int argc, char** argv) {
         if (nc) cerr << "[rgfa-collapse] cascaded " << nc << " orphaned node(s) / " << bc << " bp\n";
     }
 
-    // ------------------------------------------------------- rank repair
+    // ------------------------------------------------------- placement check
     //
     // rgfa-split assigns every node to a reference contig by walking the ranks upward: at rank r a
-    // node is placed if it touches a node of LOWER rank, or a SAME-rank node already placed, and the
-    // same-rank case cascades until no more progress is made.  minigraph guarantees this by
-    // construction.  Deleting the pieces that carried a node's downward attachment can break it, and
-    // cactus-graphmap-split then dies with "Unable to assign contigs for the following nodes at rank
-    // N" -- once per sample, so thousands of times on a full pangenome.  The graph stays connected
-    // with no dangling or duplicate links, so nothing else notices.
-    //
-    // Raising a rank is better than refusing the repair, and safe: every consumer of SR either looks
-    // only at rank == 0 (rgfa-split's contig seeds, cactus_graphmap_split's reference contigs, this
-    // tool) or thresholds at rank <= max_rank, 0 by default (rgfa2paf, pafmasker).  Rank 0 never moves.
-    //
-    // Repair exactly the nodes the real algorithm cannot place -- simulate it rather than using the
-    // stricter "must touch a lower rank", which flags a third of a normal graph and, if acted on,
-    // strips the same-rank support its neighbours were relying on.
+    // node is placed if it touches a node of LOWER rank, or a SAME-rank node already placed.
+    // Deleting the pieces that carried a node's downward attachment can break that.  Two attempts
+    // to repair it by editing SR ranks are recorded in the history and both failed: raising the one
+    // node leaves its contig at two ranks, which vg's rGFA loader rejects (the sep1 defect,
+    // re-created); raising the whole contig strips the same-rank support neighbouring contigs were
+    // placed through and never converges (chr1: 3.4M raises, 770 nodes still stuck).  So ranks are
+    // not edited here.  This block only checks, and refuses to emit rather than let a graph reach
+    // the pipeline, where one such node fails every per-sample job on its chromosome.
     {
         unordered_map<string, vector<string>> live;
         for (const Edge& e : edges) if (!e.deleted) { live[e.from].push_back(e.to); live[e.to].push_back(e.from); }
         for (const Edge& e : new_edges) { live[e.from].push_back(e.to); live[e.to].push_back(e.from); }
-        int64_t raised = 0;
-        // 64 rounds, not 8: raising a node strips the same-rank support its neighbours were placed
-        // through, so one repair can make another necessary.  chr1 needed more than eight and left
-        // three nodes behind, which the assertion below then refused to emit.
-        for (int round = 0; round < 64; ++round) {
-            map<int64_t, vector<string>> by_rank;
-            for (const Node& n0 : nodes)
-                if (!n0.deleted && n0.rank > 0) by_rank[n0.rank].push_back(n0.name);
-            unordered_set<string> placed;
-            for (const Node& n0 : nodes) if (!n0.deleted && n0.rank == 0) placed.insert(n0.name);
-            vector<string> stuck;
-            for (auto& kv : by_rank) {
-                const int64_t r = kv.first;
-                unordered_set<string> pend(kv.second.begin(), kv.second.end());
-                bool progress = true;
-                while (progress) {
-                    progress = false;
-                    for (auto it = pend.begin(); it != pend.end(); ) {
-                        bool ok = false;
-                        auto li = live.find(*it);
-                        if (li != live.end())
-                            for (auto& y : li->second) {
-                                auto q2 = NI(y);
-                                if (!q2 || q2->deleted || q2->rank < 0) continue;
-                                if (q2->rank < r || (q2->rank == r && placed.count(y))) { ok = true; break; }
-                            }
-                        if (ok) { placed.insert(*it); it = pend.erase(it); progress = true; }
-                        else ++it;
-                    }
-                }
-                for (auto& x : pend) stuck.push_back(x);
-            }
-            if (stuck.empty()) break;
-            sort(stuck.begin(), stuck.end());                 // deterministic
-            for (const string& x : stuck) {
-                auto xi = idx.find(x); if (xi == idx.end()) continue;
-                Node& M = nodes[xi->second];
-                // Above EVERY live neighbour, not just the lowest.  A cluster of mutually adjacent
-                // same-rank nodes with no lower-rank neighbour is the case that matters: lifting one
-                // member by a single step leaves it level with the rest and still unplaceable, so a
-                // cluster of N took N rounds and chr1 ran out.  Going above the whole neighbourhood
-                // places this node at once, and its neighbours then cascade off it in the same round.
-                int64_t hi = -1;
-                auto li = live.find(x);
-                if (li != live.end())
-                    for (auto& y : li->second) {
-                        auto q2 = NI(y);
-                        if (!q2 || q2->deleted || q2->rank < 0) continue;
-                        if (q2->rank > hi) hi = q2->rank;
-                    }
-                if (hi < 0) continue;                          // no live neighbour at all
-                int64_t want = hi + 1;
-                if (want <= M.rank) want = M.rank + 1;         // must strictly exceed some neighbour
-                M.rank = want;
-                for (auto& t : M.raw_tags)
-                    if (t.rfind("SR:i:", 0) == 0) t = "SR:i:" + to_string(want);
-                ++raised;
-            }
-        }
-        if (raised)
-            cerr << "[rgfa-collapse] raised the rank of " << raised
-                 << " node(s) that rgfa-split could not otherwise place\n";
-
-        // Never emit a graph rgfa-split cannot process.  One unplaceable node is not a small
-        // problem: rgfa-split exits(1) on it, and under --mgSplitWholeGenomeRef it runs once per
-        // sample per chromosome, so a single node failed ~30,000 jobs on a 460-sample pangenome.
-        // The loop above should leave none; if one survives, say so here rather than let it reach
-        // the pipeline, where the error names a rank and nothing else.
+        // Never emit a graph the pipeline cannot process.  rgfa-split (and gaf2unstable, which links
+        // it) now assigns contigs by breadth-first search from the rank-0 nodes, so the requirement
+        // is that every live node be reachable from some rank-0 node.  The older rank-ordered walk
+        // required a lower-rank neighbour and could not place a node the collapse had stranded; two
+        // attempts to satisfy it by editing SR ranks failed (one broke vg's one-rank-per-contig rule,
+        // the other never converged) and are in the history.  Check here rather than at the far end
+        // of the pipeline, where one bad node fails every per-sample job on its chromosome.
         {
-            map<int64_t, vector<string>> by_rank;
+            unordered_set<string> reached;
+            deque<string> q;
             for (const Node& n0 : nodes)
-                if (!n0.deleted && n0.rank > 0) by_rank[n0.rank].push_back(n0.name);
-            unordered_set<string> placed;
-            for (const Node& n0 : nodes) if (!n0.deleted && n0.rank == 0) placed.insert(n0.name);
-            int64_t bad = 0; string first_bad;
-            for (auto& kv : by_rank) {
-                const int64_t r = kv.first;
-                unordered_set<string> pend(kv.second.begin(), kv.second.end());
-                bool progress = true;
-                while (progress) {
-                    progress = false;
-                    for (auto it = pend.begin(); it != pend.end(); ) {
-                        bool ok = false;
-                        auto li = live.find(*it);
-                        if (li != live.end())
-                            for (auto& y : li->second) {
-                                auto q2 = NI(y);
-                                if (!q2 || q2->deleted || q2->rank < 0) continue;
-                                if (q2->rank < r || (q2->rank == r && placed.count(y))) { ok = true; break; }
-                            }
-                        if (ok) { placed.insert(*it); it = pend.erase(it); progress = true; }
-                        else ++it;
-                    }
+                if (!n0.deleted && n0.rank == 0 && reached.insert(n0.name).second) q.push_back(n0.name);
+            while (!q.empty()) {
+                string x = q.front(); q.pop_front();
+                auto it = live.find(x);
+                if (it == live.end()) continue;
+                for (auto& y : it->second) {
+                    auto yi = idx.find(y);
+                    if (yi == idx.end() || nodes[yi->second].deleted) continue;
+                    if (reached.insert(y).second) q.push_back(y);
                 }
-                if (!pend.empty()) { bad += pend.size(); if (first_bad.empty()) first_bad = *pend.begin(); }
             }
+            int64_t bad = 0; string first_bad;
+            for (const Node& n0 : nodes)
+                if (!n0.deleted && !reached.count(n0.name)) { ++bad; if (first_bad.empty()) first_bad = n0.name; }
             if (bad) {
-                cerr << "[rgfa-collapse] ERROR: " << bad << " node(s) cannot be assigned to a reference "
-                     << "contig (first: " << first_bad << ").  rgfa-split would exit on this graph; "
-                     << "refusing to emit it.\n";
+                cerr << "[rgfa-collapse] ERROR: " << bad << " node(s) not reachable from any reference node "
+                     << "(first: " << first_bad << ").  rgfa-split could not assign them a contig; "
+                     << "refusing to emit this graph.\n";
+                return 1;
+            }
+        // and one rank per contig, which is what vg's rGFA loader enforces
+            unordered_map<string, int64_t> sn_rank; string conflict;
+            for (const Node& n0 : nodes) {
+                if (n0.deleted || n0.sn.empty() || n0.rank < 0) continue;
+                auto it = sn_rank.find(n0.sn);
+                if (it == sn_rank.end()) sn_rank[n0.sn] = n0.rank;
+                else if (it->second != n0.rank && conflict.empty())
+                    conflict = n0.sn + " (" + to_string(it->second) + " and " + to_string(n0.rank) + ")";
+            }
+            if (!conflict.empty()) {
+                cerr << "[rgfa-collapse] ERROR: contig " << conflict << " carries two ranks; vg would "
+                     << "refuse to load this graph.  Refusing to emit it.\n";
                 return 1;
             }
         }
