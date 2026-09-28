@@ -29,6 +29,7 @@
 #include <cstdio>
 #include <cstdlib>
 #include <cstring>
+#include <cmath>
 #include <cassert>
 #include <algorithm>
 #include <atomic>
@@ -125,6 +126,47 @@ static bool call_less(const Call& a, const Call& b) {
     return a.nodes < b.nodes;
 }
 
+// ---------------------------------------------------------------- tandem repeats
+//
+// How much of a sequence is tandem repeat, for the -T site flattening below.  For each period p
+// in [1, max_period] a position matches when s[i] == s[i+p]; a window of w = max(p, 20)
+// consecutive comparisons that is at least min_frac matches marks s[i, i+w+p) as repeat -- two
+// copies' worth of a p-periodic stretch, allowing the mismatches real VNTR copies carry.  (Asking
+// for 2p comparisons, i.e. three copies, missed sites whose reference allele holds under two.)  The
+// union over all periods is the covered length.  O(len * max_period) with prefix sums, which on
+// the <= 5 kb alleles this is gated to is a few million steps per site.  Also returns the period
+// that covers the most bases, for the report.
+static int64_t tandem_cover(const string& s, int max_period, double min_frac, int* best_period,
+                            int64_t count_from = 0, int64_t count_to = -1) {
+    const int64_t n = s.size();
+    vector<char> cov(n, 0);
+    vector<int64_t> pre(n + 1, 0);
+    int64_t best_bp = 0; if (best_period) *best_period = 0;
+    for (int p = 1; p <= max_period && p < n; ++p) {
+        const int64_t m = n - p;                         // comparisons at this period
+        const int64_t w = max<int64_t>(p, 20);
+        if (w > m) break;
+        pre[0] = 0;
+        for (int64_t i = 0; i < m; ++i) {
+            char a = s[i] & 0xDF, b = s[i + p] & 0xDF;   // case-insensitive
+            pre[i + 1] = pre[i] + (a == b && a != 'N');
+        }
+        const int64_t need = (int64_t)ceil(min_frac * w);
+        int64_t here = 0, run_end = -1;
+        for (int64_t i = 0; i + w <= m; ++i) {
+            if (pre[i + w] - pre[i] >= need) {
+                int64_t a = max(i, run_end), b = min(n, i + w + p);
+                for (int64_t k = a; k < b; ++k) { if (!cov[k]) cov[k] = 1; ++here; }
+                run_end = max(run_end, b);
+            }
+        }
+        if (here > best_bp) { best_bp = here; if (best_period) *best_period = p; }
+    }
+    if (count_to < 0 || count_to > n) count_to = n;
+    int64_t tot = 0; for (int64_t k = max<int64_t>(0, count_from); k < count_to; ++k) tot += cov[k];
+    return tot;
+}
+
 // RAII temp directory
 struct TmpDir {
     string path;
@@ -197,7 +239,23 @@ static void help(char** argv) {
          << "                         several calls in one window has its nodes concatenated\n"
          << "                         into a sequence that was never a single allele [none]\n"
          << "  -r, --report FILE      write a TSV of every call\n"
-         << "  -d, --detect-only      report only, do not rewrite\n";
+         << "  -d, --detect-only      report only, do not rewrite\n"
+         << "\n  Tandem-repeat flattening (a separate pass, before and independent of the above):\n"
+         << "  -T, --tr-flatten       delete every alt node of a small top-level site that is mostly\n"
+         << "                         tandem repeat, leaving only its reference path.  minigraph\n"
+         << "                         represents STR/VNTR variation as a tangle of short alt nodes;\n"
+         << "                         flattened, every haplotype maps straight through the site and\n"
+         << "                         cactus's base aligner works the alleles out instead [off]\n"
+         << "      --tr-max-span N    only sites whose reference span is <= N bp [5000]\n"
+         << "      --tr-max-allele N  ...and whose longest alt allele is <= N bp: keep it well inside\n"
+         << "                         the base aligner's window (10 kb in cactus-pangenome) [5000]\n"
+         << "      --tr-min-nodes N   ...and that have at least N nodes, reference included, so the\n"
+         << "                         simple bubbles minigraph already represents cleanly are left\n"
+         << "                         alone [10]\n"
+         << "      --tr-min-frac F    ...and whose sequence, reference and alt together, is at\n"
+         << "                         least F tandem repeat [0.8]\n"
+         << "      --tr-max-period N  longest repeat unit looked for, bp [100]\n"
+         << "      --tr-report FILE   one row per flattened site\n";
 }
 
 int main(int argc, char** argv) {
@@ -206,6 +264,11 @@ int main(int argc, char** argv) {
     double min_ident = 0.95, min_alt = 0.5, min_cover = 0.0, max_removed = 1.05;
     bool do_dup = false, detect_only = false;
     string mm2 = "minimap2", preset = "asm20", report, call_report, mm_extra;
+    bool tr_flatten = false;
+    int64_t tr_max_span = 5000, tr_max_allele = 5000, tr_min_nodes = 10;
+    int tr_max_period = 100;
+    double tr_min_frac = 0.8;
+    string tr_report;
     string lastz, lastz_extra;
     // Cactus's own lastz settings for its most-similar distance class ("one" in
     // <lastzArguments>), which is the right template: these alignments are ~99% identical.
@@ -245,8 +308,12 @@ int main(int argc, char** argv) {
             {"call-report",required_argument,0,'R'},
             {"lastz",required_argument,0,'z'},{"lastz-extra",required_argument,0,'Z'},
             {"minimap2",required_argument,0,'m'},{"report",required_argument,0,'r'},
-            {"detect-only",no_argument,0,'d'},{"help",no_argument,0,'h'},{0,0,0,0}};
-        c = getopt_long(argc, argv, "b:i:a:C:M:A:Dc:L:k:j:t:N:x:P:X:m:r:R:z:Z:dh", lo, 0);
+            {"detect-only",no_argument,0,'d'},{"help",no_argument,0,'h'},
+            {"tr-flatten",no_argument,0,'T'},{"tr-max-span",required_argument,0,1001},
+            {"tr-max-allele",required_argument,0,1002},{"tr-min-nodes",required_argument,0,1003},
+            {"tr-min-frac",required_argument,0,1004},{"tr-max-period",required_argument,0,1005},
+            {"tr-report",required_argument,0,1006},{0,0,0,0}};
+        c = getopt_long(argc, argv, "b:i:a:C:M:A:Dc:L:k:j:t:N:x:P:X:m:r:R:z:Z:dhT", lo, 0);
         if (c == -1) break;
         switch (c) {
             case 'b': min_block = stol(optarg); break;
@@ -271,6 +338,13 @@ int main(int argc, char** argv) {
             case 'm': mm2 = optarg; break;
             case 'r': report = optarg; break;
             case 'd': detect_only = true; break;
+            case 'T': tr_flatten = true; break;
+            case 1001: tr_max_span = stol(optarg); break;
+            case 1002: tr_max_allele = stol(optarg); break;
+            case 1003: tr_min_nodes = stol(optarg); break;
+            case 1004: tr_min_frac = stod(optarg); break;
+            case 1005: tr_max_period = stoi(optarg); break;
+            case 1006: tr_report = optarg; break;
             case 'h': default: help(argv); return c == 'h' ? 0 : 1;
         }
     }
@@ -372,11 +446,19 @@ int main(int argc, char** argv) {
         vector<TravMeta> travs;
     };
     vector<Job> jobs;
+    // a site the -T pass flattens: its alt nodes go, its reference path stays
+    struct Flat {
+        size_t snarl_i = 0; string sn; int64_t lo = 0, hi = 0;
+        size_t n_nodes = 0, n_comps = 0; vector<string> alt;
+        int64_t alt_bp = 0, max_allele = 0; double frac = 0; int period = 0;
+    };
+    vector<Flat> flats;
     atomic<int64_t> sk_bound(0), sk_diffseq(0), sk_nospan(0), sk_big(0),
                     sk_noalt(0), sk_noref(0), sk_manycomp(0), sk_longtrav(0);
     {
         size_t nthread = max(1u, thread::hardware_concurrency());
         vector<vector<Job>> per(nthread);
+        vector<vector<Flat>> flat_per(nthread);
         atomic<size_t> next(0);
         vector<thread> pool;
         for (size_t t = 0; t < nthread; ++t) pool.emplace_back([&, t]() {
@@ -391,7 +473,9 @@ int main(int argc, char** argv) {
                 const Node* A = LN->so < RN->so ? LN : RN;
                 const Node* B = LN->so < RN->so ? RN : LN;
                 int64_t lo = A->so + A->len, hi = B->so;
-                if (hi <= lo) { ++sk_nospan; continue; }
+                // hi == lo is a pure insertion: nothing on the reference between the boundaries.  The
+                // alignment pass has nothing to align it to, but -T can still flatten it
+                if (hi < lo || (hi == lo && !tr_flatten)) { ++sk_nospan; continue; }
 
                 // nodes strictly inside the snarl
                 vector<string> inside; unordered_set<string> seen{s.L, s.R};
@@ -423,7 +507,7 @@ int main(int argc, char** argv) {
                         j.refp.push_back(rit->second); j.reflen += p->len;
                     }
                 }
-                if (j.refp.empty()) { ++sk_noref; continue; }
+                if (j.refp.empty() && hi > lo) { ++sk_noref; continue; }
                 unordered_map<string,int64_t> roff;
                 { int64_t acc = 0; for (auto& n : j.refp) { roff[n] = acc; acc += NI(n)->len; } }
 
@@ -444,6 +528,120 @@ int main(int argc, char** argv) {
                     }
                     comps.push_back(move(comp));
                 }
+                // Tandem-repeat flattening.  Decided here, before the component cap below, because
+                // an STR/VNTR tangle is exactly the site with many small components.  A flattened
+                // site gets no alignment job: its alt nodes are deleted whole after this loop.
+                if (tr_flatten && (int64_t)inside.size() >= tr_min_nodes && hi - lo <= tr_max_span &&
+                    j.reflen == hi - lo) {
+                    // longest allele: each component spliced into the reference where it attaches
+                    int64_t max_allele = j.reflen, alt_bp = 0;
+                    for (auto& comp : comps) {
+                        int64_t pa = 0, pb = j.reflen, body = 0; bool haveA = false, haveB = false;
+                        for (auto& n : comp) {
+                            body += NI(n)->len;
+                            auto it = pred.find(n);
+                            if (it != pred.end()) for (auto& p : it->second) {
+                                auto r = roff.find(p);
+                                if (r != roff.end()) { int64_t e = r->second + NI(p)->len;
+                                    pa = haveA ? max(pa, e) : e; haveA = true; }
+                            }
+                            auto it2 = succ.find(n);
+                            if (it2 != succ.end()) for (auto& q : it2->second) {
+                                auto r = roff.find(q);
+                                if (r != roff.end()) { pb = haveB ? min(pb, r->second) : r->second; haveB = true; }
+                            }
+                        }
+                        if (!haveA) pa = 0;
+                        if (!haveB) pb = j.reflen;
+                        if (pb < pa) { pa = 0; pb = j.reflen; }
+                        alt_bp += body;
+                        max_allele = max(max_allele, pa + body + (j.reflen - pb));
+                    }
+                    if (max_allele <= tr_max_allele) {
+                        // Score each allele as a haplotype reads it: the reference allele, and each
+                        // alt component in path order spliced into the reference, both padded with
+                        // reference flank.  A site usually sits inside a longer repeat -- a 67 bp
+                        // span can hold under two copies of a 49 bp unit -- and only the flank makes
+                        // that visible.  Only the allele's own bases (the ref span, the alt body) count.
+                        const int64_t F = 2 * (int64_t)tr_max_period + 20;
+                        string lf, rf;
+                        {
+                            auto& rv = ref_by_sn[j.sn];
+                            auto it = lower_bound(rv.begin(), rv.end(), make_pair(lo, string()));
+                            // left: walk back from the node ending at lo
+                            auto lt = it;
+                            while (lt != rv.begin() && (int64_t)lf.size() < F) {
+                                --lt; if (lt->first >= lo) continue;
+                                const Node* p = NI(lt->second); if (!p) break;
+                                lf = p->seq + lf;
+                            }
+                            if ((int64_t)lf.size() > F) lf = lf.substr(lf.size() - F);
+                            auto rt = lower_bound(rv.begin(), rv.end(), make_pair(hi, string()));
+                            for (; rt != rv.end() && (int64_t)rf.size() < F; ++rt) {
+                                const Node* p = NI(rt->second); if (!p) break;
+                                rf += p->seq;
+                            }
+                            if ((int64_t)rf.size() > F) rf = rf.substr(0, F);
+                        }
+                        string rs; for (auto& n : j.refp) rs += NI(n)->seq;
+                        int best_p = 0;
+                        int64_t tr_bp = tandem_cover(lf + rs + rf, tr_max_period, 0.8, &best_p,
+                                                     lf.size(), lf.size() + rs.size());
+                        // The longest walk from one boundary to the other, a real allele (as gfatools
+                        // bubble reports it), rather than component nodes strung together: a
+                        // component that branches has no single order, and an out-of-phase
+                        // concatenation hides the period.  Longest path by DFS order, ignoring any
+                        // edge back into the current stack (minigraph sites are nearly always acyclic).
+                        string lp;
+                        {
+                            unordered_set<string> in_site(inside.begin(), inside.end());
+                            in_site.insert(j.R);
+                            vector<string> topo; unordered_map<string,int> state;
+                            function<void(const string&)> dfs = [&](const string& x) {
+                                state[x] = 1;
+                                auto it = succ.find(x);
+                                if (it != succ.end()) for (auto& y : it->second)
+                                    if (in_site.count(y) && !state.count(y)) dfs(y);
+                                state[x] = 2; topo.push_back(x);
+                            };
+                            dfs(j.L);
+                            reverse(topo.begin(), topo.end());
+                            unordered_map<string,int64_t> best; unordered_map<string,string> from;
+                            best[j.L] = 0;
+                            unordered_map<string,int> pos; for (size_t k = 0; k < topo.size(); ++k) pos[topo[k]] = k;
+                            for (auto& x : topo) {
+                                auto bx = best.find(x); if (bx == best.end()) continue;
+                                auto it = succ.find(x); if (it == succ.end()) continue;
+                                for (auto& y : it->second) {
+                                    if (!in_site.count(y) || !pos.count(y) || pos[y] <= pos[x]) continue;
+                                    int64_t v = bx->second + (y == j.R ? 0 : NI(y)->len);
+                                    auto by = best.find(y);
+                                    if (by == best.end() || v > by->second) { best[y] = v; from[y] = x; }
+                                }
+                            }
+                            if (best.count(j.R)) {
+                                vector<string> path;
+                                for (string x = from.count(j.R) ? from[j.R] : string(); !x.empty() && x != j.L;
+                                     x = from.count(x) ? from[x] : string()) path.push_back(x);
+                                reverse(path.begin(), path.end());
+                                for (auto& x : path) lp += NI(x)->seq;
+                            }
+                        }
+                        int64_t lp_cov = tandem_cover(lf + lp + rf, tr_max_period, 0.8, nullptr,
+                                                      lf.size(), lf.size() + lp.size());
+                        // the reference allele and the longest allele together
+                        double frac = (j.reflen + (int64_t)lp.size()) ?
+                            (double)(tr_bp + lp_cov) / (j.reflen + lp.size()) : 0.0;
+                        if (frac >= tr_min_frac) {
+                            Flat f; f.snarl_i = si; f.sn = j.sn; f.lo = lo; f.hi = hi;
+                            f.n_nodes = inside.size(); f.n_comps = comps.size(); f.alt = alts;
+                            f.alt_bp = alt_bp; f.max_allele = max_allele; f.frac = frac; f.period = best_p;
+                            flat_per[t].push_back(move(f));
+                            continue;
+                        }
+                    }
+                }
+                if (hi == lo) { ++sk_nospan; continue; }   // only -T had a use for it
                 if ((int)comps.size() > max_comp) { ++sk_manycomp; continue; }
 
                 for (auto& comp : comps) {
@@ -496,6 +694,8 @@ int main(int argc, char** argv) {
         });
         for (auto& th : pool) th.join();
         for (auto& v : per) for (auto& j : v) jobs.push_back(move(j));
+        for (auto& v : flat_per) for (auto& f : v) flats.push_back(move(f));
+        sort(flats.begin(), flats.end(), [](const Flat& a, const Flat& b) { return a.snarl_i < b.snarl_i; });
         // Gathering from per-thread vectors is completion-ordered, so chunk composition -- and
         // therefore which alignments minimap2 reports -- would vary run to run.  Sort so the
         // output is reproducible.
@@ -505,6 +705,34 @@ int main(int argc, char** argv) {
          << " boundary=" << sk_bound << " diff-seq=" << sk_diffseq << " no-span=" << sk_nospan
          << " too-big=" << sk_big << " no-alt=" << sk_noalt << " no-ref=" << sk_noref
          << " many-components=" << sk_manycomp << " long-traversal=" << sk_longtrav << "\n";
+
+    // ------------------------------------------------------------ tandem-repeat flattening
+    //
+    // Top-level snarls are disjoint, so no node is claimed by two flattened sites or by a flattened
+    // site and an alignment job.  Only alt (rank > 0) nodes strictly inside the snarl are removed,
+    // with every edge touching them: the site's reference path, and every edge along it, stays.
+    if (tr_flatten) {
+        int64_t fn = 0, fbp = 0;
+        ofstream tf;
+        if (!tr_report.empty()) {
+            tf.open(tr_report);
+            if (!tf) { cerr << "[rgfa-collapse] error: cannot write " << tr_report << "\n"; return 1; }
+            tf << "#sn\tstart\tend\tnodes\tcomponents\talt_bp\tlongest_allele\ttr_frac\tperiod\n";
+        }
+        for (const Flat& f : flats) {
+            if (!detect_only) for (auto& n : f.alt) {
+                auto xi = idx.find(n); if (xi == idx.end()) continue;
+                Node& N = nodes[xi->second];
+                if (N.deleted) continue;
+                N.deleted = true; ++fn; fbp += N.len;
+                for (size_t ei : node_edges[n]) edges[ei].deleted = true;
+            }
+            if (tf) tf << f.sn << "\t" << f.lo << "\t" << f.hi << "\t" << f.n_nodes << "\t" << f.n_comps
+                       << "\t" << f.alt_bp << "\t" << f.max_allele << "\t" << f.frac << "\t" << f.period << "\n";
+        }
+        cerr << "[rgfa-collapse] flattened " << flats.size() << " tandem-repeat site(s): "
+             << fn << " alt node(s) / " << fbp << " bp removed" << (detect_only ? " (detect-only: none)" : "") << "\n";
+    }
 
     // ------------------------------------------------------------ align, chunked and parallel
 
