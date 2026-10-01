@@ -1,5 +1,6 @@
 #include <map>
 #include <list>
+#include <deque>
 #include <cassert>
 #include "rgfa-split.hpp"
 #include "gfakluge.hpp"
@@ -104,56 +105,64 @@ pair<unordered_map<int64_t, int64_t>, vector<string>> rgfa2contig(const string& 
     kluge.for_each_sequence_line_in_file(gfa_path.c_str(), visit_seq);
     kluge.for_each_edge_line_in_file(gfa_path.c_str(), visit_edge);
 
-    // fill out the contigs by rank
-    for (auto& rank_nodes : rank_to_nodes) {
-        // rank 0 was added above
-        if (rank_nodes.first > 0) {
-            const int64_t& rank = rank_nodes.first;
-            auto& nodes_at_rank = rank_nodes.second;
-            // todo: clean up (this was a mistake in original design where i forgot that not every rank i node
-            // connects to rank i-1)
-            int64_t consecutive_pushes = 0;
-            while (!nodes_at_rank.empty()) {
-                int64_t node_id = nodes_at_rank.back();
-                nodes_at_rank.pop_back();
-                
-                // contig_id -> count of times it's connected
+    // fill out the contigs by walking outward from rank 0.
+    //
+    // This used to walk the ranks upward, placing a node once it touched a lower rank or an
+    // already-placed node of the same rank (see the old "not every rank i node connects to rank i-1"
+    // note).  That assumes every node's downward attachment survives, which minigraph guarantees but
+    // a postprocessor that deletes nodes -- rgfa-collapse -- does not: a node whose neighbours all
+    // sit at or above its own rank was unplaceable, and one such node failed every per-sample job on
+    // its chromosome.  A breadth-first search from the rank-0 seeds needs only that the graph be
+    // connected, which is what such a graph still is.  On unmodified minigraph output the result is
+    // identical: every node still inherits the contig of the neighbour it is reached through.
+    {
+        deque<int64_t> queue;
+        for (auto& kv : node_to_contig) queue.push_back(kv.first);
+        while (!queue.empty()) {
+            int64_t node_id = queue.front();
+            queue.pop_front();
+            int64_t contig_id = node_to_contig[node_id];
+            auto edge_iterators = edges.equal_range(node_id);
+            for (auto e = edge_iterators.first; e != edge_iterators.second; ++e) {
+                int64_t other_id = e->second;
+                if (!node_to_contig.count(other_id)) {
+                    node_to_contig[other_id] = contig_id;
+                    queue.push_back(other_id);
+                }
+            }
+        }
+        // the conflict check the rank walk did, applied to the same neighbour set it considered:
+        // a node touching two contigs among its lower- or same-rank neighbours
+        for (auto& rank_nodes : rank_to_nodes) {
+            if (rank_nodes.first == 0) continue;
+            const int64_t rank = rank_nodes.first;
+            for (int64_t node_id : rank_nodes.second) {
                 unordered_map<int64_t, int64_t> counts;
                 auto edge_iterators = edges.equal_range(node_id);
                 for (auto e = edge_iterators.first; e != edge_iterators.second; ++e) {
-                    int64_t& other_id = e->second;
+                    int64_t other_id = e->second;
                     int64_t other_rank = node_to_rank[other_id];
-                    if (other_rank < rank ||
-                        (other_rank == rank && node_to_contig.count(other_id))) {
-                        int64_t other_contig = node_to_contig[other_id];
-                        ++counts[other_contig];
-                    }
+                    if (other_rank <= rank && node_to_contig.count(other_id)) ++counts[node_to_contig[other_id]];
                 }
-                if (counts.size() == 0) {
-                    // this node isn't connected to any nodes with rank -1, try it later
-                    nodes_at_rank.push_front(node_id);
-                    ++consecutive_pushes;
-                    if (consecutive_pushes > nodes_at_rank.size()) {
-                        cerr << "[error] Unable to assign contigs for the following nodes at rank " << rank << ":\n";
-                        for (const auto& ni : nodes_at_rank) {
-                            cerr << ni << endl;
-                        }
-                        exit(1);
-                    }
-                } else if (counts.size() > 1) {
+                if (counts.size() > 1) {
                     cerr << "[error] Conflict found for node \"" << node_id << "\" with rank \"" << rank << ":\n";
                     for (auto& count_elem : counts) {
                         // we could use a heuristic to resolve. but do not expect this from minigraph output
                         cerr << "\tcontig=" << contigs[count_elem.first] << " count=" << count_elem.second << endl;
                     }
-                    exit(1);                    
-                } else {
-                    assert(counts.size() == 1);
-                    // set the contig to the unambiguous neighbour
-                    node_to_contig[node_id] = counts.begin()->first;
-                    consecutive_pushes = 0;
+                    exit(1);
                 }
             }
+        }
+        // anything the search never reached is disconnected from every reference contig
+        vector<int64_t> unreached;
+        for (auto& kv : node_to_rank) if (!node_to_contig.count(kv.first)) unreached.push_back(kv.first);
+        if (!unreached.empty()) {
+            sort(unreached.begin(), unreached.end());
+            cerr << "[error] Unable to assign contigs for " << unreached.size()
+                 << " node(s) not connected to any reference contig:\n";
+            for (int64_t ni : unreached) cerr << ni << endl;
+            exit(1);
         }
     }
 
