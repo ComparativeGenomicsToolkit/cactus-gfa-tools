@@ -3,8 +3,6 @@
   creator excursions, witness fallback, canonical frame, deduplication, kinds, Allowed, pre-filter
   and caps.
 
-  Replaces rgfa-collapse's snarl reader (403-437; it counted "name" substrings), its interior
-  (480-499; it ignored link sides) and its traversal/component code (514-530, 647-692).
   The creator excursion is a port of the design prototype's rf_excursion and
   Allowed of all_paths_allowed, computed exactly over the SCC condensation instead of by
   worklist relaxation.

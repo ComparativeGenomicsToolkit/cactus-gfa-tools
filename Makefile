@@ -35,7 +35,7 @@ CXXFLAGS := -O3 -Werror=return-type -std=c++14 -ggdb -g -MMD -MP $(PARALLEL_FLAG
 LIB_FLAGS = $(LIBS)
 INC_FLAGS = -I$(CWD)
 
-all: mzgaf2paf gaf2paf pafcoverage rgfa-split paf2lastz rgfa2paf pafmask paf2stable gaf2unstable gaffilter rgfa-collapse rgfa-zip
+all: mzgaf2paf gaf2paf pafcoverage rgfa-split paf2lastz rgfa2paf pafmask paf2stable gaf2unstable gaffilter rgfa-zip
 
 mzgaf2paf: mzgaf2paf.o mzgaf2paf_main.o
 	$(CXX) $(INCLUDE_FLAGS) $(CXXFLAGS) $(CPPFLAGS) -o mzgaf2paf mzgaf2paf_main.o mzgaf2paf.o $(LIB_FLAGS)
@@ -109,13 +109,7 @@ gaf2unstable: gaf2unstable_main.o rgfa-split.o pafcoverage.o
 gaffilter: gaffilter_main.o gafkluge.hpp paf.hpp IntervalTree.h
 	$(CXX) $(INCLUDE_FLAGS) $(CXXFLAGS) $(CPPFLAGS) -o gaffilter gaffilter_main.cpp $(INC_FLAGS)
 
-rgfa-collapse_main.o:$(LIB_DEPS) rgfa-collapse_main.cpp gfakluge.hpp
-	$(CXX) $(CXXFLAGS) -c rgfa-collapse_main.cpp $(INC_FLAGS)
-
-rgfa-collapse: rgfa-collapse_main.o
-	$(CXX) $(CXXFLAGS) -o rgfa-collapse rgfa-collapse_main.o $(INC_FLAGS) $(LDFLAGS)
-
-# rgfa-zip: the replacement for rgfa-collapse.  Its objects build warning-clean with -Wall -Wextra.
+# rgfa-zip: its objects build warning-clean with -Wall -Wextra.
 ZIP_OBJS = rgfa-zip_main.o zip_graph.o zip_site.o zip_report.o zip_align.o zip_edit.o zip_alt.o zip_gaf.o
 ZIP_WARN = -Wall -Wextra
 
@@ -128,7 +122,7 @@ $(ZIP_OBJS): %.o: %.cpp
 -include $(ZIP_OBJS:.o=.d)
 
 test : all paf2lastz_test pafmask_test
-	cd test && prove -v test.t && prove -v gaf2paf.t && prove -v gaffilter.t && prove -v rgfa-collapse.t && prove -v rgfa-zip.t
+	cd test && prove -v test.t && prove -v gaf2paf.t && prove -v gaffilter.t && prove -v rgfa-zip.t
 
 paf2lastz_test: mapqTest scoreTest
 	rm -f test/paf2lastz/out_mapq test/paf2lastz/out_score

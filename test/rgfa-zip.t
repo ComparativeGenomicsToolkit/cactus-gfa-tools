@@ -42,7 +42,7 @@ if [ -z "$MM2" ] || ! "$MM2" --version > /dev/null 2>&1; then
 fi
 MM2=$(cd "$(dirname "$MM2")" && pwd)/$(basename "$MM2")
 
-plan tests 145
+plan tests 143
 
 T=${RGFA_ZIP_TEST_DIR:-.}/rgfa-zip.t.tmp
 rm -rf $T && mkdir -p $T/tmp
@@ -1477,11 +1477,6 @@ for c in Z1 Z5 Z10 Z13 Z16 Z22; do
     zip Z32_$c run
 done
 is "$(for c in Z1 Z5 Z10 Z13 Z16 Z22; do echo -n "$(ex Z32_$c run):$(q col Z32_$c run outcome | tr ' ' '\n' | grep -c '^zipped$'):$(q same Z32_$c run) "; done)" "0:0:same 0:0:same 0:0:same 0:0:same 0:0:same 0:0:same " "Z32: run on its own output (Z1, Z5, Z10, Z13, Z16, Z22), rgfa-zip zips nothing"
-
-# ---- Z33: old option strings are errors naming the equivalent
-o33() { rgfa-zip -m $MM2 "$@" -o $T/x.gfa -r $T/x.tsv $T/Z1/in.gfa $T/Z1/snarls.json 2>&1 > /dev/null; echo "exit $?"; }
-is "$(o33 -D | tail -1)/$(o33 -D | grep -c 'strand is never a gate')" "exit 2/1" "Z33: -D is an error: strand is never a gate"
-is "$(o33 -A 2 | grep -c -- '--alt-rounds')/$(o33 -c 5 | grep -c -- '--max-site-nodes')/$(o33 -M 2 | grep -c 'collinear chain')/$(o33 --threads 4 | grep -c 'sites in parallel')/$(o33 -T | grep -c 'rgfa-collapse -T')" "1/1/1/1/1" "Z33: -A, -c, -M, --threads and -T name their rgfa-zip equivalents"
 
 # ---- Z34-Z37: rule U and the gates
 for c in Z34a Z34b Z35 Z35b Z36 Z37; do zip $c run; done

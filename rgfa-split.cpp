@@ -110,7 +110,7 @@ pair<unordered_map<int64_t, int64_t>, vector<string>> rgfa2contig(const string& 
     // This used to walk the ranks upward, placing a node once it touched a lower rank or an
     // already-placed node of the same rank (see the old "not every rank i node connects to rank i-1"
     // note).  That assumes every node's downward attachment survives, which minigraph guarantees but
-    // a postprocessor that deletes nodes -- rgfa-collapse -- does not: a node whose neighbours all
+    // a postprocessor that deletes nodes need not: a node whose neighbours all
     // sit at or above its own rank was unplaceable, and one such node failed every per-sample job on
     // its chromosome.  A breadth-first search from the rank-0 seeds needs only that the graph be
     // connected, which is what such a graph still is.  On unmodified minigraph output the result is

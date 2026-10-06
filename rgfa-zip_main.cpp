@@ -163,58 +163,6 @@ void check_output_paths(const Options& opt) {
     }
 }
 
-// rgfa-collapse options: errors that name the rgfa-zip equivalent
-const std::map<std::string, std::string>& old_options() {
-    static const std::string gone_alt = "is gone: queries are alt walks only, so there is no reference flank to discount";
-    static const std::string tr = "is not part of rgfa-zip: tandem-repeat flattening stays in the frozen rgfa-collapse -T "
-                                  "until it gets its own tool (spec decision 8)";
-    static const std::map<std::string, std::string> m = {
-        {"-a", "rgfa-collapse's -a " + gone_alt},
-        {"--min-alt", "rgfa-collapse's --min-alt " + gone_alt},
-        {"-C", "rgfa-collapse's -C is gone: nodes are cut at block ends, so only the aligned part is zipped"},
-        {"--min-cover", "rgfa-collapse's --min-cover is gone: nodes are cut at block ends, so only the aligned part is zipped"},
-        {"-M", "rgfa-collapse's -M is gone: one collinear chain per walk zips at most min(M,N) copies, and V7 checks removed bp <= target bp / i"},
-        {"--max-removed", "rgfa-collapse's --max-removed is gone: one collinear chain per walk zips at most min(M,N) copies"},
-        {"-A", "rgfa-collapse's -A N is now --alt-rounds N (alt-vs-alt is on by default; --no-alt turns it off)"},
-        {"-D", "rgfa-collapse's -D is gone: strand is never a gate, forward and inverted homology are zipped by the same rules"},
-        {"--duplications", "rgfa-collapse's --duplications is gone: strand is never a gate"},
-        {"-c", "rgfa-collapse's -c is now --max-site-nodes N (interior nodes per site)"},
-        {"--max-components", "rgfa-collapse's --max-components is now --max-site-nodes N (interior nodes per site)"},
-        {"-L", "rgfa-collapse's -L is now --max-pair N (max query and window per pair)"},
-        {"--max-traversal", "rgfa-collapse's --max-traversal is now --max-pair N"},
-        {"-k", "rgfa-collapse's -k is gone: each window gets its own minimap2 index"},
-        {"--chunk", "rgfa-collapse's --chunk is gone: each window gets its own minimap2 index"},
-        {"--jobs", "use -j N (concurrent aligner processes)"},
-        {"--threads", "rgfa-collapse's --threads (threads per minimap2) is gone: minimap2 runs with -t 1; -t N is sites in parallel"},
-        {"-N", "rgfa-collapse's -N is gone: rgfa-zip runs minimap2 with -N 50 -p 0.01 --secondary=yes; override with -X"},
-        {"--mm-secondary", "rgfa-collapse's --mm-secondary is gone: override minimap2's -N with -X '-N INT'"},
-        {"-P", "rgfa-collapse's -P is gone: override minimap2's -p with -X '-p FLOAT'"},
-        {"--mm-p", "rgfa-collapse's --mm-p is gone: override minimap2's -p with -X '-p FLOAT'"},
-        {"--mm-preset", "use -x STR"},
-        {"--mm-extra", "use -X STR"},
-        {"--minimap2", "use -m PATH"},
-        {"-z", "rgfa-collapse's -z (lastz) is gone: lastz is a test arbiter outside the tool"},
-        {"--lastz", "rgfa-collapse's --lastz is gone: lastz is a test arbiter outside the tool"},
-        {"-Z", "rgfa-collapse's -Z is gone with lastz"},
-        {"--lastz-extra", "rgfa-collapse's --lastz-extra is gone with lastz"},
-        {"-R", "rgfa-collapse's -R is gone: -r writes one row per candidate with its outcome"},
-        {"--call-report", "rgfa-collapse's --call-report is gone: -r writes one row per candidate with its outcome"},
-        {"--report", "use -r FILE"},
-        {"-d", "rgfa-collapse's -d is now --detect-only"},
-        {"--min-block", "use -b INT"},
-        {"--min-ident", "use -i FLOAT"},
-        {"-T", "rgfa-collapse's -T " + tr},
-        {"--tr-flatten", "--tr-flatten " + tr},
-        {"--tr-max-span", "--tr-max-span " + tr},
-        {"--tr-max-allele", "--tr-max-allele " + tr},
-        {"--tr-min-nodes", "--tr-min-nodes " + tr},
-        {"--tr-min-frac", "--tr-min-frac " + tr},
-        {"--tr-max-period", "--tr-max-period " + tr},
-        {"--tr-report", "--tr-report " + tr},
-    };
-    return m;
-}
-
 enum OptId {
     O_M, O_O, O_R, O_T, O_J, O_B, O_I, O_G, O_MINPIECE, O_ISLAND, O_DELTA, O_TIES, O_FRAG, O_PREFILTER, O_SCREEN,
     O_MAXPAIR, O_MAXSITEQ, O_MAXSITEN, O_X, O_XX, O_NOALT, O_ALTROUNDS, O_WALKS, O_MAXREP, O_DETECTONLY, O_CHECK,
@@ -289,8 +237,6 @@ bool parse_args(int argc, char** argv, Options& opt) {
             val = a.substr(2);
             has_val = true;
         }
-        auto old = old_options().find(name);
-        if (old != old_options().end()) usage_error(strf("option %s: %s", name.c_str(), old->second.c_str()));
         const OptDef* def = nullptr;
         for (const OptDef& d : OPTS)
             if (name == d.name) { def = &d; break; }

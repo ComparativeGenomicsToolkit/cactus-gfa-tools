@@ -1,13 +1,11 @@
 /*
   zip_graph.cpp -- rGFA reading with input checks, CSR adjacency, emit, global placement assert.
 
-  Reading replaces rgfa-collapse's gfakluge pass (rgfa-collapse_main.cpp ~354-401): the same
-  S/L fields and raw tags are kept, plus L-line SR, overlap and L1/L2, but the parser here also
-  reads gzip, checks every field, and is independent of line order.  ref_by_sn becomes
-  Graph::ref_nodes.  The placement check (rgfa-collapse 1544-1605) is split into the input check
-  (read_rgfa: reachability and one rank per SN, exit 2) and the final assert (check_placement,
-  exit 3).  Emit (1607-1654) now sorts nodes and links, keys links canonically, keeps overlaps
-  and writes through AtomicWriter.
+  Reading keeps the S/L fields and raw tags, plus L-line SR, overlap and L1/L2; the parser reads
+  gzip, checks every field, and is independent of line order.  The reference nodes of each SN are
+  Graph::ref_nodes.  Placement is checked twice: on input (read_rgfa: reachability and one rank
+  per SN, exit 2) and as a final assert (check_placement, exit 3).  Emit sorts nodes and links,
+  keys links canonically, keeps overlaps and writes through AtomicWriter.
 */
 #include "zip_graph.hpp"
 
