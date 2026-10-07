@@ -6,7 +6,7 @@ BASH_TAP_ROOT=./bash-tap
 PATH=../bin:$PATH
 PATH=../:$PATH
 
-plan tests 63
+plan tests 64
 
 # A three-record query: two long alignments that overlap at a seam, plus a bystander.  The seam is
 # what the filter is for; the flanks are what -t stops it from taking as well.
@@ -221,13 +221,14 @@ id=S.1|c1	210000	80000	120000	+	>r2>r3	100000	30000	70000	40000	40000	60	cg:Z:40
 id=S.1|c1	210000	110000	210000	+	>r3>r4>r5	150000	10000	110000	100000	100000	10	cg:Z:100000=	rc:Z:chrA
 EOF
 gaffilter exact_tmp/tier.gaf -r 5 -m 0.25 -q 5 -b 0 -i 0.5 2>/dev/null > exact_tmp/tier.stock
-gaffilter exact_tmp/tier.gaf $X --exact-plan exact_tmp/tier.plan 2>/dev/null > exact_tmp/tier.out
+gaffilter exact_tmp/tier.gaf $X --exact-plan exact_tmp/tier.plan --exact-summary exact_tmp/tier.summary 2>exact_tmp/tier.err > exact_tmp/tier.out
 is $(wc -l < exact_tmp/tier.stock) 2 "-x tier: the stock filter deletes the demoted record whole"
 is $(wc -l < exact_tmp/tier.out) 3 "-x keeps it"
 is $(grep -c kq:Z exact_tmp/tier.out) 1 "only the demoted record is cut"
 is $(awk '$3==80000' exact_tmp/tier.out | grep -o 'kq:Z:[^[:space:]]*') "kq:Z:100000-110000" "it keeps only the span no non-demoted record claims"
 is $(awk '$3==80000 {print $10 "/" $11}' exact_tmp/tier.out) "40000/40000" "a cut record is printed whole (its block length is the parent's)"
 is $(awk '$3==80000 {print $7}' exact_tmp/tier.plan) demoted "the plan marks it demoted"
+is "$(cat exact_tmp/tier.summary)" "$(grep '^\[gaffilter\]: -x' exact_tmp/tier.err | sed 's/^\[gaffilter\]: //')" "--exact-summary holds the summary printed on stderr"
 
 # gaf2paf applies kq:Z: per line, and every line keeps the parent's gl/gm
 printf 'r1\t50000\nr2\t50000\nr3\t50000\nr4\t50000\nr5\t50000\nr6\t50000\n' > exact_tmp/lens.tsv

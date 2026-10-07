@@ -558,6 +558,7 @@ struct Params {
     string plan_path;
     string log_path;
     string junctions_path;
+    string summary_path;
     double rem_floor = 0.95;
     int64_t rmin = 10000;
     double id_floor = 0.98;
@@ -2164,19 +2165,39 @@ static int run(vector<GafRecord>& gaf_records, unordered_map<string, GafInterval
         ok = write_lines(P.junctions_path, "", junction_rows) && ok;
     }
 
-    cerr << "[gaffilter]: -x: " << n_whole << " records whole, " << n_cut << " cut, " << n_del << " deleted, of "
-         << recs.size() << ". kept " << kept_bp << " query bp, against " << stock_bp << " for the stock filter ("
-         << (kept_bp >= stock_bp ? "+" : "") << (kept_bp - stock_bp) << ")" << endl;
-    cerr << "[gaffilter]: -x: holes (bp claimed by an eligible record, kept by none):";
-    if (sh.hole_bp.empty()) cerr << " none";
-    for (const auto& h : sh.hole_bp) cerr << " " << h.first << "=" << h.second;
-    cerr << endl;
-    cerr << "[gaffilter]: -x: " << sh.isolations << " junction trims (isolations), " << sh.gate_drops
-         << " gate drops (r1ref/collide), " << junction_rows.size() << " junctions logged";
-    if (P.guard) cerr << ", guard vetoes " << sh.guard_vetoes << " computed, " << sh.guard_applied << " applied";
-    cerr << endl;
+    // the summary: on stderr, and in --exact-summary for a caller whose stderr is shared with a pipe
+    vector<string> summary;
+    {
+        stringstream ss;
+        ss << "-x: " << n_whole << " records whole, " << n_cut << " cut, " << n_del << " deleted, of "
+           << recs.size() << ". kept " << kept_bp << " query bp, against " << stock_bp << " for the stock filter ("
+           << (kept_bp >= stock_bp ? "+" : "") << (kept_bp - stock_bp) << ")";
+        summary.push_back(ss.str());
+    }
+    {
+        stringstream ss;
+        ss << "-x: holes (bp claimed by an eligible record, kept by none):";
+        if (sh.hole_bp.empty()) ss << " none";
+        for (const auto& h : sh.hole_bp) ss << " " << h.first << "=" << h.second;
+        summary.push_back(ss.str());
+    }
+    {
+        stringstream ss;
+        ss << "-x: " << sh.isolations << " junction trims (isolations), " << sh.gate_drops
+           << " gate drops (r1ref/collide), " << junction_rows.size() << " junctions logged";
+        if (P.guard) ss << ", guard vetoes " << sh.guard_vetoes << " computed, " << sh.guard_applied << " applied";
+        summary.push_back(ss.str());
+    }
     if (sh.capped) {
-        cerr << "[gaffilter]: -x: warning: " << sh.capped << " contig(s) found no fixpoint and got the stock decision" << endl;
+        stringstream ss;
+        ss << "-x: warning: " << sh.capped << " contig(s) found no fixpoint and got the stock decision";
+        summary.push_back(ss.str());
+    }
+    for (const string& line : summary) {
+        cerr << "[gaffilter]: " << line << endl;
+    }
+    if (!P.summary_path.empty()) {
+        ok = write_lines(P.summary_path, "", summary) && ok;
     }
     return ok ? 0 : 1;
 }
@@ -2241,6 +2262,7 @@ static void help(char** argv) {
          << "    --exact-plan FILE               Write the per-record plan (kept query pieces) to FILE" << endl
          << "    --exact-log FILE                Write every drop, isolation and guard decision to FILE" << endl
          << "    --junctions FILE                Write the junctions between pieces placed apart (review log) to FILE" << endl
+         << "    --exact-summary FILE            Also write the summary printed on stderr to FILE" << endl
          << "    --a0-paf FILE                   (testing) Read the stock chain's final PAF instead of computing it" << endl
          << "    --only-chrom NAME               (testing) Gate and test only this chromosome group" << endl;
 }    
@@ -2272,7 +2294,7 @@ int main(int argc, char** argv) {
     enum { X_NODES = 256, X_RATIO, X_REF, X_PAF_RATIO, X_PAF_MIN_OVERLAP, X_RMIN, X_REM_FLOOR, X_ID_FLOOR,
            X_NO_R1REF, X_NO_ONETOONE, X_GATE_CHUNK, X_GATE_MINRUN, X_GAP, X_CLIP, X_R2_TOL, X_R2_SLACK,
            X_LIN_MAXINDEL, X_LIN_OVTOL, X_JUNCTION_MIN, X_GUARD, X_GUARD_TRIP, X_GUARD_MINRUN, X_GUARD_CHUNK,
-           X_GUARD_MINCHUNK, X_GUARD_SVLEN, X_PLAN, X_LOG, X_JUNCTIONS, X_A0_PAF, X_ONLY_CHROM };
+           X_GUARD_MINCHUNK, X_GUARD_SVLEN, X_PLAN, X_LOG, X_JUNCTIONS, X_SUMMARY, X_A0_PAF, X_ONLY_CHROM };
 
     int c;
     bool is_paf = false;
@@ -2326,6 +2348,7 @@ int main(int argc, char** argv) {
             {"exact-plan", required_argument, 0, X_PLAN},
             {"exact-log", required_argument, 0, X_LOG},
             {"junctions", required_argument, 0, X_JUNCTIONS},
+            {"exact-summary", required_argument, 0, X_SUMMARY},
             {"a0-paf", required_argument, 0, X_A0_PAF},
             {"only-chrom", required_argument, 0, X_ONLY_CHROM},
             {0, 0, 0, 0}
@@ -2417,6 +2440,7 @@ int main(int argc, char** argv) {
         case X_PLAN: xp.plan_path = optarg; break;
         case X_LOG: xp.log_path = optarg; break;
         case X_JUNCTIONS: xp.junctions_path = optarg; break;
+        case X_SUMMARY: xp.summary_path = optarg; break;
         case X_A0_PAF: xp.a0_paf_path = optarg; break;
         case X_ONLY_CHROM: xp.only_chrom = optarg; break;
         case 'h':
