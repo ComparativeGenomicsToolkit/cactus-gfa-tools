@@ -2522,6 +2522,12 @@ int main(int argc, char** argv) {
         xp.ratio = exact_ratio_arg.empty() ? xp.stock_ratio_d : stod(exact_ratio_arg);
         xp.min_overlap = min_overlap_arg.empty() ? 0. : stod(min_overlap_arg);
         xp.min_identity = min_identity_arg.empty() ? 0. : stod(min_identity_arg);
+        // a ratio of 0 lets every record beat every other (double placement); a chunk size of 0
+        // divides by zero (--gate-chunk) or never advances (--guard-chunk)
+        if (!(xp.ratio > 0) || xp.gate_chunk <= 0 || xp.guard_chunk <= 0) {
+            cerr << "[gaffilter] error: -x needs --exact-ratio > 0, --gate-chunk > 0 and --guard-chunk > 0" << endl;
+            return 1;
+        }
     } else if (!exact_ratio_arg.empty() || !xp.nodes_path.empty() || xp.guard || !xp.plan_path.empty()) {
         cerr << "[gaffilter] error: --exact-* options and --guard need -x" << endl;
         return 1;

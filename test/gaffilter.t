@@ -6,7 +6,7 @@ BASH_TAP_ROOT=./bash-tap
 PATH=../bin:$PATH
 PATH=../:$PATH
 
-plan tests 68
+plan tests 70
 
 # A three-record query: two long alignments that overlap at a seam, plus a bystander.  The seam is
 # what the filter is for; the flanks are what -t stops it from taking as well.
@@ -308,5 +308,11 @@ cat exact_tmp/tier.gaf exact_tmp/tier.gaf > exact_tmp/dup.gaf
 gaffilter exact_tmp/dup.gaf $X > exact_tmp/dup.out 2> exact_tmp/dup.err
 is $? 0 "-x takes duplicated records"
 is $(wc -l < exact_tmp/dup.out) $(gaffilter exact_tmp/dup.gaf -r 5 -m 0.25 -q 5 -b 0 -i 0.5 2>/dev/null | wc -l) "and keeps what the stock filter keeps of them"
+
+# option values that cannot work are refused rather than hanging or placing everything
+gaffilter exact_tmp/guard.gaf $X --exact-ratio 2 --guard --guard-chunk 0 > /dev/null 2> exact_tmp/bad.err
+is $? 1 "-x refuses --guard-chunk 0"
+gaffilter exact_tmp/tier.gaf $X --exact-ratio 0 > /dev/null 2> exact_tmp/bad.err
+is $? 1 "-x refuses --exact-ratio 0"
 
 rm -rf exact_tmp
