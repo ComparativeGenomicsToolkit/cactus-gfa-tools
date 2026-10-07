@@ -6,7 +6,7 @@ BASH_TAP_ROOT=./bash-tap
 PATH=../bin:$PATH
 PATH=../:$PATH
 
-plan tests 64
+plan tests 68
 
 # A three-record query: two long alignments that overlap at a seam, plus a bystander.  The seam is
 # what the filter is for; the flanks are what -t stops it from taking as well.
@@ -295,5 +295,18 @@ is $(sort exact_tmp/tier.out | cmp -s - exact_tmp/tier.rev.out && echo same) sam
 # -x is GAF-only and replaces -t
 gaffilter exact_tmp/tier.gaf $X -t 2>exact_tmp/xt.err > /dev/null || true
 is $(grep -c 'cannot be used with -p, -t or -o' exact_tmp/xt.err) 1 "-x is refused with -t"
+
+# a reused GAF resolved against a since-extended graph (cactus --inGAF) can carry path steps its
+# alignment never enters; cactus trims them only after gaffilter, so -x has to cope with them
+printf 'id=S.1|c1\t200000\t0\t100000\t+\t>r1>r2>r3>r4>r5\t250000\t60000\t160000\t100000\t100000\t60\tcg:Z:100000=\trc:Z:chrA\n' > exact_tmp/regran.gaf
+gaffilter exact_tmp/regran.gaf $X > exact_tmp/regran.out 2> exact_tmp/regran.err
+is $? 0 "-x takes a record whose path offsets reach past its end steps"
+is "$(cat exact_tmp/regran.out)" "$(cat exact_tmp/regran.gaf)" "and passes it on unchanged"
+
+# a duplicated record is a warning, not an error: the copies tie, and both go, as in the stock filter
+cat exact_tmp/tier.gaf exact_tmp/tier.gaf > exact_tmp/dup.gaf
+gaffilter exact_tmp/dup.gaf $X > exact_tmp/dup.out 2> exact_tmp/dup.err
+is $? 0 "-x takes duplicated records"
+is $(wc -l < exact_tmp/dup.out) $(gaffilter exact_tmp/dup.gaf -r 5 -m 0.25 -q 5 -b 0 -i 0.5 2>/dev/null | wc -l) "and keeps what the stock filter keeps of them"
 
 rm -rf exact_tmp

@@ -725,19 +725,29 @@ struct Rec {
 };
 
 // the canonical order of records: every tie-break uses it, never the input order
+static int key_cmp(const Rec* a, const Rec* b) {
+    if (a->g->query_name != b->g->query_name) return a->g->query_name < b->g->query_name ? -1 : 1;
+    if (a->qs != b->qs) return a->qs < b->qs ? -1 : 1;
+    if (a->qe != b->qe) return a->qe < b->qe ? -1 : 1;
+    if (a->strand != b->strand) return a->strand < b->strand ? -1 : 1;
+    if (a->path_text != b->path_text) return a->path_text < b->path_text ? -1 : 1;
+    if (a->block != b->block) return a->block < b->block ? -1 : 1;
+    if (a->matches != b->matches) return a->matches < b->matches ? -1 : 1;
+    if (a->mapq != b->mapq) return a->mapq < b->mapq ? -1 : 1;
+    if (a->primary != b->primary) return a->primary ? -1 : 1;
+    return 0;
+}
+
+// Records equal in all of the key (a duplicated GAF line) are told apart by input position.  That
+// cannot change the output: they tie each other wherever they meet, as they do in the stock filter,
+// which deletes both, so the order only decides which idx the logs name
 static bool key_less(const Rec* a, const Rec* b) {
-    if (a->g->query_name != b->g->query_name) return a->g->query_name < b->g->query_name;
-    if (a->qs != b->qs) return a->qs < b->qs;
-    if (a->qe != b->qe) return a->qe < b->qe;
-    if (a->strand != b->strand) return a->strand < b->strand;
-    if (a->path_text != b->path_text) return a->path_text < b->path_text;
-    if (a->block != b->block) return a->block < b->block;
-    if (a->matches != b->matches) return a->matches < b->matches;
-    return a->mapq < b->mapq;
+    int c = key_cmp(a, b);
+    return c != 0 ? c < 0 : a->idx < b->idx;
 }
 
 static bool key_equal(const Rec* a, const Rec* b) {
-    return !key_less(a, b) && !key_less(b, a);
+    return key_cmp(a, b) == 0;
 }
 
 static bool dom(const Rec* a, const Rec* b, double ratio, DomClause& clause) {
@@ -1812,12 +1822,29 @@ static void compute_a0fin(vector<Rec>& recs, const Params& P, const unordered_ma
     for (int i = 0; i < (int)recs.size(); ++i) {
         Rec& r = recs[i];
         if (!r.keep0) continue;
-        GafRecord flipped;
+        GafRecord work;
         const GafRecord* g = r.g;
+        // A GAF reused against a graph extended since it was mapped (cactus --inGAF) can have path
+        // offsets that reach past its first or last step.  gaf2paf cannot split such a record (it
+        // asserts), so cactus drops those steps (trim_unstable_gaf) between gaffilter and gaf2paf.
+        // Do the same here, or the split below aborts on exactly the records the reuse path makes.
+        if (!g->path.empty() && !(g->path_start < len_map.at(g->path.front().name) &&
+                                  g->path_end > g->path_length - len_map.at(g->path.back().name))) {
+            work = *g;
+            if (!rebase_path(work, len_map)) {
+                cerr << "[gaffilter] error: -x: record " << r.idx << " (" << g->query_name << ":" << g->query_start
+                     << "-" << g->query_end << ") has path offsets outside its end steps that its node lengths "
+                     << "cannot account for" << endl;
+                exit(1);
+            }
+            g = &work;
+        }
         if (g->strand == '-') {
-            flipped = *g;
-            gaf2paf_split::flip_gaf(flipped, len_map);
-            g = &flipped;
+            if (g != &work) {
+                work = *g;
+            }
+            gaf2paf_split::flip_gaf(work, len_map);
+            g = &work;
         }
         double gi = gaf2paf_split::parent_identity(*g);
         bool is_ref = !ref_prefix.empty() && g->query_name.compare(0, ref_prefix.length(), ref_prefix) == 0;
@@ -2059,6 +2086,7 @@ static int run(vector<GafRecord>& gaf_records, unordered_map<string, GafInterval
 
     vector<string> log_rows, junction_rows;
     Shared sh(P, chroms, log_rows, junction_rows);
+    int64_t duplicates = 0;
     // per record: kept pieces (whole, deleted, or cut) and status
     vector<int> plan_kind(recs.size(), 0);         // 0 whole, 1 cut, 2 deleted
     vector<IVs> plan_pieces(recs.size());
@@ -2084,9 +2112,11 @@ static int run(vector<GafRecord>& gaf_records, unordered_map<string, GafInterval
         std::sort(E.begin(), E.end(), key_less);
         for (size_t i = 1; i < E.size(); ++i) {
             if (key_equal(E[i - 1], E[i])) {
-                cerr << "[gaffilter] error: -x: two records of " << q << " are identical (input records "
+                // not fatal: the stock filter takes such input in its stride (the copies delete each
+                // other), and failing a whole mapping job over it would cost more than it tells
+                cerr << "[gaffilter] warning: -x: two records of " << q << " are identical (input records "
                      << E[i - 1]->idx << " and " << E[i]->idx << ")" << endl;
-                return 1;
+                ++duplicates;
             }
         }
         string hap = q.substr(0, q.find('|'));
@@ -2186,6 +2216,11 @@ static int run(vector<GafRecord>& gaf_records, unordered_map<string, GafInterval
         ss << "-x: " << sh.isolations << " junction trims (isolations), " << sh.gate_drops
            << " gate drops (r1ref/collide), " << junction_rows.size() << " junctions logged";
         if (P.guard) ss << ", guard vetoes " << sh.guard_vetoes << " computed, " << sh.guard_applied << " applied";
+        summary.push_back(ss.str());
+    }
+    if (duplicates) {
+        stringstream ss;
+        ss << "-x: warning: " << duplicates << " record(s) duplicate another record of their contig";
         summary.push_back(ss.str());
     }
     if (sh.capped) {
