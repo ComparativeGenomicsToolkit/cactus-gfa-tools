@@ -71,34 +71,43 @@ Filter a GAF so that there are no overlapping query intervals.  It uses simple h
 
 This tool can also run on PAFs (expecting to use the original GAF block length stored in a "gl" tag) by adding the `-p` option. In practice, this will perform a more fine-grained filter and should remove fewer alignments. 
 
-#### Trimming instead of deleting (`-t`)
+#### Exact mode (`-x`)
 
-The action above is to delete the whole record, which also throws away the part of it that nothing
-overlapped.  On contiguous assemblies that is most of it: on HPRC v2.1 chr15 at 464 haplotypes the
-filter deletes 1.373 Gb of query sequence and about half of that was never contested by anything.
+The action above deletes the whole record, which also throws away the part of it that nothing
+overlapped.  On contiguous assemblies that is most of it.  `-x` (GAF input only) instead resolves
+each query segment on its own:
 
-`-t` cuts out only the contested span and keeps the rest.  GAF input only -- it needs the record's
-cigar and path, which the `-p` output path does not carry.
+* A record keeps every segment where it beats (the `-r` test, or `--exact-ratio`) every other
+  compatible record claiming it.  Where no record beats the others, the segment is a hole, as the
+  stock rule would leave it.
+* A record the stock rule deletes (it loses an overlap covering `-m` of its block) is demoted: it only
+  fills segments that no record the stock rule keeps claims, and only in pieces of at least 10 kb at
+  95% identity (`--min-remainder`, `--min-remainder-ident`).
+* Sequence the stock filter chain would not have anchored ("new" sequence) must be at least 98%
+  identical over the reference-node columns it covers (`--id-floor`; a remainder in an excursion
+  over its whole length too), and must not place reference its haplotype already covers (the
+  one-to-one test).
+* Every excursion off the contig's backbone that the new sequence forms is tested.  An excursion that
+  cannot be a real two-sided rearrangement keeps its sequence, but its junctions are broken by a
+  query gap (`--gap`, 31 kb), so no later stage can rejoin them.  The side cut is the new one: the
+  excursion's own piece if any of it is new, otherwise the backbone piece next to it if that piece is
+  new at the end facing the junction.  A junction the stock chain itself makes is left alone.
+* `-q`/`-b`/`-i` select the records that take part.  `-i` is read as the line filter downstream reads
+  it: matches/block length, rounded to 3 places as in `gaf2paf`'s `gi:f:` tag.
 
-* `-l FILE` node lengths, as written by `gaf2unstable -o`.  Needed on an unstable GAF, whose path
-  names carry no interval, so the trimmed record's path can be rebased onto the steps it still
-  traverses.  Read after the input is consumed, so it may be the file the upstream process of the
-  same pipe is writing.
-* `-e N` also cut `N` bases past each side of a contested span (default 5000).  The bases abutting
-  an overlap are the least trustworthy part of the alignment.
-* `-Q N` a record that loses an overlap and whose own mapq is under `N` is deleted whole, as it
-  would be without `-t`.  Losing an overlap is evidence about the whole record, not only about the
-  overlapping part, so the trim is confined to records that stand up on their own.
-* `-g N` only a hole longer than `N` left by the cut, with alignment still on both sides, is worth
-  closing at all (default 10000).
-* `--close-holes` close such a hole by giving the span to the best claimant.  Off by default: a
-  hole only forms where every record spanning it lost to a record it does not dominate, so no
-  claimant can ever meet the bar `-r` sets, and closing one always means choosing on evidence this
-  filter rejects.  A hole clips sequence out of the graph; a wrong placement puts a wrong alignment
-  into it.
+The output keeps every record whole.  A record that is cut carries the query intervals it keeps in a
+`kq:Z:` tag, which `gaf2paf` applies line by line, so every PAF line keeps its record's block length
+(`gl:i:`) for the block-length filter downstream.  `--exact-nodes` is the node table written by
+`gaf2unstable -n`.  `--exact-plan`, `--exact-log`, `--junctions` and `--exact-summary` write what was
+kept, every drop and isolation, the junctions between pieces placed apart, and the summary.
 
-A record whose cigar cannot be reconciled with its own columns is deleted whole rather than cut.
-Without `-t` the output is unchanged.
+Limits: the model of the stock chain that "new" is judged against leaves out cactus's
+`filter-paf-deletions` stage and left-alignment.  The one-to-one test takes the haplotype from the
+query name up to its first `|` (the event name), so a diploid sample given as one FASTA counts both
+haplotypes as one.  That only costs recovered sequence, never sequence the stock filter keeps.
+
+`-x` replaces the trim mode (`-t`, with `-e`, `-g`, `-l`, `-Q` and `-R`), which cut the whole contested
+span, widened, out of every record that lost an overlap.  Those options are no longer accepted.
 
 ### paf2lastz
 

@@ -98,17 +98,9 @@ static int64_t overlap_size(const GafRecord& gaf1, const GafRecord& gaf2) {
 }
 
 
-// ---- subtractive ("trim") mode -------------------------------------------------------------
-// The default action on losing an overlap is to delete the whole record, which also throws away
-// the part of it nothing ever contested.  In trim mode the record instead gives up only the
-// contested span.  Everything below exists to make that cut exactly, or refuse to make it.
+// ---- intervals and paths shared with exact mode (-x) ---------------------------------------
 
-typedef vector<pair<char, int64_t>> CigarVec;
 typedef pair<int64_t, int64_t> QueryInterval;
-
-static inline bool cig_query(char c) { return c == '=' || c == 'X' || c == 'M' || c == 'I'; }
-static inline bool cig_path(char c)  { return c == '=' || c == 'X' || c == 'M' || c == 'D'; }
-static inline bool cig_aligned(char c) { return c == '=' || c == 'X' || c == 'M'; }
 
 static vector<QueryInterval> merge_intervals(vector<QueryInterval> ivs) {
     std::sort(ivs.begin(), ivs.end());
@@ -123,121 +115,12 @@ static vector<QueryInterval> merge_intervals(vector<QueryInterval> ivs) {
     return out;
 }
 
-// the parts of [start, end) that no interval of cut covers.  cut must be merged and sorted
-static vector<QueryInterval> subtract_intervals(int64_t start, int64_t end, const vector<QueryInterval>& cut) {
-    vector<QueryInterval> out;
-    int64_t cur = start;
-    for (const auto& c : cut) {
-        if (c.second <= cur) continue;
-        if (c.first >= end) break;
-        if (c.first > cur) out.push_back(make_pair(cur, std::min(c.first, end)));
-        cur = std::max(cur, c.second);
-        if (cur >= end) break;
-    }
-    if (cur < end) out.push_back(make_pair(cur, end));
-    return out;
-}
-
-// every interval of ivs, with cut removed from it
-static vector<QueryInterval> remove_interval(const vector<QueryInterval>& ivs, const QueryInterval& cut) {
-    vector<QueryInterval> out;
-    for (const auto& iv : ivs) {
-        if (cut.second <= iv.first || cut.first >= iv.second) {
-            out.push_back(iv);
-            continue;
-        }
-        if (iv.first < cut.first) out.push_back(make_pair(iv.first, cut.first));
-        if (cut.second < iv.second) out.push_back(make_pair(cut.second, iv.second));
-    }
-    return out;
-}
-
-// drop the first n query bases from cig, returning the path bases that went with them
-static int64_t cigar_cut_front(CigarVec& cig, int64_t n) {
-    int64_t path_used = 0;
-    size_t i = 0;
-    while (i < cig.size() && n > 0) {
-        char c = cig[i].first;
-        int64_t len = cig[i].second;
-        if (!cig_query(c)) {
-            // a path-only op inside the removed prefix goes with it
-            path_used += len;
-            ++i;
-            continue;
-        }
-        int64_t take = std::min(n, len);
-        n -= take;
-        if (cig_path(c)) path_used += take;
-        if (take == len) {
-            ++i;
-        } else {
-            cig[i].second = len - take;
-            break;
-        }
-    }
-    cig.erase(cig.begin(), cig.begin() + i);
-    return path_used;
-}
-
-// drop the last n query bases from cig, returning the path bases that went with them
-static int64_t cigar_cut_back(CigarVec& cig, int64_t n) {
-    int64_t path_used = 0;
-    while (!cig.empty() && n > 0) {
-        char c = cig.back().first;
-        int64_t len = cig.back().second;
-        if (!cig_query(c)) {
-            path_used += len;
-            cig.pop_back();
-            continue;
-        }
-        int64_t take = std::min(n, len);
-        n -= take;
-        if (cig_path(c)) path_used += take;
-        if (take == len) {
-            cig.pop_back();
-        } else {
-            cig.back().second = len - take;
-            break;
-        }
-    }
-    return path_used;
-}
-
-// An alignment has to begin and end on an aligned column, so a leading or trailing indel left by
-// the cut is dangling and comes off too.  Which end of the query that moves depends on the strand,
-// because the cigar always runs along the path while a '-' record's query runs the other way.
-static void cigar_strip_front(CigarVec& cig, GafRecord& rec) {
-    while (!cig.empty() && !cig_aligned(cig.front().first)) {
-        char c = cig.front().first;
-        int64_t len = cig.front().second;
-        if (cig_path(c)) rec.path_start += len;
-        if (cig_query(c)) {
-            if (rec.strand == '-') rec.query_end -= len;
-            else rec.query_start += len;
-        }
-        cig.erase(cig.begin());
-    }
-}
-
-static void cigar_strip_back(CigarVec& cig, GafRecord& rec) {
-    while (!cig.empty() && !cig_aligned(cig.back().first)) {
-        char c = cig.back().first;
-        int64_t len = cig.back().second;
-        if (cig_path(c)) rec.path_end -= len;
-        if (cig_query(c)) {
-            if (rec.strand == '-') rec.query_start += len;
-            else rec.query_end -= len;
-        }
-        cig.pop_back();
-    }
-}
-
-// Rebase the path onto the steps the cut actually left.  minigraph never emits a path whose
-// leading nodes the alignment does not enter, and gaf2paf relies on that: it reads path_start as
-// an offset into the FIRST step and path_end as one into the last.  Advancing those offsets past
-// whole steps without dropping the steps produces a record that is arithmetically fine and that
-// gaf2paf then misreads.  An unstable GAF names bare nodes, whose lengths only the -l map knows;
-// without it the record cannot be rebased and is left for the caller to delete instead.
+// Rebase the path onto the steps its alignment actually enters.  minigraph never emits a path
+// whose leading nodes the alignment does not enter, and gaf2paf relies on that: it reads
+// path_start as an offset into the FIRST step and path_end as one into the last.  A record with
+// offsets past whole steps is arithmetically fine but gaf2paf misreads it.  An unstable GAF names
+// bare nodes, whose lengths only node_lengths knows; without them the record cannot be rebased and
+// false is returned.
 static bool rebase_path(GafRecord& rec, const unordered_map<string, int64_t>& node_lengths) {
     vector<int64_t> len(rec.path.size(), -1);
     int64_t known = 0;
@@ -302,100 +185,6 @@ static bool rebase_path(GafRecord& rec, const unordered_map<string, int64_t>& no
     return true;
 }
 
-// Cut rec down to the query sub-interval [new_qs, new_qe), rewriting its coordinates and cigar.
-// Returns false, with rec left unusable, if the cigar cannot be reconciled with the columns it is
-// supposed to describe or if nothing survives -- the caller then deletes the record whole, which
-// is what would have happened anyway.  Better a record lost than a record that lies about where
-// it aligns.
-static bool trim_gaf_record(GafRecord& rec, int64_t new_qs, int64_t new_qe,
-                            const unordered_map<string, int64_t>& node_lengths) {
-    if (new_qe <= new_qs || !rec.opt_fields.count("cg")) {
-        return false;
-    }
-    CigarVec cig;
-    for_each_cg(rec, [&](const char& c, const size_t& l) {
-            cig.push_back(make_pair(c, (int64_t)l));
-        });
-    if (cig.empty()) {
-        return false;
-    }
-    // only safe to cut a cigar that agrees with the record it belongs to.  this also rejects M
-    // cigars, where '=' cannot be counted and so matches cannot be recomputed after the cut
-    int64_t q = 0, p = 0, m = 0, bl = 0;
-    for (const auto& e : cig) {
-        if (cig_query(e.first)) q += e.second;
-        if (cig_path(e.first)) p += e.second;
-        if (e.first == '=') m += e.second;
-        bl += e.second;
-    }
-    if (q != rec.query_end - rec.query_start || p != rec.path_end - rec.path_start ||
-        m != rec.matches || bl != rec.block_length) {
-        return false;
-    }
-    if (new_qs <= rec.query_start && new_qe >= rec.query_end) {
-        return true;                          // nothing to cut
-    }
-
-    // the cigar runs along the path, so for a '-' record the low query end is at its BACK
-    bool rev = rec.strand == '-';
-    int64_t lo_cut = std::max((int64_t)0, new_qs - rec.query_start);
-    int64_t hi_cut = std::max((int64_t)0, rec.query_end - new_qe);
-    int64_t front_cut = rev ? hi_cut : lo_cut;
-    int64_t back_cut = rev ? lo_cut : hi_cut;
-
-    rec.query_start = new_qs;
-    rec.query_end = new_qe;
-    rec.path_start += cigar_cut_front(cig, front_cut);
-    rec.path_end -= cigar_cut_back(cig, back_cut);
-    if (front_cut) cigar_strip_front(cig, rec);
-    if (back_cut) cigar_strip_back(cig, rec);
-    if (cig.empty() || rec.query_end <= rec.query_start || rec.path_end <= rec.path_start) {
-        return false;
-    }
-
-    // recompute everything the cut invalidated
-    int64_t nm = 0;
-    q = p = m = bl = 0;
-    stringstream cg;
-    for (const auto& e : cig) {
-        if (cig_query(e.first)) q += e.second;
-        if (cig_path(e.first)) p += e.second;
-        if (e.first == '=') m += e.second;
-        else nm += e.second;
-        bl += e.second;
-        cg << e.second << e.first;
-    }
-    if (q != rec.query_end - rec.query_start || p != rec.path_end - rec.path_start) {
-        return false;
-    }
-    rec.matches = m;
-    rec.block_length = bl;
-    rec.opt_fields["cg"] = make_pair("Z", cg.str());
-    rec.opt_fields["NM"] = make_pair("i", std::to_string(nm));
-    if (rec.opt_fields.count("gi")) {
-        stringstream ss;
-        ss << (double)m / (double)bl;
-        rec.opt_fields["gi"] = make_pair("f", ss.str());
-    }
-    // these describe the untrimmed alignment and nothing here can cut them.  dv is minigraph's
-    // own chain-derived divergence estimate, not (block_length - matches)/block_length, so it
-    // cannot be recomputed from the cigar either -- dropping it beats redefining it in place.
-    rec.opt_fields.erase("cs");
-    rec.opt_fields.erase("ds");
-    rec.opt_fields.erase("dv");
-    return rebase_path(rec, node_lengths);
-}
-
-// The order dominates() applies, as a total order, for the -R fallback: primary before
-// secondary, then MAPQ, then block length, then input position so the result cannot depend on it.
-static bool record_precedes(const GafRecord& a, const GafRecord& b) {
-    bool pa = !a.opt_fields.count("tp") || a.opt_fields.at("tp").second == "P";
-    bool pb = !b.opt_fields.count("tp") || b.opt_fields.at("tp").second == "P";
-    if (pa != pb) return pa;
-    if (a.mapq != b.mapq) return a.mapq > b.mapq;
-    return a.block_length > b.block_length;
-}
-
 // make an interval tree for each query sequence
 static unordered_map<string, GafIntervalTree*> build_query_trees(const vector<GafRecord>& gaf_records) {
     unordered_map<string, vector<GafInterval>> gaf_intervals;
@@ -416,13 +205,11 @@ static unordered_map<string, GafIntervalTree*> build_query_trees(const vector<Ga
     return gaf_trees;
 }
 
-// The overlap filter itself: keep[i] is cleared for a record that fails to dominate an overlap
-// (without -t), or contested[i] collects the spans it lost (with -t).  -x runs this, without -t,
-// as the stock baseline it is measured against.
+// The overlap filter itself: keep[i] is cleared for a record that fails to dominate an overlap.
+// -x runs this as the stock baseline it is measured against.
 static void overlap_filter(const vector<GafRecord>& gaf_records, unordered_map<string, GafIntervalTree*>& gaf_trees,
                            double ratio, double min_overlap_pct, int64_t min_overlap_len, int64_t min_mapq,
-                           int64_t min_block_len, double min_identity, bool trim_mode, int64_t trim_edge,
-                           vector<char>& keep, vector<vector<QueryInterval> >& contested,
+                           int64_t min_block_len, double min_identity, vector<char>& keep,
                            function<string(const GafRecord&)>& print_record) {
     // simple algorithm:
     // for each record, scan its overlaps and flag it if it finds anything
@@ -475,34 +262,12 @@ static void overlap_filter(const vector<GafRecord>& gaf_records, unordered_map<s
                 is_dominant = dominates_mzgaf2paf(gaf_records[i], *ogi.value, min_overlap_len);
             }
             if (!is_dominant) {
-                if (!trim_mode) {
-                    keep[i] = 0;
-                    break;
-                }
-                contested[i].push_back(make_pair(std::max(gaf_records[i].query_start, ogi.value->query_start),
-                                                 std::min(gaf_records[i].query_end, ogi.value->query_end)));
-            }
-        }
-        if (trim_mode) {
-            contested[i] = merge_intervals(contested[i]);
-            // Widen each contested span by -e before anything downstream looks at it, so the
-            // rescue and the emit loop agree on what is actually given up.  The bases butting up
-            // against an overlap are where the alignment is least certain, and cactus will carry
-            // an unaligned stretch shorter than its clip threshold regardless.  Clipping to the
-            // record's own span makes the outer side a no-op, so in practice only the interior
-            // borders move; a record shorter than the widening is given up whole.
-            if (trim_edge > 0 && !contested[i].empty()) {
-                vector<QueryInterval> widened;
-                for (const auto& c : contested[i]) {
-                    widened.push_back(make_pair(
-                        std::max(gaf_records[i].query_start, c.first - trim_edge),
-                        std::min(gaf_records[i].query_end, c.second + trim_edge)));
-                }
-                contested[i] = merge_intervals(widened);
+                keep[i] = 0;
+                break;
             }
         }
 #ifdef debug
-        if (!keep[i] || !contested[i].empty()) {
+        if (!keep[i]) {
             cerr << "\nfiltering record " << i << " (" << &gaf_records[i] << ") because it doesn't dominate its "
                  << overlapping.size() << " overlaps\n  " << print_record(gaf_records[i]) << endl;
             int64_t ocount = 0;
@@ -516,8 +281,9 @@ static void overlap_filter(const vector<GafRecord>& gaf_records, unordered_map<s
 }
 
 // ---- exact mode (-x) -------------------------------------------------------------------------
-// The stock filter deletes a record whole when it loses an overlap; -t cuts the contested span out
-// of the loser.  -x instead resolves every elementary query segment on its own: a record keeps a
+// The stock filter deletes a record whole when it loses an overlap.  -x instead resolves every
+// elementary query segment on its own (it replaces the old -t, which cut the whole contested span,
+// widened, out of every loser): a record keeps a
 // segment if it beats (dominates(), with --exact-ratio) every compatible record that also claims it.
 // A record that would have been deleted whole by the stock rule (it loses to a competitor overlapping
 // -m of its block) is "demoted": it only fills segments no compatible non-demoted record claims, and
@@ -1116,6 +882,16 @@ private:
         DomClause c;
         return dom(E[i], E[j], P.ratio, c);
     }
+    // is piece p new at one end (its end if end, else its start)?  A remainder is new throughout;
+    // otherwise some of its a0new lies within --gap of that end.  The junction log's test, and
+    // isolation's for a backbone neighbour
+    bool side_new(const Entry& p, bool end) const {
+        if (p.rem) return true;
+        for (const IV& x : p.a0new) {
+            if (end ? (x.second >= p.e - P.gap && x.first < p.e) : (x.first <= p.s + P.gap && x.second > p.s)) return true;
+        }
+        return false;
+    }
     void log_row(const string& kind, int64_t a, int64_t b, const string& reason, int it, int64_t idx,
                  const string& pl, const string& li) {
         stringstream ss;
@@ -1543,7 +1319,12 @@ bool Contig::structure(int c, const vector<Entry>& pl, int it, vector<Excursion>
             if (!nw.empty()) changed = true;
             continue;
         }
-        // isolate: break each path-continuous junction, trimming its new side back to the gap
+        // isolate: break each path-continuous junction, trimming its new side back to the gap.  The
+        // excursion's own entry is trimmed if any of it is new.  Otherwise the backbone neighbour is,
+        // but only if it is new at the end that faces the junction: a backbone record that is new
+        // somewhere far from the junction (for instance a stretch the stock line filter drops) must
+        // not lose stock-anchored sequence at it.  If neither is new there, the junction is the
+        // stock chain's own, and is logged as a0-junction
         struct Todo { int inner, outer; bool inner_start; int64_t gap; };
         vector<Todo> todo;
         if (ex.L >= 0 && ex.has_gl && ex.gl < P.gap) todo.push_back({ex.idxs.front(), ex.L, true, ex.gl});
@@ -1554,7 +1335,7 @@ bool Contig::structure(int c, const vector<Entry>& pl, int it, vector<Excursion>
             if (pl[t.inner].is_new()) {
                 tp = t.inner;
                 start = t.inner_start;
-            } else if (pl[t.outer].is_new()) {
+            } else if (side_new(pl[t.outer], t.inner_start)) {
                 tp = t.outer;
                 start = !t.inner_start;
             } else {
@@ -1587,13 +1368,6 @@ void Contig::junctions(int c, const vector<Entry>& pl, const vector<Excursion>& 
             for (size_t i = 0; i + 1 < ks.size(); ++i) exempt.insert(make_pair(ks[i], ks[i + 1]));
         }
     }
-    auto side_new = [&](const Entry& p, bool end) {
-        if (p.rem) return true;
-        for (const IV& x : p.a0new) {
-            if (end ? (x.second >= p.e - P.gap && x.first < p.e) : (x.first <= p.s + P.gap && x.second > p.s)) return true;
-        }
-        return false;
-    };
     for (size_t k = 0; k + 1 < pl.size(); ++k) {
         const Entry& p = pl[k];
         const Entry& qn = pl[k + 1];
@@ -1962,9 +1736,8 @@ static int run(vector<GafRecord>& gaf_records, unordered_map<string, GafInterval
 
     // the stock GAF stage, unchanged, as the baseline
     vector<char> keep0(gaf_records.size(), 1);
-    vector<vector<QueryInterval> > no_contested;
     overlap_filter(gaf_records, gaf_trees, P.stock_ratio, P.stock_min_overlap, 0, P.min_mapq, P.min_block,
-                   P.stock_min_identity, false, 0, keep0, no_contested, print_record);
+                   P.stock_min_identity, keep0, print_record);
 
     // only the nodes the records name.  Read now, after the input: like -l, it is written by the
     // gaf2unstable at the other end of the pipe, in full before its first GAF line
@@ -2031,8 +1804,12 @@ static int run(vector<GafRecord>& gaf_records, unordered_map<string, GafInterval
         r.rc = g.opt_fields.count("rc") ? g.opt_fields.at("rc").second : string();
         r.gi = r.block ? (double)r.matches / (double)r.block : 0.0;
         // eligible to compete and survive: the line filter's own record-level test, with the
-        // identity read the right way round (the stock competitor test reads block/matches)
-        r.eligible = r.mapq >= P.min_mapq && (r.qlen <= P.min_block || r.block >= P.min_block) && r.gi >= P.min_identity;
+        // identity read the right way round (the stock competitor test reads block/matches).  The
+        // line filter reads the identity from gaf2paf's gi:f:, rounded to 3 places, so it is
+        // rounded here too.  Tested unrounded, a record with matches/block in [i - 0.0005, i) (i the
+        // -i value) would pass through uncontested as ineligible, and its lines be kept downstream
+        r.eligible = r.mapq >= P.min_mapq && (r.qlen <= P.min_block || r.block >= P.min_block) &&
+            gaf2paf_split::parent_identity(g) >= P.min_identity;
         r.keep0 = keep0[i];
         int64_t off = 0, refbp = 0;
         for (const GafStep& st : g.path) {
@@ -2255,15 +2032,9 @@ static void help(char** argv) {
          << "    -q, --min-mapq N                Don't let an interval with MAPQ < N cause something to be filtered out" << endl
          << "    -b, --min-block-length N        Don't let an interval with block length < N cause something to be filtered out" << endl
          << "    -i, --min-identity N            Don't let an interval with identity < N cause something to be filtered out" << endl       
-         << "    -t, --trim                      Instead of deleting a record that loses an overlap, cut the contested span out of it and keep the rest (GAF input only)" << endl
-         << "    -g, --trim-min-gap N            With -t, only a hole longer than N, with alignment still on both sides, is worth closing at all (see -R); shorter ones do not split a path downstream [10000]" << endl
-         << "    -l, --node-lengths FILE         Node lengths (as written by gaf2unstable -o). Needed by -t on an unstable GAF, whose path names carry no interval" << endl
-         << "    -Q, --trim-min-mapq N           With -t, a record that loses an overlap and whose OWN mapq is under N is deleted whole, as it would be without -t. Losing an overlap and being poorly placed are two marks against it, and the flanks of a record that is wrong along its length are not worth keeping [0]" << endl
-         << "    -e, --trim-edge N               With -t, also cut N bases beyond each side of a contested span. The bases abutting an overlap are the least trustworthy part of the alignment, and cactus keeps unaligned stretches shorter than its own clip threshold anyway [5000]" << endl
-         << "    -R, --close-holes               With -t, close such a hole by giving the span to the best claimant (primary, then MAPQ, then block length). Off by default, because no such choice can meet the bar -r sets: leaving a hole clips sequence out, but a wrong placement puts a wrong alignment in" << endl
          << "    -p, --paf                       Input is PAF, not GAF" << endl
          << endl
-         << "exact mode (GAF input only; not with -p, -t or -o):" << endl
+         << "exact mode (GAF input only; not with -p or -o; replaces the removed trim mode -t and its -e, -g, -l, -Q, -R):" << endl
          << "    -x, --exact                     Resolve each query segment on its own instead of deleting whole records: a record keeps the segments" << endl
          << "                                    where it beats (as -r does) every compatible record also claiming them.  A record the stock rule deletes" << endl
          << "                                    (it loses to a competitor overlapping -m of its block) only fills segments nobody else claims, and only" << endl
@@ -2314,12 +2085,8 @@ int main(int argc, char** argv) {
     int64_t min_block_len = 0;
     int64_t min_mapq = 0;
     double min_identity = 0;
-    bool trim_mode = false;
-    bool rescue_weak = false;
-    int64_t trim_min_gap = 10000;
-    int64_t trim_edge = 5000;
-    int64_t trim_min_mapq = 0;
-    string node_lengths_path;
+    // the trim mode (-t and its -e, -g, -l, -Q, -R) was removed; -x replaces it
+    string removed_option;
 
     bool exact_mode = false;
     exact::Params xp;
@@ -2344,11 +2111,10 @@ int main(int argc, char** argv) {
             {"min-block-length", required_argument, 0, 'b'},
             {"min-mapq", required_argument, 0, 'q'},
             {"min-identity", required_argument, 0, 'i'},
+            // the removed trim mode's options, still recognised so they fail with a pointer to -x
+            // rather than as unknown options
             {"trim", no_argument, 0, 't'},
             {"trim-min-gap", required_argument, 0, 'g'},
-            // NOT "rescue-weak": getopt_long resolves unique prefixes, and an r-prefixed name
-            // makes "--r" ambiguous with the long-standing "--ratio", turning a working
-            // invocation into a fatal parse error
             {"close-holes", no_argument, 0, 'R'},
             {"trim-edge", required_argument, 0, 'e'},
             {"trim-min-mapq", required_argument, 0, 'Q'},
@@ -2425,22 +2191,15 @@ int main(int argc, char** argv) {
             min_mapq = std::stol(optarg);
             break;
         case 't':
-            trim_mode = true;
-            break;
         case 'g':
-            trim_min_gap = std::stol(optarg);
-            break;
         case 'l':
-            node_lengths_path = optarg;
-            break;
         case 'R':
-            rescue_weak = true;
-            break;
         case 'e':
-            trim_edge = std::stol(optarg);
-            break;
         case 'Q':
-            trim_min_mapq = std::stol(optarg);
+            if (removed_option.empty()) {
+                removed_option = long_options[option_index].val == c ?
+                    string("--") + long_options[option_index].name : string("-") + (char)c;
+            }
             break;
         case 'x':
             exact_mode = true;
@@ -2494,15 +2253,16 @@ int main(int argc, char** argv) {
         return 1;
     }
 
-    if (trim_mode && is_paf) {
-        cerr << "[gaffilter] error: -t/--trim needs the cigar and coordinates of a GAF record, "
-             << "and cannot be used with -p" << endl;
+    if (!removed_option.empty()) {
+        cerr << "[gaffilter] error: " << removed_option << ": the trim mode (-t/--trim, with -e, -g, -l, -Q and -R) "
+             << "has been removed. Use -x/--exact instead, which cuts a record that loses an overlap down to "
+             << "exactly the contested segment (see the exact mode options)" << endl;
         return 1;
     }
 
     if (exact_mode) {
-        if (is_paf || trim_mode || min_overlap_len) {
-            cerr << "[gaffilter] error: -x/--exact cannot be used with -p, -t or -o" << endl;
+        if (is_paf || min_overlap_len) {
+            cerr << "[gaffilter] error: -x/--exact cannot be used with -p or -o" << endl;
             return 1;
         }
         if (ratio == 0) {
@@ -2561,14 +2321,6 @@ int main(int argc, char** argv) {
         in_stream = &in_file;
     }
 
-    // -t needs to know how long each path step is in order to drop the ones the cut left behind.
-    // Read AFTER the input below, not here: the usual caller is
-    //   gaf2unstable ... -o lengths.tsv | gaffilter - -l lengths.tsv
-    // and both sides of that pipe start at once, so the file does not exist yet.  gaf2unstable
-    // writes it in full before it emits its first GAF line, so by the time this process has read
-    // its input to EOF the file is complete.
-    unordered_map<string, int64_t> node_lengths;
-
     // shimmy in paf support post hoc (at the cost of storing a dummy gaf record list in memory!)
     vector<PafLine> paf_records;
     function<string(const GafRecord&)> print_record = [&](const GafRecord& gaf_record) {
@@ -2626,42 +2378,6 @@ int main(int argc, char** argv) {
     }
     cerr << "[gaffilter]: Loaded " << gaf_records.size() << (is_paf ? " PAF" : " GAF") << " records" << endl;
 
-    // now that the input is exhausted, the upstream writer of the lengths file has finished
-    if (!node_lengths_path.empty()) {
-        ifstream len_file(node_lengths_path);
-        if (!len_file) {
-            cerr << "[gaffilter] error: unable to open node lengths: " << node_lengths_path << endl;
-            return 1;
-        }
-        // line-oriented and first-two-fields, because a .fai has five columns and is exactly
-        // what the sibling tools document for -l.  Reading with >> would silently take columns
-        // 3 and 4 of line 1 as the next name/length pair and then stop, leaving a map that is
-        // not empty but is garbage -- which disabled the trim without saying so.
-        string line;
-        int64_t nline = 0;
-        while (getline(len_file, line)) {
-            ++nline;
-            if (line.empty() || line[0] == '#') {
-                continue;
-            }
-            stringstream ss(line);
-            string name, len_tok;
-            if (!(ss >> name >> len_tok)) {
-                cerr << "[gaffilter] error: " << node_lengths_path << ":" << nline
-                     << ": expected a name and a length" << endl;
-                return 1;
-            }
-            try {
-                node_lengths[name] = stol(len_tok);
-            } catch (...) {
-                cerr << "[gaffilter] error: " << node_lengths_path << ":" << nline
-                     << ": second field is not a length: " << len_tok << endl;
-                return 1;
-            }
-        }
-        cerr << "[gaffilter]: Loaded " << node_lengths.size() << " node lengths" << endl;
-    }
-
     // make an interval tree for each query sequence
     unordered_map<string, GafIntervalTree*> gaf_trees = build_query_trees(gaf_records);
     cerr << "[gaffilter]: Constructed interval trees" << endl;
@@ -2677,178 +2393,14 @@ int main(int argc, char** argv) {
 
     int64_t filter_count = 0;
     int64_t filter_len_count = 0;
-    int64_t trim_count = 0;
-    int64_t trim_len_count = 0;
-    int64_t rescue_count = 0;
-    int64_t rescue_declined = 0;
-    int64_t holes_opened = 0;
-    int64_t mapq_deleted = 0;
-    int64_t holes_opened_bp = 0;
-    int64_t trim_fail_count = 0;
 
-    // in trim mode a record that loses an overlap is not deleted: it gives up only the span it
-    // lost, collected here.  without -t contested stays empty and the original keep/drop applies.
     vector<char> keep(gaf_records.size(), 1);
-    // sized only under -t: an empty vector per record is 24 bytes, which on a production-scale
-    // PAF is over a hundred megabytes paid by runs that never asked to trim
-    vector<vector<QueryInterval> > contested(trim_mode ? gaf_records.size() : 0);
-
     overlap_filter(gaf_records, gaf_trees, ratio, min_overlap_pct, min_overlap_len, min_mapq, min_block_len,
-                   min_identity, trim_mode, trim_edge, keep, contested, print_record);
-
-    // The filter may trim, but it must not perforate.  Each cut above is justified on its own, but
-    // a contested span given up by every record that claims it leaves an unaligned hole with
-    // alignment still standing on both sides -- a breakpoint the assembly does not have.  The -m
-    // guard cannot see this: it judges one pair at a time, while a hole is a property of what the
-    // whole query has left.  Where a hole would open, the span is handed whole to one claimant
-    // instead, so the bases stay placed exactly once rather than zero times.  Ties go to the
-    // largest record and then to the earliest, so the result does not depend on input order.
-    // cactus-graphmap-join --clip only breaks a path on unaligned stretches longer than its
-    // threshold, so -g leaves shorter holes alone.  Iterated, because closing one hole adds
-    // coverage that can turn a neighbouring end trim into an interior one.
-    if (trim_mode && trim_min_gap >= 0) {
-        unordered_map<string, vector<int64_t> > by_query;
-        for (int64_t i = 0; i < (int64_t)gaf_records.size(); ++i) {
-            if (!contested[i].empty()) {
-                by_query[gaf_records[i].query_name];
-            }
-        }
-        for (int64_t i = 0; i < (int64_t)gaf_records.size(); ++i) {
-            if (by_query.count(gaf_records[i].query_name)) {
-                by_query[gaf_records[i].query_name].push_back(i);
-            }
-        }
-        for (auto& q : by_query) {
-            // coverage BEFORE any cut, so a gap can be told apart from one that was always there.
-            // Only a gap inside this is something the trim opened and therefore ours to answer for.
-            vector<QueryInterval> pre;
-            for (int64_t i : q.second) {
-                if (gaf_records[i].query_end > gaf_records[i].query_start) {
-                    pre.push_back(make_pair(gaf_records[i].query_start, gaf_records[i].query_end));
-                }
-            }
-            pre = merge_intervals(pre);
-            for (int round = 0; round < 32; ++round) {
-                vector<QueryInterval> cov;
-                for (int64_t i : q.second) {
-                    if (gaf_records[i].query_end <= gaf_records[i].query_start) {
-                        continue;
-                    }
-                    for (const auto& f : subtract_intervals(gaf_records[i].query_start,
-                                                            gaf_records[i].query_end, contested[i])) {
-                        cov.push_back(f);
-                    }
-                }
-                cov = merge_intervals(cov);
-                bool changed = false;
-                for (size_t k = 0; k + 1 < cov.size(); ++k) {
-                    QueryInterval gap(cov[k].second, cov[k + 1].first);
-                    if (gap.second - gap.first <= trim_min_gap) {
-                        continue;
-                    }
-                    // A record may claim the gap if its own alignment spans it.  Testing instead
-                    // that ONE contested interval contains the gap missed any hole formed by two
-                    // adjacent seams contested by different records, and left it open while
-                    // reporting nothing.  A record that spans an uncovered gap must have given all
-                    // of it up, so spanning is the right and sufficient test.
-                    vector<int64_t> claim;
-                    for (int64_t i : q.second) {
-                        if (!contested[i].empty() &&
-                            gaf_records[i].query_start <= gap.first &&
-                            gap.second <= gaf_records[i].query_end) {
-                            claim.push_back(i);
-                        }
-                    }
-                    bool was_covered = false;
-                    for (const auto& pv : pre) {
-                        if (pv.first <= gap.first && gap.second <= pv.second) {
-                            was_covered = true;
-                            break;
-                        }
-                    }
-                    if (!was_covered) {
-                        continue;             // a gap that was already there; not ours to close
-                    }
-                    if (claim.empty()) {
-                        // the gap is the union of two adjacent seams contested by different
-                        // records, so no single record spans it and none can close it alone
-                        ++holes_opened;
-                        holes_opened_bp += gap.second - gap.first;
-                        continue;
-                    }
-                    // No claimant can ever be the one the filter would pick.  A hole exists only
-                    // if EVERY record spanning it gave it up, and a record gives a span up only to
-                    // a competitor it does not dominate -- a competitor which therefore spans the
-                    // hole too and is itself a claimant.  So for any hole, no claimant dominates
-                    // all the others; gating the rescue on dominates() is exactly "never rescue".
-                    // (Measured before the argument was noticed: 0 rescues pass that gate on HPRC
-                    // chr9, chr15 and chr20.)  Closing the hole therefore always means choosing on
-                    // evidence the filter itself rejects, so it is opt-in.  A hole clips sequence
-                    // out of the graph; a wrong placement puts a wrong alignment into it, and the
-                    // second is the failure this tool exists to prevent.
-                    if (!rescue_weak) {
-                        ++rescue_declined;
-                        holes_opened_bp += gap.second - gap.first;
-                        continue;
-                    }
-                    // -R: order by the filter's own precedence, not raw block length, so a
-                    // secondary or a lower-MAPQ record cannot take the span from a primary
-                    int64_t best = -1;
-                    for (int64_t i : claim) {
-                        if (best < 0 || record_precedes(gaf_records[i], gaf_records[best])) {
-                            best = i;
-                        }
-                    }
-                    contested[best] = remove_interval(contested[best], gap);
-                    ++rescue_count;
-                    changed = true;
-                }
-                if (!changed) {
-                    break;
-                }
-            }
-        }
-    }
+                   min_identity, keep, print_record);
 
     for (int64_t i = 0; i < (int64_t)gaf_records.size(); ++i) {
-        // A record that loses an overlap AND is poorly placed in its own right has two marks
-        // against it, and the parts of it nothing contested are no more trustworthy than the part
-        // that lost.  Whole-record deletion treated the overlap as a quality signal about the
-        // whole record; -Q keeps that reading for records below the bar, so the trim only ever
-        // applies to a record that stands up on its own.
-        if (trim_mode && !contested[i].empty() && trim_min_mapq > 0 &&
-            gaf_records[i].mapq < trim_min_mapq) {
-            contested[i].clear();
-            keep[i] = 0;
-            ++mapq_deleted;
-        }
-        // a survivor with nothing to give up goes out untouched.  this is decided on the verdict
-        // and not on whether the record has any query span left, because a record with an empty
-        // query interval yields no fragments and the old code still printed it
-        if (keep[i] && (!trim_mode || contested[i].empty())) {
-            cout << print_record(gaf_records[i]) << "\n";
-            continue;
-        }
-        int64_t emitted = 0;
-        bool cut_failed = false;
         if (keep[i]) {
-            for (const auto& f : subtract_intervals(gaf_records[i].query_start,
-                                                    gaf_records[i].query_end, contested[i])) {
-                GafRecord cut = gaf_records[i];
-                if (!trim_gaf_record(cut, f.first, f.second, node_lengths)) {
-                    cut_failed = true;
-                    continue;
-                }
-                cout << cut << "\n";
-                ++emitted;
-                trim_len_count += cut.block_length;
-            }
-        }
-        if (cut_failed && !emitted) {
-            ++trim_fail_count;
-        }
-        if (emitted) {
-            ++trim_count;
+            cout << print_record(gaf_records[i]) << "\n";
         } else {
             ++filter_count;
             if (is_paf) {
@@ -2864,28 +2416,5 @@ int main(int argc, char** argv) {
     }
     
     cerr << "[gaffilter]: filtered " << filter_count << " / " << gaf_records.size() << ". total block lengths filtered: " << filter_len_count << endl;
-    if (trim_mode) {
-        cerr << "[gaffilter]: trimmed " << trim_count << " records, keeping " << trim_len_count
-             << " block length that whole-record deletion would have dropped. rescued "
-             << rescue_count << " contested spans that would have left a hole" << endl;
-        if (rescue_declined || holes_opened) {
-            cerr << "[gaffilter]: left " << (rescue_declined + holes_opened) << " hole(s), "
-                 << holes_opened_bp << " bp, in coverage the input had: " << rescue_declined
-                 << " ambiguous"
-                 << (rescue_weak ? "" : " (-R would close them, on evidence this filter rejects)")
-                 << ", " << holes_opened << " spanned by no single record" << endl;
-        }
-        if (mapq_deleted) {
-            cerr << "[gaffilter]: deleted " << mapq_deleted << " record(s) whole rather than "
-                 << "trimming them: they lost an overlap and their own mapq is under "
-                 << trim_min_mapq << endl;
-        }
-        if (trim_fail_count) {
-            cerr << "[gaffilter]: warning: " << trim_fail_count << " record(s) could not be cut "
-                 << "(cigar or path inconsistent with the record"
-                 << (node_lengths.empty() ? ", or node lengths needed -- see -l" : "")
-                 << ") and were deleted whole" << endl;
-        }
-    }
     return 0;
 }
