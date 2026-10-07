@@ -5,8 +5,10 @@ BASH_TAP_ROOT=./bash-tap
 
 PATH=../bin:$PATH
 PATH=../deps/hal:$PATH
+# the tools this repository builds, as gaffilter.t does (../bin only exists in a cactus build)
+PATH=../:$PATH
 
-plan tests 12
+plan tests 19
 
 gzip -dc  hpp-20-2M/CHM13.fa.gz > CHM13.fa
 gzip -dc  hpp-20-2M/hg38.fa.gz > hg38.fa
@@ -70,4 +72,24 @@ rm -f  hg38.paf hg38.u.paf
 
 rm -f hpp-20-2M.gfa hpp-20-2M.gfa.fa CHM13.fa hg38.fa hg38-rev.fa CHM13.gaf hg38.gaf chr20.bed all.fa all.fa.fai
 
-
+# kq:Z: (gaffilter -x): a record keeps only the listed query intervals, cut line by line.  One
+# record over three 100 bp nodes: n1 all '=', n2 with a 5 bp deletion at query 130, n3 ending in
+# 50 mismatches
+mkdir -p kq_tmp
+printf 'n1\t100\nn2\t100\nn3\t100\n' > kq_tmp/lens.tsv
+rec="q	1000	0	295	+	>n1>n2>n3	300	0	300	245	300	60	cg:Z:130=5D115=50X	tp:A:P"
+printf '%s\n' "$rec" > kq_tmp/whole.gaf
+gaf2paf kq_tmp/whole.gaf -l kq_tmp/lens.tsv > kq_tmp/whole.paf
+printf '%s\tkq:Z:0-100,120-140,250-295\n' "$rec" > kq_tmp/cut.gaf
+gaf2paf kq_tmp/cut.gaf -l kq_tmp/lens.tsv > kq_tmp/cut.paf
+is "$(head -1 kq_tmp/cut.paf)" "$(head -1 kq_tmp/whole.paf)" "kq: a line inside a kept interval is printed verbatim"
+is "$(awk '$6=="n2"' kq_tmp/cut.paf | cut -f 3,4,8,9,10,11)" "$(printf '120\t140\t20\t45\t20\t25')" "kq: a cut line gets its own coordinates and counts"
+is $(awk '$6=="n2"' kq_tmp/cut.paf | grep -o 'cg:Z:[^[:space:]]*') "cg:Z:10=5D10=" "kq: a deletion strictly inside the kept interval stays"
+is $(awk '$6=="n2"' kq_tmp/cut.paf | grep -c 'gm:i:245	gl:i:300') 1 "kq: a cut line keeps the parent's gm/gl"
+is $(awk '$6=="n3"' kq_tmp/cut.paf | wc -l) 0 "kq: a piece with no '=' column left makes no line"
+printf '%s\tkq:Z:100-130\n' "$rec" > kq_tmp/edge.gaf
+is "$(gaf2paf kq_tmp/edge.gaf -l kq_tmp/lens.tsv | grep -o 'cg:Z:[^[:space:]]*')" "cg:Z:30=" "kq: a deletion at a cut end is dropped"
+printf '%s\tkq:Z:100-oops\n' "$rec" > kq_tmp/bad.gaf
+gaf2paf kq_tmp/bad.gaf -l kq_tmp/lens.tsv > /dev/null 2> kq_tmp/bad.err
+is $? 1 "kq: a malformed tag is an error"
+rm -rf kq_tmp
