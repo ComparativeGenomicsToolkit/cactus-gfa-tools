@@ -837,6 +837,7 @@ struct Excursion {
     bool bounded = false;
     bool has_gl = false, has_gr = false;
     int64_t gl = 0, gr = 0;
+    int64_t ig = 0;             // widest query gap between the excursion's own pieces
     Sided sided;
 };
 
@@ -1235,6 +1236,13 @@ Excursion Contig::judge(const vector<Entry>& pl, const vector<int>& grp, int L, 
         int64_t whi = *std::max_element(bpts.begin(), bpts.end());
         d.bounded = d.flo >= wlo - P.r2_tol && d.fhi <= whi + P.r2_tol && (whi - wlo) <= (d.fhi - d.flo) + P.r2_slack;
     }
+    // the widest query gap inside the excursion: unanchored query between its pieces, which the
+    // clip downstream removes
+    int64_t reach = pl[grp.front()].e;
+    for (size_t i = 1; i < grp.size(); ++i) {
+        d.ig = std::max(d.ig, pl[grp[i]].s - reach);
+        reach = std::max(reach, pl[grp[i]].e);
+    }
     // sidedness: is each junction path-continuous?  Up to the clip threshold always; with a new
     // piece on either side, anything under the isolation gap counts
     if (L >= 0) { d.has_gl = true; d.gl = pl[grp.front()].s - pl[L].e; }
@@ -1285,6 +1293,9 @@ pair<int, string> Contig::reality(const Excursion& ex, const vector<Entry>& pl) 
         if (pl[k].rem && pl[k].li < P.id_floor) return make_pair(2, "R1:ident" + fixed4(pl[k].li));
     }
     if (ex.sided == S_ISOLATED || ex.sided == S_END_ISOLATED || ex.sided == S_ALONE) return make_pair(0, string("isolated"));
+    // two-sided only until the clip removes the unanchored query inside it: that leaves two halves
+    // joined on one side each, which no later stage severs
+    if (ex.sided == S_TWO && ex.ig >= P.gap) return make_pair(1, string("R2:gapped-two"));
     if (ex.sided == S_TWO && ex.bounded && ex.has_fp) return make_pair(0, string("bounded-two"));
     if (ex.sided == S_TWO) return make_pair(1, string("R2:unbounded-two"));
     if (ex.sided == S_ONE) return make_pair(1, string("R2:one-sided"));
@@ -1305,15 +1316,19 @@ bool Contig::structure(int c, const vector<Entry>& pl, int it, vector<Excursion>
         pair<int, string> act = reality(ex, pl);
         if (act.first == 0) continue;
         if (act.first == 2) {
-            // only the new pieces under the identity floor go (piecewise); the excursion is tested
-            // again on the next round
+            // only the new sequence under the identity floor goes (piecewise); the excursion is
+            // tested again on the next round.  A remainder is new throughout and goes whole.  A piece
+            // of a record the stock rule keeps loses only the stretches the stock chain does not
+            // anchor, never its stock-anchored rest (its identity is the whole record's)
             for (int k : nw) {
                 string reason = "reality:" + act.second;
                 if (pl[k].li >= P.id_floor) {
                     log_row("r1-spared", pl[k].s, pl[k].e, reason, it, E[pl[k].ri]->idx,
                             place_str(pl[k].pl, sh.chroms), pyround(pl[k].li, 4));
-                } else {
+                } else if (pl[k].rem) {
                     drop(pl[k], pl[k].s, pl[k].e, reason, it);
+                } else {
+                    for (const IV& x : pl[k].a0new) drop(pl[k], x.first, x.second, reason, it);
                 }
             }
             if (!nw.empty()) changed = true;
@@ -2055,7 +2070,8 @@ static void help(char** argv) {
          << "    --skip-onetoone                 Do not drop new sequence placed on reference its haplotype already covers" << endl
          << "    --gate-chunk N                  Chunk size of the one-to-one test [10000]" << endl
          << "    --gate-minrun N                 Drop failing chunks in runs of at least this [20000]" << endl
-         << "    --gap N                         Query gap that breaks a junction; a junction touching a new piece joins under it [31000]" << endl
+         << "    --gap N                         Query gap that breaks a junction; a junction touching a new piece joins under it, and a" << endl
+         << "                                    two-sided excursion with a query gap this wide inside it has its junctions broken [31000]" << endl
          << "    --junction-clip N               Query gap under which a junction between stock pieces joins (cactus's clip) [10000]" << endl
          << "    --bound-tol N                   A bounded excursion's reference footprint lies within the backbone window +- this [100000]" << endl
          << "    --bound-slack N                 ...and the window exceeds the footprint by at most this [1000000]" << endl

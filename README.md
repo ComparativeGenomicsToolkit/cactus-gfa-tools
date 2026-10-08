@@ -85,13 +85,17 @@ each query segment on its own:
   95% identity (`--min-remainder`, `--min-remainder-ident`).
 * Sequence the stock filter chain would not have anchored ("new" sequence) must be at least 98%
   identical over the reference-node columns it covers (`--id-floor`; a remainder in an excursion
-  over its whole length too), and must not place reference its haplotype already covers (the
-  one-to-one test).
+  over its whole length too, and if one is not, the excursion's new sequence under the floor goes:
+  remainders whole, other records only their new stretches), and must not place reference its
+  haplotype already covers (the one-to-one test).
 * Every excursion off the contig's backbone that the new sequence forms is tested.  An excursion that
   cannot be a real two-sided rearrangement keeps its sequence, but its junctions are broken by a
   query gap (`--gap`, 31 kb), so no later stage can rejoin them.  The side cut is the new one: the
   excursion's own piece if any of it is new, otherwise the backbone piece next to it if that piece is
-  new at the end facing the junction.  A junction the stock chain itself makes is left alone.
+  new at the end facing the junction.  A junction the stock chain itself makes is left alone.  A
+  two-sided excursion with an unanchored query gap of at least `--gap` between its own pieces counts
+  as one that cannot be real: the clip downstream removes the gap and leaves two halves, each joined
+  on one side only.
 * `-q`/`-b`/`-i` select the records that take part.  `-i` is read as the line filter downstream reads
   it: matches/block length, rounded to 3 places as in `gaf2paf`'s `gi:f:` tag.
 

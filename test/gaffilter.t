@@ -6,7 +6,7 @@ BASH_TAP_ROOT=./bash-tap
 PATH=../bin:$PATH
 PATH=../:$PATH
 
-plan tests 51
+plan tests 58
 
 mkdir -p stock_tmp
 
@@ -186,5 +186,57 @@ gaffilter exact_tmp/guard.gaf $X --exact-ratio 2 --guard --guard-chunk 0 > /dev/
 is $? 1 "-x refuses --guard-chunk 0"
 gaffilter exact_tmp/tier.gaf $X --exact-ratio 0 > /dev/null 2> exact_tmp/bad.err
 is $? 1 "-x refuses --exact-ratio 0"
+
+# ---- excursions on a wider reference: ten 50 kb nodes, and two off-reference 5 kb nodes whose
+# lines the line filter drops (0% identity), which makes the record holding one new there.  The
+# backbone is a forward 150 kb record at each end, a (0-150 kb) and b (350-500 kb); between them the
+# contig is inverted against chrA 150-350 kb
+for i in $(seq 10); do
+    printf "r$i\t50000\tid=REF|chrA\t%d\t0\n" $(( (i - 1) * 50000 ))
+done > exact_tmp/wide.nodes.tsv
+printf 'n0\t5000\tid=S.0|x\t0\t1\nn1\t5000\tid=S.0|y\t0\t1\n' >> exact_tmp/wide.nodes.tsv
+XW="-x -r 5 -m 0.25 -q 5 -b 0 -i 0.5 --exact-nodes exact_tmp/wide.nodes.tsv"
+wide_a() { printf "id=S.1|c1\t$1\t0\t150000\t+\t>r1>r2>r3\t150000\t0\t150000\t150000\t150000\t60\tcg:Z:150000=\trc:Z:chrA\n"; }
+wide_b() { printf "id=S.1|c1\t$1\t$2\t$(( $2 + 150000 ))\t+\t>r8>r9>r10\t150000\t0\t150000\t150000\t150000\t60\tcg:Z:150000=\trc:Z:chrA\n"; }
+
+# R1 takes only new sequence.  v (95% identity as a whole record) is kept by the stock rule, and is
+# new only over its 5 kb on n0.  d loses to v on MAPQ, so is demoted, and fills the rest of the
+# inversion with a 96.7% identical remainder.  That remainder fails the identity floor, so R1 drops
+# the excursion's new sequence under it: all of d's remainder, but of v only its 5 kb, never the
+# stock-anchored rest (--skip-r1ref: otherwise the remainder's reference-node columns drop it first)
+gen_d() { for i in $(seq 4700); do printf '29=1X'; done; }
+{
+    wide_a 500000
+    printf "id=S.1|c1\t500000\t150000\t255000\t-\t>r6>r7>n0\t105000\t0\t105000\t100000\t105000\t60\tcg:Z:100000=5000X\trc:Z:chrA\n"
+    printf "id=S.1|c1\t500000\t209000\t350000\t-\t>r4>r5>r6\t150000\t0\t141000\t136300\t141000\t10\tcg:Z:%s\trc:Z:chrA\n" "$(gen_d)"
+    wide_b 500000 350000
+} > exact_tmp/r1.gaf
+gaffilter exact_tmp/r1.gaf $XW --skip-r1ref --exact-log exact_tmp/r1.log 2>/dev/null > exact_tmp/r1.out
+is "$(awk '$3==150000' exact_tmp/r1.out | grep -o 'kq:Z:[^[:space:]]*')" "kq:Z:155000-255000" "-x R1 cuts only the new stretch of a record the stock rule keeps"
+is "$(awk '$1=="reality" && $7==1 {print $3 "-" $4}' exact_tmp/r1.log)" "150000-155000" "and logs only that stretch"
+is $(awk '$3==209000' exact_tmp/r1.out | wc -l) 0 "the remainder under the floor still goes whole"
+
+# R2:gapped-two.  The inversion is two new pieces, v1 and v2, with 40 kb of query between them that
+# nothing anchors.  It is two-sided and bounded, but the clip downstream removes the 40 kb and leaves
+# v1 and v2 joined on one side each, so it is isolated, not exempt
+{
+    wide_a 500000
+    printf "id=S.1|c1\t500000\t150000\t205000\t-\t>n0>r7\t55000\t0\t55000\t50000\t55000\t60\tcg:Z:5000X50000=\trc:Z:chrA\n"
+    printf "id=S.1|c1\t500000\t245000\t350000\t-\t>r4>r5>n1\t105000\t0\t105000\t100000\t105000\t60\tcg:Z:100000=5000X\trc:Z:chrA\n"
+    wide_b 500000 350000
+} > exact_tmp/gapped.gaf
+gaffilter exact_tmp/gapped.gaf $XW --exact-log exact_tmp/gapped.log 2>/dev/null > exact_tmp/gapped.out
+is $(grep -c 'isolate:R2:gapped-two' exact_tmp/gapped.log) 2 "-x isolates a two-sided excursion with a query gap of --gap inside it"
+is "$(grep -o 'kq:Z:[^[:space:]]*' exact_tmp/gapped.out | tr '\n' ' ')" "kq:Z:181000-205000 kq:Z:245000-319000 " "by trimming both its junctions back by the gap"
+# ...but with only 20 kb between the pieces it is an ordinary bounded two-sided inversion: exempt
+{
+    wide_a 480000
+    printf "id=S.1|c1\t480000\t150000\t205000\t-\t>n0>r7\t55000\t0\t55000\t50000\t55000\t60\tcg:Z:5000X50000=\trc:Z:chrA\n"
+    printf "id=S.1|c1\t480000\t225000\t330000\t-\t>r4>r5>n1\t105000\t0\t105000\t100000\t105000\t60\tcg:Z:100000=5000X\trc:Z:chrA\n"
+    wide_b 480000 330000
+} > exact_tmp/bounded.gaf
+gaffilter exact_tmp/bounded.gaf $XW --junctions exact_tmp/bounded.j 2>/dev/null > exact_tmp/bounded.out
+is $(cmp -s exact_tmp/bounded.out exact_tmp/bounded.gaf && echo same) same "-x keeps a bounded two-sided inversion with a smaller gap inside it whole"
+is $(grep -c 'exempt:bounded-two' exact_tmp/bounded.j) 1 "as exempt"
 
 rm -rf exact_tmp
