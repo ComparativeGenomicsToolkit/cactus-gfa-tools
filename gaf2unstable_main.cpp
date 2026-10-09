@@ -30,9 +30,19 @@ static inline ostream& operator<<(ostream& os, const MGSeq& s1) {
     return os;
 }
 
+// one row of the -n node table: name, length, SN, SO, SR of an S line, in the order of the GFA
+struct NodeRow {
+    string name;
+    int64_t length;
+    string sn;
+    int64_t so;
+    string sr;
+};
+
 // maps a stable contig name to a set of minigraph sequences that are sorted by their
-// offset in the stable sequence.
-static unordered_map<string, set<MGSeq>> get_unstable_mapping(const string& rgfa_path) {
+// offset in the stable sequence.  node_rows, if given, also gets every S line's row of the
+// -n table (gaffilter -x needs each node's rank and reference position, not only its length)
+static unordered_map<string, set<MGSeq>> get_unstable_mapping(const string& rgfa_path, vector<NodeRow>* node_rows = nullptr) {
     unordered_map<string,set< MGSeq>> unstable_mapping;
     if (!ifstream(rgfa_path)) {
         cerr << "[gaf2unstable] error: Could not open " << rgfa_path << endl;
@@ -47,7 +57,11 @@ static unordered_map<string, set<MGSeq>> get_unstable_mapping(const string& rgfa
             mg_seq.length = gfa_seq.sequence.length();
             mg_seq.name = gfa_seq.name;
             string contig;
+            string rank;
             for (const gfak::opt_elem& oe : gfa_seq.opt_fields) {
+                if (oe.key == "SR") {
+                    rank = oe.val;
+                }
                 if (oe.key == "SN") {
                     assert(found_SN == false);
                     contig = oe.val;
@@ -63,6 +77,9 @@ static unordered_map<string, set<MGSeq>> get_unstable_mapping(const string& rgfa
             assert(found_SO);
 
             unstable_mapping[contig].insert(mg_seq);
+            if (node_rows) {
+                node_rows->push_back({mg_seq.name, mg_seq.length, contig, mg_seq.offset, rank});
+            }
 
         });
     return unstable_mapping;
@@ -181,7 +198,8 @@ void help(char** argv) {
        << endl
        << "options: " << endl
        << "    -g, --rGFA FILE           (uncompressed) minigraph rGFA, required to look up unstable mappings" << endl
-       << "    -o, --out-lengths FILE    Output lengths of all minigraph sequences in given file (can be passed to gaf2paf)" << endl;
+       << "    -o, --out-lengths FILE    Output lengths of all minigraph sequences in given file (can be passed to gaf2paf)" << endl
+       << "    -n, --out-nodes FILE      Output a table of all minigraph sequences: name, length, SN, SO, SR (for gaffilter -x --exact-nodes)" << endl;
 }    
 
 int main(int argc, char** argv) {
@@ -192,6 +210,7 @@ int main(int argc, char** argv) {
 
     string rgfa_path;
     string node_lengths_path;
+    string node_table_path;
     int c;
     optind = 1; 
     while (true) {
@@ -200,12 +219,13 @@ int main(int argc, char** argv) {
             {"help", no_argument, 0, 'h'},
             {"rgfa", required_argument, 0, 'g'},
             {"out-lengths", required_argument, 0, '0'},
+            {"out-nodes", required_argument, 0, 'n'},
             {0, 0, 0, 0}
         };
 
         int option_index = 0;
 
-        c = getopt_long (argc, argv, "hg:o:",
+        c = getopt_long (argc, argv, "hg:o:n:",
                          long_options, &option_index);
 
         // Detect the end of the options.
@@ -215,11 +235,18 @@ int main(int argc, char** argv) {
         switch (c)
         {
         case 'h':
+            // (falling through to -g, as this did, assigns a null optarg and aborts)
+            help(argv);
+            exit(1);
+            break;
         case 'g':
             rgfa_path = optarg;
             break;
         case 'o':
             node_lengths_path = optarg;
+            break;
+        case 'n':
+            node_table_path = optarg;
             break;
         case '?':
             /* getopt_long already printed an error message. */
@@ -271,7 +298,8 @@ int main(int argc, char** argv) {
     }
 
     // load the gfa
-    auto lookup = get_unstable_mapping(rgfa_path);
+    vector<NodeRow> node_rows;
+    auto lookup = get_unstable_mapping(rgfa_path, node_table_path.empty() ? nullptr : &node_rows);
 
     // also get the reference contigs (todo: should merge two gfa passes)
     pair<unordered_map<int64_t, int64_t>, vector<string>> partition = rgfa2contig(rgfa_path);
@@ -287,6 +315,25 @@ int main(int argc, char** argv) {
                 node_lengths_file << s.name << "\t" << s.length << "\n";
             }
         }
+    }
+
+    // written in full before the first GAF line goes out, like -o: gaffilter, reading the GAF from
+    // a pipe, opens this only once its input is exhausted
+    if (!node_table_path.empty()) {
+        ofstream node_table_file(node_table_path);
+        if (!node_table_file) {
+            cerr << "[gaf2unstable] error: unable to open output: " << node_table_path << endl;
+            return 1;
+        }
+        for (const NodeRow& row : node_rows) {
+            node_table_file << row.name << "\t" << row.length << "\t" << row.sn << "\t" << row.so << "\t" << row.sr << "\n";
+        }
+        node_table_file.close();
+        if (!node_table_file) {
+            cerr << "[gaf2unstable] error: failed to write " << node_table_path << endl;
+            return 1;
+        }
+        node_rows.clear();
     }
 
     // process the gaf

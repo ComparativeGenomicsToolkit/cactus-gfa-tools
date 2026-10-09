@@ -6,200 +6,237 @@ BASH_TAP_ROOT=./bash-tap
 PATH=../bin:$PATH
 PATH=../:$PATH
 
-plan tests 39
+plan tests 58
 
-# A three-record query: two long alignments that overlap at a seam, plus a bystander.  The seam is
-# what the filter is for; the flanks are what -t stops it from taking as well.
-mkdir -p trim_tmp
-cat > trim_tmp/in.gaf <<'EOF'
+mkdir -p stock_tmp
+
+# the stock rule: a tie deletes BOTH overlapping records, and a bystander survives alone
+cat > stock_tmp/in.gaf <<'EOF'
 q	3000	0	1200	+	>n1:0-1200	1200	0	1200	1200	1200	60	cg:Z:1200=
 q	3000	1000	2200	+	>n2:0-1200	1200	0	1200	1200	1200	60	cg:Z:1200=
 q	3000	2500	3000	+	>n3:0-500	500	0	500	500	500	60	cg:Z:500=
 EOF
+gaffilter stock_tmp/in.gaf -r 5 -m 0 2>/dev/null > stock_tmp/out.gaf
+is $(wc -l < stock_tmp/out.gaf) 1 "a tie deletes both records"
+is $(awk '$3==2500' stock_tmp/out.gaf | wc -l) 1 "the record with no overlap is kept"
 
-# without -t, a tie deletes BOTH overlapping records and the bystander survives alone
-gaffilter trim_tmp/in.gaf -r 5 -m 0 2>/dev/null > trim_tmp/notrim.gaf
-is $(wc -l < trim_tmp/notrim.gaf) 1 "without -t a tie deletes both records"
-is $(awk '$3==2500' trim_tmp/notrim.gaf | wc -l) 1 "the record with no overlap is kept"
-
-# with -t, both survive, each having given up only the contested 200 bp
-gaffilter trim_tmp/in.gaf -r 5 -m 0 -t -e 0 2>/dev/null > trim_tmp/trim.gaf
-is $(wc -l < trim_tmp/trim.gaf) 3 "with -t no record is deleted"
-is $(awk '$1=="q" && $3==0 && $4==1000' trim_tmp/trim.gaf | wc -l) 1 "the first record is trimmed to the seam"
-is $(awk '$1=="q" && $3==1200 && $4==2200' trim_tmp/trim.gaf | wc -l) 1 "the second record is trimmed to the seam"
-is $(grep -c 'cg:Z:1000=' trim_tmp/trim.gaf) 2 "the cigars are cut to match"
-
-# the cut must follow the coordinates: block length and matches are recomputed, not carried over
-is $(awk '$3==0 && $4==1000 {print $11}' trim_tmp/trim.gaf) 1000 "block length is recomputed"
-is $(awk '$3==0 && $4==1000 {print $10}' trim_tmp/trim.gaf) 1000 "matches are recomputed"
-
-# A record that dominates its overlap is not trimmed at all, so it keeps its span and no hole
-# opens.  This is why the default never has a hole to close: a hole needs EVERY spanning record to
-# have given the span up, and none of them gave it up to a record it dominates.
-cat > trim_tmp/dom.gaf <<'EOF'
-q	20000	0	14000	+	>n1:0-14000	14000	0	14000	14000	14000	60	cg:Z:14000=
-q	20000	600	2000	+	>n2:0-1400	1400	0	1400	1400	1400	60	cg:Z:1400=
-EOF
-gaffilter trim_tmp/dom.gaf -r 5 -m 0 -t -e 0 -g 100 2>trim_tmp/dom.err > trim_tmp/dom.out
-is $(awk '$3==0 && $4==14000' trim_tmp/dom.out | wc -l) 1 "a dominating record is not trimmed, so no hole opens"
-is $(grep -c 'hole(s)' trim_tmp/dom.err) 0 "and nothing is reported as a hole"
-
-# an ambiguous span is NOT closed by guessing.  A hole clips sequence out; a wrong placement puts
-# a wrong alignment in, so an ambiguous span is left as a hole rather than guessed at.
-cat > trim_tmp/hole.gaf <<'EOF'
-q	3000	0	1400	+	>n1:0-1400	1400	0	1400	1400	1400	60	cg:Z:1400=
-q	3000	600	2000	+	>n2:0-1400	1400	0	1400	1400	1400	60	cg:Z:1400=
-EOF
-gaffilter trim_tmp/hole.gaf -r 5 -m 0 -t -e 0 -g 100 2>trim_tmp/hole.err > trim_tmp/hole.out
-is $(grep -c 'rescued 0 contested spans' trim_tmp/hole.err) 1 "an ambiguous hole is not closed by guessing"
-is $(grep -c 'ambiguous' trim_tmp/hole.err) 1 "and the hole it leaves is reported, not silent"
-
-# -R opts in to closing it anyway, on the filter's own ordering rather than raw block length
-gaffilter trim_tmp/hole.gaf -r 5 -m 0 -t -e 0 -g 100 --close-holes 2>trim_tmp/weak.err > /dev/null
-is $(grep -c 'rescued 1 contested spans' trim_tmp/weak.err) 1 "--close-holes closes an ambiguous hole"
-
-# a secondary must never take a span from a primary, whatever the block lengths say
-cat > trim_tmp/sec.gaf <<'EOF'
-q	4000	0	3000	+	>n1:0-3000	3000	0	3000	3000	3000	60	cg:Z:3000=	tp:A:P
-q	4000	0	3200	+	>n2:0-3200	3200	0	3200	3200	3200	60	cg:Z:3200=	tp:A:S
-q	4000	1000	2000	+	>n3:0-1000	1000	0	1000	1000	1000	60	cg:Z:1000=	tp:A:P
-EOF
-gaffilter trim_tmp/sec.gaf -r 5 -m 0 -t -e 0 -g 100 -R 2>/dev/null > trim_tmp/sec.out
-is $(awk '$3==1000 && $4==2000 && /tp:A:S/' trim_tmp/sec.out | wc -l) 0 "a secondary does not take the span from a primary"
-
-# a hole spanned by no single record cannot be closed by any one claimant; it must still be counted
-cat > trim_tmp/two.gaf <<'EOF'
-q	4000	0	1500	+	>n1:0-1500	1500	0	1500	1500	1500	60	cg:Z:1500=
-q	4000	500	1500	+	>n2:0-1000	1000	0	1000	1000	1000	60	cg:Z:1000=
-q	4000	1500	3000	+	>n3:0-1500	1500	0	1500	1500	1500	60	cg:Z:1500=
-q	4000	1500	2500	+	>n4:0-1000	1000	0	1000	1000	1000	60	cg:Z:1000=
-EOF
-gaffilter trim_tmp/two.gaf -r 5 -m 0 -t -e 0 -g 100 2>trim_tmp/two.err > /dev/null
-is $(grep -c 'spanned by no single record' trim_tmp/two.err) 1 "a hole no single record spans is reported"
-
-# a hole shorter than -g is left alone, since cactus-graphmap-join will not split a path on it
-gaffilter trim_tmp/hole.gaf -r 5 -m 0 -t -e 0 -g 10000 2>trim_tmp/nohole.err > /dev/null
-is $(grep -c 'rescued 0 contested spans' trim_tmp/nohole.err) 1 "a hole shorter than -g is not rescued"
-is $(grep -c 'hole(s)' trim_tmp/nohole.err) 0 "and a sub-threshold hole is not reported as one"
-
-# -t must change nothing when there is nothing to trim.  (Comparing the default against itself
-# would pass no matter what -t did, which is what this test used to do.)
-cat > trim_tmp/disjoint.gaf <<'EOF'
-q	9000	0	1000	+	>n1:0-1000	1000	0	1000	1000	1000	60	cg:Z:1000=
-q	9000	2000	3000	+	>n2:0-1000	1000	0	1000	1000	1000	60	cg:Z:1000=
-r	9000	0	1000	+	>n3:0-1000	1000	0	1000	1000	1000	60	cg:Z:1000=
-EOF
-gaffilter trim_tmp/disjoint.gaf -r 5 -m 0 -q 5 -b 250000 -i 0.5 2>/dev/null > trim_tmp/a.gaf
-gaffilter trim_tmp/disjoint.gaf -r 5 -m 0 -q 5 -b 250000 -i 0.5 -t -e 0 2>/dev/null > trim_tmp/b.gaf
-is $(cmp -s trim_tmp/a.gaf trim_tmp/b.gaf && echo same) "same" "-t is byte-identical when no record loses an overlap"
-is $(wc -l < trim_tmp/b.gaf) 3 "and nothing is dropped"
-gaffilter trim_tmp/in.gaf -r 5 -m 0 -t -e 0 -p 2>trim_tmp/paf.err > /dev/null || true
-is $(grep -c 'cannot be used with -p' trim_tmp/paf.err) 1 "-t is refused with -p"
-
-# a record with an empty query interval yields no fragment to trim, but it is still a survivor.
-# deciding what to emit from the fragments rather than the verdict silently dropped it.
-cat > trim_tmp/empty.gaf <<'EOF'
-q	1000	500	500	+	>n1:0-10	10	0	10	10	10	60	cg:Z:10=
-q	1000	0	400	+	>n2:0-400	400	0	400	400	400	60	cg:Z:400=
-EOF
-gaffilter trim_tmp/empty.gaf -r 5 -m 0 -t -e 0 2>/dev/null > trim_tmp/empty.out
-is $(wc -l < trim_tmp/empty.out) 2 "a kept record with an empty query interval is not dropped by -t"
-
-# The lengths file -t needs is written by the upstream process of the same pipe
-# (gaf2unstable -o), so it does not exist when gaffilter starts.  Reading it at startup raced and
-# every mapping job died; it has to be read once the input is exhausted.  These paths name bare
-# nodes across TWO steps, so the length cannot be inferred from the path length column and the
-# file is genuinely required.
-cat > trim_tmp/bare.gaf <<'EOF'
-q	3000	0	1200	+	>n1>n2	2400	0	1200	1200	1200	60	cg:Z:1200=
-q	3000	1000	2200	+	>n3>n4	2400	0	1200	1200	1200	60	cg:Z:1200=
-EOF
-printf 'n1	1200
-n2	1200
-n3	1200
-n4	1200
-' > trim_tmp/lengths.src
-
-rm -f trim_tmp/late.tsv
-( sleep 1; cp trim_tmp/lengths.src trim_tmp/late.tsv; cat trim_tmp/bare.gaf )   | gaffilter - -r 5 -m 0 -t -e 0 -l trim_tmp/late.tsv 2>/dev/null > trim_tmp/late.out
-is $(awk '$3==0 && $4==1000' trim_tmp/late.out | wc -l) 1 "a lengths file that only appears after the input is still read"
-
-# the cut drops the path steps it left behind, so the record stays canonical for gaf2paf
-is "$(awk '$3==0 && $4==1000 {print $6 "/" $7}' trim_tmp/late.out)" ">n1/1200" "the trimmed path drops the step the cut left behind"
-
-# without -l a bare multi-step path cannot be rebased; that must degrade to the old behaviour
-gaffilter trim_tmp/bare.gaf -r 5 -m 0 -t -e 0 2>trim_tmp/nolen.err > trim_tmp/nolen.out
-is $(grep -c 'could not be cut' trim_tmp/nolen.err) 1 "without -l an uncuttable record is deleted whole, with a warning"
-
-# -l is documented across these tools as accepting a .fai, which has five columns.  Reading it
-# with >> took columns 3 and 4 of line 1 as the next pair and silently produced a garbage map.
-printf 'n1\t1200\t10\t60\t61\nn2\t1200\t20\t60\t61\nn3\t1200\t30\t60\t61\nn4\t1200\t40\t60\t61\n' > trim_tmp/lengths.fai
-gaffilter trim_tmp/bare.gaf -r 5 -m 0 -t -e 0 -l trim_tmp/lengths.fai 2>trim_tmp/fai.err > trim_tmp/fai.out
-is $(grep -c 'Loaded 4 node lengths' trim_tmp/fai.err) 1 "a .fai-shaped lengths file is read, not mis-parsed"
-is $(awk '$3==0 && $4==1000' trim_tmp/fai.out | wc -l) 1 "and the trim still happens with it"
-
-# with only SOME lengths known, a multi-step path's missing length must not be invented: doing so
-# satisfies the total-length check by construction and can drop the wrong steps
-printf 'a0\t100\n' > trim_tmp/part.tsv
-cat > trim_tmp/inf.gaf <<'EOF'
-q	5000	0	200	+	>x>a0	300	0	200	200	200	1	cg:Z:200=
-q	5000	0	150	+	>blk:0-150	150	0	150	150	150	60	cg:Z:150=
-EOF
-gaffilter trim_tmp/inf.gaf -r 5 -m 0 -t -e 0 -g -1 -l trim_tmp/part.tsv 2>/dev/null > trim_tmp/inf.out
-is $(grep -c '>x' trim_tmp/inf.out) 0 "a multi-step path with an unknown step length is not cut on a guess"
-
-# -e widens each contested span on both sides: the bases butting up against an overlap are the
-# least trustworthy part of the alignment.  Clipped to the record's own span, so only the interior
-# border actually moves, and the dominating record -- which was never contested -- does not move.
-cat > trim_tmp/edge.gaf <<'EOF'
-q	200000	0	40000	+	>n1:0-40000	40000	0	40000	40000	40000	60	cg:Z:40000=
-q	200000	39000	46000	+	>n2:0-7000	7000	0	7000	7000	7000	60	cg:Z:7000=
-EOF
-gaffilter trim_tmp/edge.gaf -r 5 -m 0 -t -e 0 2>/dev/null > trim_tmp/e0.out
-gaffilter trim_tmp/edge.gaf -r 5 -m 0 -t -e 5000 2>/dev/null > trim_tmp/e5.out
-is $(awk '$3==40000 && $4==46000' trim_tmp/e0.out | wc -l) 1 "-e 0 trims exactly the contested span"
-is $(awk '$3==45000 && $4==46000' trim_tmp/e5.out | wc -l) 1 "-e 5000 trims 5000 further past the border"
-is $(awk '$3==0 && $4==40000' trim_tmp/e5.out | wc -l) 1 "and the record that was never contested does not move"
-
-# in a tie both sides pull back, so the hole widens by 2*-e rather than -e
-cat > trim_tmp/edgetie.gaf <<'EOF'
-q	200000	33000	40000	+	>n1:0-7000	7000	0	7000	7000	7000	60	cg:Z:7000=
-q	200000	39000	46000	+	>n2:0-7000	7000	0	7000	7000	7000	60	cg:Z:7000=
-EOF
-gaffilter trim_tmp/edgetie.gaf -r 5 -m 0 -t -e 1000 2>/dev/null > trim_tmp/et.out
-is $(awk '$3==33000 && $4==38000' trim_tmp/et.out | wc -l) 1 "a tie pulls the left record back by -e too"
-is $(awk '$3==41000 && $4==46000' trim_tmp/et.out | wc -l) 1 "and the right record forward by -e"
-
-# -Q: a record that loses an overlap AND is poorly placed in its own right keeps the old
-# treatment, deleted whole.  The overlap was always a signal about the record, not just about the
-# overlapping part, and the flanks of a record that is wrong along its length are not worth having.
-cat > trim_tmp/lowq.gaf <<'EOF'
-q	200000	0	40000	+	>n1:0-40000	40000	0	40000	40000	40000	60	cg:Z:40000=
-q	200000	39000	46000	+	>n2:0-7000	7000	0	7000	7000	7000	9	cg:Z:7000=
-EOF
-gaffilter trim_tmp/lowq.gaf -r 5 -m 0 -t -e 0 -Q 0 2>/dev/null > trim_tmp/q0.out
-gaffilter trim_tmp/lowq.gaf -r 5 -m 0 -t -e 0 -Q 20 2>trim_tmp/q20.err > trim_tmp/q20.out
-is $(awk '$3==40000 && $4==46000' trim_tmp/q0.out | wc -l) 1 "-Q 0 trims a low-mapq loser like any other"
-is $(wc -l < trim_tmp/q20.out) 1 "-Q 20 deletes it whole instead"
-is $(awk '$3==0 && $4==40000' trim_tmp/q20.out | wc -l) 1 "and the record that won is untouched"
-is $(grep -c 'their own mapq is under 20' trim_tmp/q20.err) 1 "and says so"
-
-# the bar applies to the record's OWN mapq, not the winner's: a mapq-60 loser is still trimmed
-cat > trim_tmp/hiq.gaf <<'EOF'
-q	200000	0	40000	+	>n1:0-40000	40000	0	40000	40000	40000	60	cg:Z:40000=
-q	200000	39000	46000	+	>n2:0-7000	7000	0	7000	7000	7000	60	cg:Z:7000=
-EOF
-gaffilter trim_tmp/hiq.gaf -r 5 -m 0 -t -e 0 -Q 20 2>/dev/null > trim_tmp/hiq.out
-is $(awk '$3==40000 && $4==46000' trim_tmp/hiq.out | wc -l) 1 "a loser that is itself mapq 60 is still trimmed under -Q 20"
+# the trim mode (-t and its options) was removed in favour of -x: each of its options fails, and
+# says what to use instead
+for opt in -t --trim "-e 5000" "--trim-edge 5000" "-Q 20" "-g 100" "-l x.tsv" -R; do
+    gaffilter stock_tmp/in.gaf -r 5 -m 0 $opt > stock_tmp/removed.out 2> stock_tmp/removed.err
+    is "$? $(grep -c 'has been removed. Use -x/--exact' stock_tmp/removed.err) $(wc -l < stock_tmp/removed.out)" "1 1 0" "the removed $opt fails with a pointer to -x"
+done
 
 # getopt_long resolves unique prefixes, so a new long option can silently break an old
 # abbreviation.  --r was a unique prefix of --ratio until a --rescue-weak was added next to it,
-# which turned a working invocation into a fatal parse error.  The option is now --close-holes.
-cat > trim_tmp/one.gaf <<'EOF'
+# which turned a working invocation into a fatal parse error.
+cat > stock_tmp/one.gaf <<'EOF'
 q1	100	0	50	+	>s1:0-50	50	0	50	50	50	60	cg:Z:50=
 EOF
-gaffilter trim_tmp/one.gaf --r 5 > trim_tmp/abbrev.out 2>/dev/null
+gaffilter stock_tmp/one.gaf --r 5 > stock_tmp/abbrev.out 2>/dev/null
 is $? 0 "--r is still an unambiguous abbreviation of --ratio"
-is $(wc -l < trim_tmp/abbrev.out) 1 "and still filters"
+is $(wc -l < stock_tmp/abbrev.out) 1 "and still filters"
 
-rm -rf trim_tmp
+rm -rf stock_tmp
+
+# ---- -x/--exact: per-segment resolution.  Six 50 kb reference nodes on one chromosome; every
+# record aligns along them, so placements, the backbone and the one-to-one test are all checkable
+# by hand.
+mkdir -p exact_tmp
+for i in 1 2 3 4 5 6; do
+    printf "r$i\t50000\tid=REF|chrA\t%d\t0\n" $(( (i - 1) * 50000 ))
+done > exact_tmp/nodes.tsv
+X="-x -r 5 -m 0.25 -q 5 -b 0 -i 0.5 --exact-nodes exact_tmp/nodes.tsv"
+
+# tier: D (40 kb) ties C over 20 kb, half its block, so the stock rule deletes it whole.  -x keeps
+# the 10 kb nobody else claims.  D also beats X on MAPQ, but X is not demoted, so D yields to it.
+cat > exact_tmp/tier.gaf <<'EOF'
+id=S.1|c1	210000	0	100000	+	>r1>r2	100000	0	100000	100000	100000	60	cg:Z:100000=	rc:Z:chrA
+id=S.1|c1	210000	80000	120000	+	>r2>r3	100000	30000	70000	40000	40000	60	cg:Z:40000=	rc:Z:chrA
+id=S.1|c1	210000	110000	210000	+	>r3>r4>r5	150000	10000	110000	100000	100000	10	cg:Z:100000=	rc:Z:chrA
+EOF
+gaffilter exact_tmp/tier.gaf -r 5 -m 0.25 -q 5 -b 0 -i 0.5 2>/dev/null > exact_tmp/tier.stock
+gaffilter exact_tmp/tier.gaf $X --exact-plan exact_tmp/tier.plan --exact-summary exact_tmp/tier.summary 2>exact_tmp/tier.err > exact_tmp/tier.out
+is $(wc -l < exact_tmp/tier.stock) 2 "-x tier: the stock filter deletes the demoted record whole"
+is $(wc -l < exact_tmp/tier.out) 3 "-x keeps it"
+is $(grep -c kq:Z exact_tmp/tier.out) 1 "only the demoted record is cut"
+is $(awk '$3==80000' exact_tmp/tier.out | grep -o 'kq:Z:[^[:space:]]*') "kq:Z:100000-110000" "it keeps only the span no non-demoted record claims"
+is $(awk '$3==80000 {print $10 "/" $11}' exact_tmp/tier.out) "40000/40000" "a cut record is printed whole (its block length is the parent's)"
+is $(awk '$3==80000 {print $7}' exact_tmp/tier.plan) demoted "the plan marks it demoted"
+is "$(cat exact_tmp/tier.summary)" "$(grep '^\[gaffilter\]: -x' exact_tmp/tier.err | sed 's/^\[gaffilter\]: //')" "--exact-summary holds the summary printed on stderr"
+
+# gaf2paf applies kq:Z: per line, and every line keeps the parent's gl/gm
+printf 'r1\t50000\nr2\t50000\nr3\t50000\nr4\t50000\nr5\t50000\nr6\t50000\n' > exact_tmp/lens.tsv
+gaf2paf exact_tmp/tier.out -l exact_tmp/lens.tsv > exact_tmp/tier.paf
+is "$(awk '$6=="r3" && $3==100000' exact_tmp/tier.paf | cut -f 3,4,8,9)" "$(printf '100000\t110000\t0\t10000')" "gaf2paf cuts the line to the kept span"
+is $(awk '$3==100000 && $4==110000' exact_tmp/tier.paf | grep -c 'gl:i:40000') 1 "and the cut line keeps the parent's block length"
+is $(awk '$3 >= 80000 && $4 <= 100000 && /gl:i:40000/' exact_tmp/tier.paf | wc -l) 0 "and nothing outside the kept span is printed"
+
+# floor: the same remainder at 90% identity is dropped
+sed 's/cg:Z:40000=/cg:Z:20000=1000X19000=/; s/40000\t40000\t60/39000\t40000\t60/' exact_tmp/tier.gaf > exact_tmp/floor.gaf
+gaffilter exact_tmp/floor.gaf $X --exact-log exact_tmp/floor.log 2>/dev/null > exact_tmp/floor.out
+is $(wc -l < exact_tmp/floor.out) 2 "-x drops a remainder under the identity floor"
+is $(grep -c '^floor' exact_tmp/floor.log) 1 "and logs it"
+
+# R4 (one-to-one): a remainder placed on reference its contig already covers is dropped
+cat > exact_tmp/r4.gaf <<'EOF'
+id=S.1|c1	200000	0	100000	+	>r1>r2	100000	0	100000	100000	100000	60	cg:Z:100000=	rc:Z:chrA
+id=S.1|c1	200000	80000	160000	+	>r1>r2	100000	0	80000	80000	80000	60	cg:Z:80000=	rc:Z:chrA
+EOF
+gaffilter exact_tmp/r4.gaf $X --exact-log exact_tmp/r4.log 2>/dev/null > exact_tmp/r4.out
+is $(wc -l < exact_tmp/r4.out) 1 "-x drops a remainder that would place reference twice"
+is $(grep -c '^collide' exact_tmp/r4.log) 1 "as a one-to-one collision"
+# ...and reference covered by another contig of the same haplotype counts too
+cat > exact_tmp/r4b.gaf <<'EOF'
+id=S.1|c0	100000	0	100000	+	>r1>r2	100000	0	100000	100000	100000	60	cg:Z:100000=	rc:Z:chrA
+id=S.1|c1	200000	0	100000	+	>r3>r4	100000	0	100000	100000	100000	60	cg:Z:100000=	rc:Z:chrA
+id=S.1|c1	200000	80000	160000	+	>r1>r2	100000	0	80000	80000	80000	60	cg:Z:80000=	rc:Z:chrA
+EOF
+gaffilter exact_tmp/r4b.gaf $X --exact-log exact_tmp/r4b.log 2>/dev/null > exact_tmp/r4b.out
+is $(grep -c '^collide' exact_tmp/r4b.log) 1 "-x counts reference the haplotype's other contigs cover"
+
+# isolation: a remainder inverted against the backbone at the contig end would make a one-sided
+# junction.  It keeps its sequence, but backs off the junction by the 31 kb gap
+cat > exact_tmp/iso.gaf <<'EOF'
+id=S.1|c1	200000	0	100000	+	>r1>r2	100000	0	100000	100000	100000	60	cg:Z:100000=	rc:Z:chrA
+id=S.1|c1	200000	80000	160000	-	>r4>r5	100000	20000	100000	80000	80000	60	cg:Z:80000=	rc:Z:chrA
+EOF
+gaffilter exact_tmp/iso.gaf $X --exact-log exact_tmp/iso.log --junctions exact_tmp/iso.j 2>/dev/null > exact_tmp/iso.out
+is $(awk '$3==80000' exact_tmp/iso.out | grep -o 'kq:Z:[^[:space:]]*') "kq:Z:131000-160000" "-x isolates a one-sided excursion by the gap"
+is $(grep -c 'isolate:R2:end-joined' exact_tmp/iso.log) 1 "and logs why"
+gaffilter exact_tmp/iso.gaf $X --gap 21000 2>/dev/null | awk '$3==80000' | grep -o 'kq:Z:[^[:space:]]*' > exact_tmp/iso21.kq
+is $(cat exact_tmp/iso21.kq) "kq:Z:121000-160000" "--gap sets how far"
+
+# the guard: with --exact-ratio 2, w beats l on MAPQ (3x) where -r 5 would tie.  l is the more
+# similar copy over the whole contested span, so the guard cancels w's win there
+gen_w() { printf '40000='; for i in $(seq 1200); do printf '49=1X'; done; }
+printf "id=S.1|c1\t300000\t0\t100000\t+\t>r1>r2\t100000\t0\t100000\t98800\t100000\t60\tcg:Z:%s\trc:Z:chrA\n" "$(gen_w)" > exact_tmp/guard.gaf
+printf "id=S.1|c1\t300000\t40000\t300000\t+\t>r1>r2>r3>r4>r5>r6\t300000\t40000\t300000\t260000\t260000\t20\tcg:Z:260000=\trc:Z:chrA\n" >> exact_tmp/guard.gaf
+gaffilter exact_tmp/guard.gaf $X --exact-ratio 2 2>/dev/null > exact_tmp/noguard.out
+gaffilter exact_tmp/guard.gaf $X --exact-ratio 2 --guard --exact-log exact_tmp/guard.log 2>/dev/null > exact_tmp/guard.out
+is $(awk '$3==0' exact_tmp/noguard.out | grep -c kq:Z) 0 "without the guard the lower ratio gives w the contested span"
+is $(awk '$3==0' exact_tmp/guard.out | grep -o 'kq:Z:[^[:space:]]*') "kq:Z:0-40000" "the guard cancels it where l is the more similar"
+is $(awk '$3==40000' exact_tmp/guard.out | grep -o 'kq:Z:[^[:space:]]*') "kq:Z:100000-300000" "and l does not get it either: it lost on MAPQ"
+is $(grep -c '^guard-applied' exact_tmp/guard.log) 1 "the veto is logged as applied"
+gaffilter exact_tmp/guard.gaf $X --guard 2>/dev/null > exact_tmp/guard5.out
+gaffilter exact_tmp/guard.gaf $X 2>/dev/null > exact_tmp/plain5.out
+is $(cmp -s exact_tmp/guard5.out exact_tmp/plain5.out && echo same) same "the guard does nothing when --exact-ratio is -r"
+
+# the result does not depend on the input order
+tac exact_tmp/tier.gaf > exact_tmp/tier.rev.gaf
+gaffilter exact_tmp/tier.rev.gaf $X 2>/dev/null | sort > exact_tmp/tier.rev.out
+is $(sort exact_tmp/tier.out | cmp -s - exact_tmp/tier.rev.out && echo same) same "-x does not depend on the input order"
+
+# -x is GAF-only
+gaffilter exact_tmp/tier.gaf $X -p 2>exact_tmp/xp.err > /dev/null || true
+is $(grep -c 'cannot be used with -p or -o' exact_tmp/xp.err) 1 "-x is refused with -p"
+
+# isolation never cuts stock-anchored sequence from a backbone record at a junction that is the
+# stock chain's own.  The backbone b is new only at its start, an off-reference node n0 that the
+# line filter drops (0% identity), far from its junction to the inverted record v at the contig
+# end.  v is anchored whole by the stock chain, so nothing at the junction is new and the junction
+# stays as the stock filter has it (this was the yeast SK1 chrI case)
+printf 'n0\t30000\tid=S.0|x\t0\t1\n' > exact_tmp/side.nodes.tsv
+cat exact_tmp/nodes.tsv >> exact_tmp/side.nodes.tsv
+XS="-x -r 5 -m 0.25 -q 5 -b 0 -i 0.5 --exact-nodes exact_tmp/side.nodes.tsv"
+cat > exact_tmp/side.gaf <<'EOF'
+id=S.1|c1	180000	0	130000	+	>n0>r1>r2	130000	0	130000	100000	130000	60	cg:Z:30000X100000=	rc:Z:chrA
+id=S.1|c1	180000	130000	180000	-	>r5	50000	0	50000	50000	50000	60	cg:Z:50000=	rc:Z:chrA
+EOF
+gaffilter exact_tmp/side.gaf -r 5 -m 0.25 -q 5 -b 0 -i 0.5 2>/dev/null > exact_tmp/side.stock
+gaffilter exact_tmp/side.gaf $XS --exact-log exact_tmp/side.log 2>/dev/null > exact_tmp/side.out
+is $(grep -c '^a0-junction' exact_tmp/side.log) 1 "-x leaves a junction the stock chain made (a0-junction)"
+is $(grep -c '^isolate' exact_tmp/side.log) 0 "and isolates nothing"
+is $(cmp -s exact_tmp/side.out exact_tmp/side.stock && echo same) same "so it keeps exactly what the stock filter keeps"
+# ...but a backbone that is new AT the junction is still trimmed there
+sed 's/>n0>r1>r2/>r1>r2>n0/; s/cg:Z:30000X100000=/cg:Z:100000=30000X/' exact_tmp/side.gaf > exact_tmp/side2.gaf
+gaffilter exact_tmp/side2.gaf $XS --exact-log exact_tmp/side2.log 2>/dev/null > exact_tmp/side2.out
+is $(grep -c 'isolate:R2:end-joined' exact_tmp/side2.log) 1 "-x isolates a backbone that is new at the junction"
+is $(awk '$3==0' exact_tmp/side2.out | grep -o 'kq:Z:[^[:space:]]*') "kq:Z:0-99000" "by trimming its junction end back by the gap"
+
+# eligibility (-i) reads the identity as the line filter downstream does: gaf2paf's gi:f:, rounded
+# to 3 places.  l is 49,960/100,000 = 0.4996, which rounds to 0.5: it competes (and loses its
+# remainder to the identity floor) rather than passing through uncontested, its lines kept anyway
+cat > exact_tmp/round.gaf <<'EOF'
+id=S.1|c1	200000	0	100000	+	>r1>r2	100000	0	100000	100000	100000	60	cg:Z:100000=	rc:Z:chrA
+id=S.1|c1	200000	50000	150000	+	>r3>r4	100000	0	100000	49960	100000	10	cg:Z:49960=50040X	rc:Z:chrA
+EOF
+gaffilter exact_tmp/round.gaf $X --exact-plan exact_tmp/round.plan 2>/dev/null > exact_tmp/round.out
+is $(awk '$3==50000' exact_tmp/round.out | wc -l) 0 "-x: a record whose gi:f: rounds up to -i competes"
+is $(awk '$3==50000 {print $7}' exact_tmp/round.plan) demoted "and is demoted, not passed through as ineligible"
+sed 's/49960	100000	10	cg:Z:49960=50040X/49900	100000	10	cg:Z:49900=50100X/' exact_tmp/round.gaf > exact_tmp/round2.gaf
+gaffilter exact_tmp/round2.gaf $X --exact-plan exact_tmp/round2.plan 2>/dev/null > exact_tmp/round2.out
+is $(awk '$3==50000 {print $7}' exact_tmp/round2.plan) ineligible "one whose gi:f: is under -i is still ineligible"
+
+# a reused GAF resolved against a since-extended graph (cactus --inGAF) can carry path steps its
+# alignment never enters; cactus trims them only after gaffilter, so -x has to cope with them
+printf 'id=S.1|c1\t200000\t0\t100000\t+\t>r1>r2>r3>r4>r5\t250000\t60000\t160000\t100000\t100000\t60\tcg:Z:100000=\trc:Z:chrA\n' > exact_tmp/regran.gaf
+gaffilter exact_tmp/regran.gaf $X > exact_tmp/regran.out 2> exact_tmp/regran.err
+is $? 0 "-x takes a record whose path offsets reach past its end steps"
+is "$(cat exact_tmp/regran.out)" "$(cat exact_tmp/regran.gaf)" "and passes it on unchanged"
+
+# a duplicated record is a warning, not an error: the copies tie, and both go, as in the stock filter
+cat exact_tmp/tier.gaf exact_tmp/tier.gaf > exact_tmp/dup.gaf
+gaffilter exact_tmp/dup.gaf $X > exact_tmp/dup.out 2> exact_tmp/dup.err
+is $? 0 "-x takes duplicated records"
+is $(wc -l < exact_tmp/dup.out) $(gaffilter exact_tmp/dup.gaf -r 5 -m 0.25 -q 5 -b 0 -i 0.5 2>/dev/null | wc -l) "and keeps what the stock filter keeps of them"
+
+# option values that cannot work are refused rather than hanging or placing everything
+gaffilter exact_tmp/guard.gaf $X --exact-ratio 2 --guard --guard-chunk 0 > /dev/null 2> exact_tmp/bad.err
+is $? 1 "-x refuses --guard-chunk 0"
+gaffilter exact_tmp/tier.gaf $X --exact-ratio 0 > /dev/null 2> exact_tmp/bad.err
+is $? 1 "-x refuses --exact-ratio 0"
+
+# ---- excursions on a wider reference: ten 50 kb nodes, and two off-reference 5 kb nodes whose
+# lines the line filter drops (0% identity), which makes the record holding one new there.  The
+# backbone is a forward 150 kb record at each end, a (0-150 kb) and b (350-500 kb); between them the
+# contig is inverted against chrA 150-350 kb
+for i in $(seq 10); do
+    printf "r$i\t50000\tid=REF|chrA\t%d\t0\n" $(( (i - 1) * 50000 ))
+done > exact_tmp/wide.nodes.tsv
+printf 'n0\t5000\tid=S.0|x\t0\t1\nn1\t5000\tid=S.0|y\t0\t1\n' >> exact_tmp/wide.nodes.tsv
+XW="-x -r 5 -m 0.25 -q 5 -b 0 -i 0.5 --exact-nodes exact_tmp/wide.nodes.tsv"
+wide_a() { printf "id=S.1|c1\t$1\t0\t150000\t+\t>r1>r2>r3\t150000\t0\t150000\t150000\t150000\t60\tcg:Z:150000=\trc:Z:chrA\n"; }
+wide_b() { printf "id=S.1|c1\t$1\t$2\t$(( $2 + 150000 ))\t+\t>r8>r9>r10\t150000\t0\t150000\t150000\t150000\t60\tcg:Z:150000=\trc:Z:chrA\n"; }
+
+# R1 takes only new sequence.  v (95% identity as a whole record) is kept by the stock rule, and is
+# new only over its 5 kb on n0.  d loses to v on MAPQ, so is demoted, and fills the rest of the
+# inversion with a 96.7% identical remainder.  That remainder fails the identity floor, so R1 drops
+# the excursion's new sequence under it: all of d's remainder, but of v only its 5 kb, never the
+# stock-anchored rest (--skip-r1ref: otherwise the remainder's reference-node columns drop it first)
+gen_d() { for i in $(seq 4700); do printf '29=1X'; done; }
+{
+    wide_a 500000
+    printf "id=S.1|c1\t500000\t150000\t255000\t-\t>r6>r7>n0\t105000\t0\t105000\t100000\t105000\t60\tcg:Z:100000=5000X\trc:Z:chrA\n"
+    printf "id=S.1|c1\t500000\t209000\t350000\t-\t>r4>r5>r6\t150000\t0\t141000\t136300\t141000\t10\tcg:Z:%s\trc:Z:chrA\n" "$(gen_d)"
+    wide_b 500000 350000
+} > exact_tmp/r1.gaf
+gaffilter exact_tmp/r1.gaf $XW --skip-r1ref --exact-log exact_tmp/r1.log 2>/dev/null > exact_tmp/r1.out
+is "$(awk '$3==150000' exact_tmp/r1.out | grep -o 'kq:Z:[^[:space:]]*')" "kq:Z:155000-255000" "-x R1 cuts only the new stretch of a record the stock rule keeps"
+is "$(awk '$1=="reality" && $7==1 {print $3 "-" $4}' exact_tmp/r1.log)" "150000-155000" "and logs only that stretch"
+is $(awk '$3==209000' exact_tmp/r1.out | wc -l) 0 "the remainder under the floor still goes whole"
+
+# R2:gapped-two.  The inversion is two new pieces, v1 and v2, with 40 kb of query between them that
+# nothing anchors.  It is two-sided and bounded, but the clip downstream removes the 40 kb and leaves
+# v1 and v2 joined on one side each, so it is isolated, not exempt
+{
+    wide_a 500000
+    printf "id=S.1|c1\t500000\t150000\t205000\t-\t>n0>r7\t55000\t0\t55000\t50000\t55000\t60\tcg:Z:5000X50000=\trc:Z:chrA\n"
+    printf "id=S.1|c1\t500000\t245000\t350000\t-\t>r4>r5>n1\t105000\t0\t105000\t100000\t105000\t60\tcg:Z:100000=5000X\trc:Z:chrA\n"
+    wide_b 500000 350000
+} > exact_tmp/gapped.gaf
+gaffilter exact_tmp/gapped.gaf $XW --exact-log exact_tmp/gapped.log 2>/dev/null > exact_tmp/gapped.out
+is $(grep -c 'isolate:R2:gapped-two' exact_tmp/gapped.log) 2 "-x isolates a two-sided excursion with a query gap of --gap inside it"
+is "$(grep -o 'kq:Z:[^[:space:]]*' exact_tmp/gapped.out | tr '\n' ' ')" "kq:Z:181000-205000 kq:Z:245000-319000 " "by trimming both its junctions back by the gap"
+# ...but with only 20 kb between the pieces it is an ordinary bounded two-sided inversion: exempt
+{
+    wide_a 480000
+    printf "id=S.1|c1\t480000\t150000\t205000\t-\t>n0>r7\t55000\t0\t55000\t50000\t55000\t60\tcg:Z:5000X50000=\trc:Z:chrA\n"
+    printf "id=S.1|c1\t480000\t225000\t330000\t-\t>r4>r5>n1\t105000\t0\t105000\t100000\t105000\t60\tcg:Z:100000=5000X\trc:Z:chrA\n"
+    wide_b 480000 330000
+} > exact_tmp/bounded.gaf
+gaffilter exact_tmp/bounded.gaf $XW --junctions exact_tmp/bounded.j 2>/dev/null > exact_tmp/bounded.out
+is $(cmp -s exact_tmp/bounded.out exact_tmp/bounded.gaf && echo same) same "-x keeps a bounded two-sided inversion with a smaller gap inside it whole"
+is $(grep -c 'exempt:bounded-two' exact_tmp/bounded.j) 1 "as exempt"
+
+rm -rf exact_tmp
