@@ -119,6 +119,7 @@ std::vector<std::string> report_header(const Options& opt, const std::string& mi
     o += opt.alt ? strf(" --alt-rounds %d", opt.alt_rounds) : std::string(" --no-alt");
     o += " --walks " + walks;
     if (opt.max_repeat_frac >= 0) o += " --max-repeat-frac " + fmt_exact(opt.max_repeat_frac);
+    if (opt.tandem) o += " --tandem";
     if (opt.detect_only) o += " --detect-only";
     if (opt.check) o += " --check";
     if (opt.strict) o += " --strict";

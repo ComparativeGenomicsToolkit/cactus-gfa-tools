@@ -157,6 +157,8 @@ struct AlignJob {
     // may the piece of `node` land on target [ta, tb)?  (reference pass: Allowed(node) contains it)
     // An empty function allows everything.
     std::function<bool(NodeId node, int64_t ta, int64_t tb)> feasible;
+    bool keep_records = false;         // keep AlignResult::records after chaining (zip_tandem reads them); else
+                                       // only --dump keeps them
 };
 
 // ---------------------------------------------------------------- timing (stderr only)
@@ -239,6 +241,10 @@ private:
 // alt_E, internal, repeat_frac, island-below-b entries in dropped, and outcome ("confident" for a
 // confident chain).  align_reference fills unit rows with it; main uses it for diagnostic rows.
 void fill_align_row(ReportRow& row, const AlignResult& r, int64_t G);
+
+// fraction of a sequence's non-N bases covered by a canonical 16-mer occurring at least twice in it
+// (the window repeat fraction of --max-repeat-frac; zip_tandem uses it on queries)
+double repeat_fraction(const std::string& s);
 
 // `<path> --version` trimmed (e.g. "2.30-r1287"); ZipError(EXIT_INPUT) if it cannot be run.
 std::string minimap2_version(const std::string& path);

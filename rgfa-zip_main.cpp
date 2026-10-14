@@ -26,6 +26,7 @@
     zip_alt     alt-vs-alt (v2): residual excursions, branches, groups, eligibility, rounds
     zip_gaf     GafWalks, the GAF audit
     zip_report  report rows, detect printout, dumps
+    zip_tandem  --tandem: tandem copies beside their insertion point become back links (post-pass)
 */
 #include "zip_common.hpp"
 #include "zip_graph.hpp"
@@ -35,6 +36,7 @@
 #include "zip_edit.hpp"
 #include "zip_alt.hpp"
 #include "zip_gaf.hpp"
+#include "zip_tandem.hpp"
 
 #include <chrono>
 #include <deque>
@@ -87,6 +89,8 @@ const char* const USAGE =
     "  --walks SRC              covering walks: creator | witness | gaf:FILE (v3) [creator]; with gaf:FILE a\n"
     "                           piece is also refused (G) when a GAF record through its node reads its target\n"
     "  --max-repeat-frac FLOAT  skip windows more repetitive than FLOAT, with a report row [off]\n"
+    "  --tandem                 also replace an insertion that is a forward tandem copy of the reference beside\n"
+    "                           it by one back link over that copy, which makes a cycle [off]\n"
     "Modes:\n"
     "  --detect-only            decide and report everything; emit the input graph unchanged\n"
     "  --check                  validators also re-spell every anchored path at sites with <= 5000 paths\n"
@@ -165,7 +169,7 @@ void check_output_paths(const Options& opt) {
 
 enum OptId {
     O_M, O_O, O_R, O_T, O_J, O_B, O_I, O_G, O_MINPIECE, O_ISLAND, O_DELTA, O_TIES, O_FRAG, O_PREFILTER, O_SCREEN,
-    O_MAXPAIR, O_MAXSITEQ, O_MAXSITEN, O_X, O_XX, O_NOALT, O_ALTROUNDS, O_WALKS, O_MAXREP, O_DETECTONLY, O_CHECK,
+    O_MAXPAIR, O_MAXSITEQ, O_MAXSITEN, O_X, O_XX, O_NOALT, O_ALTROUNDS, O_WALKS, O_MAXREP, O_TANDEM, O_DETECTONLY, O_CHECK,
     O_STRICT, O_MEM, O_TMPDIR, O_IDBASE, O_AUDIT, O_REGION, O_STAGE, O_INJECT, O_DUMP, O_VERBOSE, O_HELP
 };
 
@@ -182,7 +186,7 @@ const OptDef OPTS[] = {
     {"--prefilter", O_PREFILTER, true}, {"--screen-sample", O_SCREEN, true}, {"--max-pair", O_MAXPAIR, true},
     {"--max-site-query", O_MAXSITEQ, true}, {"--max-site-nodes", O_MAXSITEN, true}, {"-x", O_X, true},
     {"-X", O_XX, true}, {"--no-alt", O_NOALT, false}, {"--alt-rounds", O_ALTROUNDS, true}, {"--walks", O_WALKS, true},
-    {"--max-repeat-frac", O_MAXREP, true}, {"--detect-only", O_DETECTONLY, false}, {"--check", O_CHECK, false},
+    {"--max-repeat-frac", O_MAXREP, true}, {"--tandem", O_TANDEM, false}, {"--detect-only", O_DETECTONLY, false}, {"--check", O_CHECK, false},
     {"--strict", O_STRICT, false}, {"--mem", O_MEM, true}, {"--tmpdir", O_TMPDIR, true}, {"--id-base", O_IDBASE, true},
     {"--audit-gaf", O_AUDIT, true},
     {"--region", O_REGION, true}, {"--stage", O_STAGE, true}, {"--inject-chains", O_INJECT, true}, {"--dump", O_DUMP, true},
@@ -289,6 +293,7 @@ bool parse_args(int argc, char** argv, Options& opt) {
                 else usage_error("--walks: creator, witness or gaf:FILE");
                 break;
             case O_MAXREP: opt.max_repeat_frac = need_double(name, val, 0.0, 1.0); break;
+            case O_TANDEM: opt.tandem = true; break;
             case O_DETECTONLY: opt.detect_only = true; break;
             case O_CHECK: opt.check = true; break;
             case O_STRICT: opt.strict = true; break;
@@ -387,6 +392,8 @@ struct SiteResult {
     std::string audit_detail;
     AltStats alt;
     uint64_t split_inv = 0;
+    std::vector<TandemEdit> tandem;     // --tandem: the site's accepted components
+    TandemStats tandem_st;
     double seconds = 0;                 // wall time of the site
     AlignTiming timing;                 // its aligner work: minimap2 running, waiting for a -j slot, minimap2's own times
 };
@@ -569,10 +576,13 @@ void process_site(const Graph& g, const Site& s, const WalkSource& src, Aligner*
         r.plan = planner.finish(unit_rows, extra_rows);
         if (opt.alt) alt_tally(alt_rows, r.alt);
         if (audit) r.audit = audit->audit_plan(s, r.plan.zipped, &r.audit_detail);
+        // --tandem: the no-window insertions that copy the reference beside them (after the plan,
+        // which they must not overlap; zip_tandem applies them after apply_plans)
+        if (opt.tandem && aligner) tandem_site(g, sd, r.plan, *aligner, opt, unit_rows, r.tandem, r.tandem_st);
         // --detect-only emits the input graph unchanged: what would have been zipped says so
         if (opt.detect_only) {
             for (ReportRow& row : unit_rows)
-                if (row.outcome == "zipped") row.outcome = "would-zip";
+                if (row.outcome == "zipped") row.outcome = "would-zip";   // tandem_site already wrote would-tandem
             for (ReportRow& row : alt_rows)
                 if (row.outcome == "zipped") row.outcome = "would-zip";
         }
@@ -709,6 +719,7 @@ int run(Options& opt) {
     WalkStats ws;
     GafAuditStats audit_tot;
     AltStats alt_tot;
+    TandemStats tandem_tot;
     uint64_t accepted = 0, accepted_new = 0, reverted = 0, split_inv = 0, g_chains = 0, g_pieces = 0;
     int64_t zipped = 0, g_bp = 0;
     for (const SiteResult& r : results) {
@@ -725,6 +736,7 @@ int run(Options& opt) {
         split_inv += r.split_inv;
         audit_tot.add(r.audit);
         alt_tot.add(r.alt);
+        tandem_tot.add(r.tandem_st);
     }
     uint64_t n_sel = 0;
     for (uint8_t x : selected) n_sel += x;
@@ -773,6 +785,17 @@ int run(Options& opt) {
     else if (opt.stage >= Stage::PLAN)
         ZLOG("accepted %llu chain(s), %lld bp zipped; %llu reverted; %s", (unsigned long long)accepted, (long long)zipped,
              (unsigned long long)reverted, own.c_str());
+    if (opt.tandem && opt.stage >= Stage::PLAN) {
+        std::string why;
+        for (const auto& kv : tandem_tot.why) why += strf("%s%s %llu", why.empty() ? "" : ", ", kv.first.c_str(), (unsigned long long)kv.second);
+        ZLOG("tandem: %llu candidate(s), %llu forward copies (right %llu, left %llu, rotated %llu)%s; %llu component(s) %s (%llu unit(s), "
+             "%llu alt node(s), %lld bp); refused %llu mixed, %llu unwalked, %llu edited by the site's plan",
+             (unsigned long long)tandem_tot.candidates, (unsigned long long)tandem_tot.copies, (unsigned long long)tandem_tot.right,
+             (unsigned long long)tandem_tot.left, (unsigned long long)tandem_tot.rotated, why.empty() ? "" : (", not copies: " + why).c_str(),
+             (unsigned long long)tandem_tot.components, opt.detect_only ? "would be replaced" : "replaced", (unsigned long long)tandem_tot.units,
+             (unsigned long long)tandem_tot.nodes, (long long)tandem_tot.bp, (unsigned long long)tandem_tot.refused_mixed,
+             (unsigned long long)tandem_tot.refused_unwalked, (unsigned long long)tandem_tot.refused_edited);
+    }
     if (audit) ZLOG("%s", audit_tot.summary().c_str());
     if (opt.strict && reverted > 0) fail(EXIT_INVARIANT, strf("--strict: the transaction dropped %llu chain(s)", (unsigned long long)reverted));
     if (opt.strict && audit && !audit_tot.clean()) fail(EXIT_INVARIANT, "--strict: the GAF audit failed");
@@ -784,6 +807,12 @@ int run(Options& opt) {
         for (const SiteResult& r : results)
             if (r.processed) plans.push_back(r.plan);
         apply_plans(g, plans, opt);
+        if (opt.tandem) {
+            std::vector<const std::vector<TandemEdit>*> edits;
+            for (const SiteResult& r : results)
+                if (r.processed) edits.push_back(&r.tandem);
+            apply_tandem(g, edits, opt, tandem_tot);
+        }
     }
     if (write_graph) check_placement(g);
     if (!opt.out_path.empty() && !write_graph) ZLOG("note: --stage stops before the edit; no graph written to %s", opt.out_path.c_str());

@@ -273,6 +273,8 @@ struct Options {
     WalksKind walks = WalksKind::CREATOR;   // --walks creator|witness|gaf:FILE
     std::string gaf_path;
     double max_repeat_frac = -1;     // --max-repeat-frac (negative: off)
+    bool tandem = false;             // --tandem: a post-pass replaces forward tandem copies beside their insertion
+                                     // point by a back link over the reference copy (zip_tandem; makes cycles)
 
     // modes
     bool detect_only = false;        // --detect-only: plan and report, emit the input graph unchanged

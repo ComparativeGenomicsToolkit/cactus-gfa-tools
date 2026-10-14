@@ -42,7 +42,7 @@ if [ -z "$MM2" ] || ! "$MM2" --version > /dev/null 2>&1; then
 fi
 MM2=$(cd "$(dirname "$MM2")" && pwd)/$(basename "$MM2")
 
-plan tests 143
+plan tests 164
 
 T=${RGFA_ZIP_TEST_DIR:-.}/rgfa-zip.t.tmp
 rm -rf $T && mkdir -p $T/tmp
@@ -331,6 +331,10 @@ def Z14():
         t = c.alt(c.mut(c.seq(ids[1]), 0.01), 'HG1#1#c%d' % (k + 1), 1, 0)
         if bk: c.link(ids[-2], '+', t, '+', 1); c.link(t, '+', ids[1], '+', 1)
         else: c.link(ids[-2], '+', t, '+', 1); c.link(t, '+', ids[-1], '+', 1)
+        if k == 0:
+            # the copy beside its source; its image is the --tandem one (r2's self-loop), the default
+            # run leaves the graph unchanged (checked with `same`)
+            c.walk('HG1', [ids[0] + '+', ids[1] + '+', t + '+', ids[2] + '+'], c.seq(ids[0]) + c.seq(ids[1]) * 2 + c.seq(ids[2]))
     return c
 
 @case
@@ -340,7 +344,9 @@ def Z15():
     r1, r2, r3 = c.ref([c.rnd(2000), c.rnd(13000), c.rnd(2000)])
     x = c.alt(c.mut(rc(c.seq(r2)[:12878] + c.seq(r1)[-117:]), 0.0085))      # walked '-': r2's start, then r1's end
     c.link(r1, '+', x, '-', 1); c.link(x, '-', r2, '+', 1)
-    c.walk('HG1', [r1 + '+', x + '-', r2 + '+', r3 + '+'])
+    # the walk's image is the --tandem one (a forward loop over r1's last 117 bp and r2's first 12,878);
+    # the default run leaves the graph unchanged, which is checked with `same`
+    c.walk('HG1', [r1 + '+', x + '-', r2 + '+', r3 + '+'], c.seq(r1) + c.seq(r2)[:12878] + c.seq(r1)[-117:] + c.seq(r2) + c.seq(r3))
     return c
 
 # ---------------------------------------------------------------- Z16-Z17: copy number
@@ -1021,6 +1027,160 @@ def Ztr():
     for k in range(520): c.inject.append('s1..s3:ref:0\trecord\t0\t100\t+\t%d\t%d\t100M' % (2000 + 100 * k, 2100 + 100 * k))
     return c
 
+# ---------------------------------------------------------------- --tandem: forward tandem copies
+def zt1(name, novel):
+    # an insertion run of 3 nodes that copies B, inserted before B (r1 | B), and a second haplotype's
+    # bubble on its middle node: one alt component.  With --tandem both haplotypes are right copies of
+    # B; the component goes and B gets a self-loop.  Zt1m: the bubble is novel sequence, so that
+    # haplotype is not a copy and the component stays.
+    c = Case(name, 6100)
+    r1, B, r4 = c.ref([c.rnd(3000), c.rnd(9000), c.rnd(3000)])
+    Bs = c.seq(B)
+    X = c.mut(Bs, 0.003)
+    x = c.chain_run([X[:3000], X[3000:6000], X[6000:]], 'HG1#1#c1', 1, r1, B)
+    y = c.alt(c.rnd(3000) if novel else c.mut(X[3000:6000], 0.003), 'HG2#1#c2', 2, 0)
+    c.link(x[0], '+', y, '+', 2); c.link(y, '+', x[2], '+', 2)
+    loop = c.seq(r1) + Bs + Bs + c.seq(r4)
+    c.walk('HG1', [r1 + '+'] + [n + '+' for n in x] + [B + '+', r4 + '+'], None if novel else loop)
+    c.walk('HG2', [r1 + '+', x[0] + '+', y + '+', x[2] + '+', B + '+', r4 + '+'], None if novel else loop)
+    c.walk('REF', [r1 + '+', B + '+', r4 + '+'])
+    return c
+
+@case
+def Zt1(): return zt1('Zt1', False)
+@case
+def Zt1m(): return zt1('Zt1m', True)
+
+@case
+def Zt2():
+    # F units (a 3 kb window w, under ceil(b*i)): on chr1 the allele is a copy of B, the reference after
+    # the window, so the haplotype lacks w: skip r1 -> B and B's self-loop.  On chr2 it is w + B's
+    # first 6 kb, a copy that starts at the window: one back link from B's offset 6000 to B, no skip.
+    c = Case('Zt2', 6200)
+    for k in (1, 2):
+        r1, w, B, r4 = c.ref([c.rnd(3000), c.rnd(3000), c.rnd(9000), c.rnd(3000)], sn='REF#0#chr%d' % k)
+        Bs, ws = c.seq(B), c.seq(w)
+        if k == 1:
+            a = c.alt(c.mut(Bs, 0.003), 'HG1#1#c1', 1, 0)
+            after = c.seq(r1) + Bs + Bs + c.seq(r4)
+        else:
+            a = c.alt(c.mut(ws + Bs[:6000], 0.003), 'HG2#1#c2', 1, 0)
+            after = c.seq(r1) + ws + Bs[:6000] + Bs + c.seq(r4)
+        c.link(r1, '+', a, '+', 1); c.link(a, '+', B, '+', 1)
+        c.walk('HG%d' % k, [r1 + '+', a + '+', B + '+', r4 + '+'], after)
+    return c
+
+@case
+def Zt3():
+    # rotation: inserted between B1 and B2, the copy reads the unit B1 B2 from the insertion point (B2,
+    # then B1): one back link from B2's end to B1's start
+    c = Case('Zt3', 6300)
+    r1, B1, B2, r4 = c.ref([c.rnd(3000), c.rnd(7000), c.rnd(6000), c.rnd(3000)])
+    a = c.alt(c.mut(c.seq(B2) + c.seq(B1), 0.003))
+    c.link(B1, '+', a, '+', 1); c.link(a, '+', B2, '+', 1)
+    c.walk('HG1', [r1 + '+', B1 + '+', a + '+', B2 + '+', r4 + '+'], c.seq(r1) + (c.seq(B1) + c.seq(B2)) * 2 + c.seq(r4))
+    return c
+
+@case
+def Zt4():
+    # refused by --tandem: two copies of B in one insertion after B (chr1: multi-copy is not handled),
+    # and an inverted copy of B after B (chr2: its loop would be a fold-back)
+    c = Case('Zt4', 6400)
+    for k in (1, 2):
+        r1, B, r4 = c.ref([c.rnd(3000), c.rnd(7000), c.rnd(3000)], sn='REF#0#chr%d' % k)
+        Bs = c.seq(B)
+        a = c.alt(c.mut(Bs, 0.003) + c.mut(Bs, 0.003) if k == 1 else c.mut(rc(Bs), 0.003), 'HG1#1#c%d' % k, 1, 0)
+        c.link(B, '+', a, '+', 1); c.link(a, '+', r4, '+', 1)
+    return c
+
+@case
+def Zt5():
+    # the copy's loop ends at the end of the reference: B, the last reference node, copied before itself
+    c = Case('Zt5', 6500)
+    r1, B = c.ref([c.rnd(3000), c.rnd(9000)])
+    a = c.alt(c.mut(c.seq(B), 0.003))
+    c.link(r1, '+', a, '+', 1); c.link(a, '+', B, '+', 1)
+    c.walk('HG1', [r1 + '+', a + '+', B + '+'], c.seq(r1) + c.seq(B) * 2)
+    return c
+
+@case
+def Zt6():
+    # a rotated copy whose tail carries 1.5 kb of novel sequence inside one record (an I run): not a copy
+    c = Case('Zt6', 6600)
+    r1, B1, B2, r4 = c.ref([c.rnd(3000), c.rnd(4000), c.rnd(6000), c.rnd(3000)])
+    b1 = c.seq(B1)
+    a = c.alt(c.mut(c.seq(B2), 0.003) + b1[:2000] + c.rnd(1500) + b1[2000:])
+    c.link(B1, '+', a, '+', 1); c.link(a, '+', B2, '+', 1)
+    return c
+
+@case
+def Zt7():
+    # alt-vs-alt (default v2) zips M (300 bp of novel sequence, then a copy of B) onto R (a copy of B),
+    # keeping M's 300 bp with links onto R: R's component is touched by the plan, so --tandem refuses it
+    c = Case('Zt7', 6700)
+    r1, B, r4 = c.ref([c.rnd(3000), c.rnd(9000), c.rnd(3000)])
+    R = c.alt(c.mut(c.seq(B), 0.003), 'HG1#1#c1', 1, 0)
+    M = c.alt(c.rnd(300) + c.mut(c.seq(B), 0.01), 'HG3#1#c3', 3, 0)
+    for x, sr in ((R, 1), (M, 3)): c.link(r1, '+', x, '+', sr); c.link(x, '+', B, '+', sr)
+    return c
+
+@case
+def Zt8():
+    # Zt1's component plus a 3 kb novel tip hanging off its first node (a contig ending inside the
+    # insertion): an unanchored run that no walk covers, so the component is refused
+    c = Case('Zt8', 6100)
+    r1, B, r4 = c.ref([c.rnd(3000), c.rnd(9000), c.rnd(3000)])
+    X = c.mut(c.seq(B), 0.003)
+    x = c.chain_run([X[:3000], X[3000:6000], X[6000:]], 'HG1#1#c1', 1, r1, B)
+    y = c.alt(c.rnd(3000), 'HG2#1#c2', 2, 0)
+    c.link(x[0], '+', y, '+', 2)
+    return c
+
+@case
+def Zt9():
+    # F left copy: B's copy replaces the 3 kb window w after B (the haplotype lacks w): the back link
+    # B -> B plus the skip B -> r4
+    c = Case('Zt9', 6900)
+    r1, B, w, r4 = c.ref([c.rnd(3000), c.rnd(9000), c.rnd(3000), c.rnd(3000)])
+    a = c.alt(c.mut(c.seq(B), 0.003))
+    c.link(B, '+', a, '+', 1); c.link(a, '+', r4, '+', 1)
+    c.walk('HG1', [r1 + '+', B + '+', a + '+', r4 + '+'], c.seq(r1) + c.seq(B) * 2 + c.seq(r4))
+    return c
+
+@case
+def Zt10():
+    # rotation whose tail record starts before the chain ends: B2 and r1 end in the same 300 bp, so B1's
+    # record extends 300 bp into the copy of B2 and is clipped where the chain (the head, B2) ends
+    c = Case('Zt10', 7000)
+    S = c.rnd(300)
+    r1, B1, B2, r4 = c.ref([c.rnd(2700) + S, c.rnd(6000), c.rnd(6700) + S, c.rnd(3000)])
+    a = c.alt(c.mut(c.seq(B2), 0.003) + c.mut(c.seq(B1), 0.003))
+    c.link(B1, '+', a, '+', 1); c.link(a, '+', B2, '+', 1)
+    c.walk('HG1', [r1 + '+', B1 + '+', a + '+', B2 + '+', r4 + '+'], c.seq(r1) + (c.seq(B1) + c.seq(B2)) * 2 + c.seq(r4))
+    return c
+
+@case
+def Zt11():
+    # a 3-unit array (10 kb units, 1% apart) with two sites: HG2's insertion at U1|U2 is a right copy
+    # of U2 (loop [13000, 23000)); HG1's, 3 kb into U2, is a right copy of U2[3000:] + U3[:3000] (loop
+    # [16000, 26000)).  Same period, 7 kb overlap, and the 3 kb phase difference reads the same a unit
+    # later (U2[:3000] against U3[:3000]): one route, so only the first loop is added
+    c = Case('Zt11', 7100)
+    u = c.rnd(10000)
+    U2 = c.mut(u, 0.01)
+    r1, U1, U2a, U2b, U3, r4 = c.ref([c.rnd(3000), u, U2[:3000], U2[3000:], c.mut(u, 0.01), c.rnd(3000)], snarl=False)
+    c.snarls += [(U1, U2a), (U2a, U2b)]
+    s3 = c.seq(U3)
+    Y = c.alt(c.mut(U2, 0.001), 'HG2#1#c2', 2, 0)
+    X = c.alt(c.mut(U2[3000:] + s3[:3000], 0.001), 'HG1#1#c1', 1, 0)
+    c.link(U1, '+', Y, '+', 2); c.link(Y, '+', U2a, '+', 2)
+    c.link(U2a, '+', X, '+', 1); c.link(X, '+', U2b, '+', 1)
+    R = ''.join(c.seq(n) for n in (r1, U1, U2a, U2b, U3, r4))
+    after = R[:23000] + R[13000:]
+    c.walk('HG1', [U1 + '+', U2a + '+', X + '+', U2b + '+', U3 + '+'], after[3000:-3000])
+    c.walk('HG2', [U1 + '+', Y + '+', U2a + '+', U2b + '+', U3 + '+'], after[3000:-3000])
+    return c
+
 def main():
     os.makedirs(T, exist_ok=True)
     for f in cases:
@@ -1619,6 +1779,50 @@ is "$(ex Z24 timing)/$(cmp -s $T/Z24/run.gfa $T/Z24/timing.gfa && echo same)/$(g
 # the 500 sub-record cap is in the report row (it was a stderr counter only)
 zip Ztr run $(inj Ztr) -b 100 --min-piece 100
 is "$(ex Ztr run)/$(q row Ztr run HG1#1#c1 dropped)/$(grep -c ' 1 truncated at 500 sub-records' $T/Ztr/run.err)" "0/truncated:500/520-sub-records/1" "truncation: a unit with 520 feasible sub-records says in its row that the chain was chosen among the best 500"
+
+# ---- --tandem: a long insertion that is a forward tandem copy of the reference beside it becomes a back link
+zip Zt1 off --no-alt
+zip Zt1 tan --no-alt --tandem
+is "$(q col Zt1 off outcome)/$(q same Zt1 off)" "no-window no-window/same" "--tandem off: a copy inserted before its source stays an insertion (no-window); output = input"
+is "$(q col Zt1 tan outcome)/$(q col Zt1 tan frame)/$(q col Zt1 tan label)/$(q col Zt1 tan kept_bp)" "tandem tandem/T T/right right/12000 0" "--tandem: both haplotypes through the component are right copies of B; its 12 kb are kept_bp once"
+is "$(q alt Zt1 tan)/$(q extra Zt1 tan)/$(q fscc Zt1 tan)/$(q back Zt1 tan)/$(q walks Zt1 tan)" "/s2+s2+/1/1/ok" "--tandem: all 4 alt nodes go and B gets a self-loop (one forward SCC, one back edge); both walks spell r1 B B r4"
+is "$(grep -o 'tandem edit: .*' $T/Zt1/tan.err)" "tandem edit: 1 component(s): 4 alt node(s) and 6 link(s) removed; 1 back link(s) (0 more were the same loop as one of them), 0 skip link(s) added (0 already there); loop ends: 0 snapped within -G, 0 reference node(s) split" "--tandem: the log counts the edit"
+is "$(grep -c -- '--tandem' $T/Zt1/tan.tsv)/$(grep -c -- '--tandem' $T/Zt1/off.tsv)" "1/0" "--tandem is in the report header's options"
+zip Zt1 det --no-alt --tandem --detect-only
+is "$(q col Zt1 det outcome)/$(q same Zt1 det)" "would-tandem would-tandem/same" "--tandem --detect-only: would-tandem, graph unchanged"
+zip Zt1m tan --no-alt --tandem
+is "$(q col Zt1m tan outcome)/$(q col Zt1m tan dropped)/$(q same Zt1m tan)" "tandem-refused:mixed no-window/. tandem:below-b/same" "--tandem: a component with a haplotype that is not a copy (novel bubble) is refused whole"
+zip Zt2 tan --no-alt --tandem
+is "$(q col Zt2 tan outcome)/$(q col Zt2 tan label)/$(q units Zt2 tan kind)" "tandem tandem/right right/F F" "--tandem: F units whose window is under ceil(b*i)"
+is "$(q extra Zt2 tan)/$(q cuts Zt2 tan s8)/$(q walks Zt2 tan)" "s1+s3+ s11+s11+ s3+s3+/6000/ok" "--tandem: a copy after the window skips it (s1+s3+) and loops on B; a copy starting at the window loops back from B's offset 6000, no skip"
+zip Zt3 tan --no-alt --tandem
+is "$(q col Zt3 tan outcome)/$(q col Zt3 tan label)/$(q extra Zt3 tan)/$(q walks Zt3 tan)" "tandem/rotated/s3+s2+/ok" "--tandem: a rotated copy (B2 then B1, inserted between them) is one back link B2 -> B1; the walk spells B1 B2 B1 B2"
+zip Zt4 tan --no-alt --tandem
+is "$(q col Zt4 tan outcome)/$(q col Zt4 tan dropped)/$(q same Zt4 tan)" "no-window no-window/tandem:self-repeat:0.994 tandem:strand/same" "--tandem: two copies in one insertion (mostly its own repeats: not aligned), and an inverted copy, are refused (no fold-back)"
+zip Z14 tan --no-alt --tandem
+is "$(q col Z14 tan outcome)/$(q extra Z14 tan | tr ' ' '\n' | grep -c '^s2+s2+$')/$(q back Z14 tan)/$(q walks Z14 tan)" "tandem no-window no-window no-window no-window/1/1/ok" "--tandem on Z14: the copy beside its source loops (s2 self-link); copies after 200 bp and 2 kb spacers and the BK forms are untouched"
+zip Z15 tan --no-alt --tandem
+is "$(q col Z15 tan outcome)/$(q col Z15 tan label)/$(q extra Z15 tan)/$(q fscc Z15 tan)/$(q walks Z15 tan)" "tandem/rotated/s5+s8+/1/ok" "--tandem on Z15 (16p11.2 shape): a forward loop from r2's offset 12,878 back to r1's last 117 bp, not a fold-back"
+zip Zt2 t2 --no-alt --tandem -t 2 -j 2
+is "$(cmp -s $T/Zt2/tan.gfa $T/Zt2/t2.gfa && cmp -s $T/Zt2/tan.tsv $T/Zt2/t2.tsv && echo same)" "same" "--tandem: output and report identical at -t 2"
+
+# review regressions: loop at the end of the reference, novel sequence in a rotation's record, alt-vs-alt
+# plan links, unwalked nodes, F left copy with its skip, a clipped rest record, equivalent loops
+zip Zt5 tan --no-alt --tandem
+is "$(ex Zt5 tan)/$(q col Zt5 tan outcome)/$(q col Zt5 tan label)/$(q extra Zt5 tan)/$(q walks Zt5 tan)" "0/tandem/right/s2+s2+/ok" "--tandem: a loop that ends at the end of the reference (B is the last node) closes on B"
+zip Zt6 tan --no-alt --tandem
+is "$(q col Zt6 tan outcome)/$(q col Zt6 tan dropped)/$(q same Zt6 tan)" "no-window/tandem:novel/same" "--tandem: 1.5 kb of novel sequence inside a rotation's tail record (an I run) is unaligned: not a copy"
+zip Zt7 alt
+zip Zt7 alttan --tandem
+is "$(q col Zt7 alttan outcome)/$(cmp -s $T/Zt7/alt.gfa $T/Zt7/alttan.gfa && echo same)/$(grep -o '[0-9]* edited by the site.s plan' $T/Zt7/alttan.err)" "tandem-refused:edited no-window zipped/same/1 edited by the site's plan" "--tandem with alt-vs-alt: R is the uncut representative of M's zip and keeps M's links, so its component is refused; output = the alt-only run"
+zip Zt8 tan --no-alt --tandem
+is "$(q col Zt8 tan outcome)/$(q same Zt8 tan)" "tandem-refused:unwalked/same" "--tandem: a component with a node no walk covers (a novel unanchored tip) is refused"
+zip Zt9 tan --no-alt --tandem
+is "$(q col Zt9 tan outcome)/$(q col Zt9 tan label)/$(q extra Zt9 tan)/$(q walks Zt9 tan)" "tandem/left/s2+s2+ s2+s4+/ok" "--tandem: an F left copy that lacks its window: B's self-loop and the skip B -> r4"
+zip Zt10 tan --no-alt --tandem
+is "$(q col Zt10 tan label)/$(q col Zt10 tan blocks | cut -d';' -f2 | cut -d: -f1,2)/$(q extra Zt10 tan)/$(q walks Zt10 tan)" "rotated/7000-13000:3000-9000/s3+s2+/ok" "--tandem: a rotation's tail record that starts inside the chain is clipped where the chain ends (B1 from 3000)"
+zip Zt11 tan --no-alt --tandem
+is "$(q col Zt11 tan outcome)/$(q extra Zt11 tan)/$(q walks Zt11 tan)/$(grep -o '[0-9]* more were the same loop' $T/Zt11/tan.err)" "tandem tandem/s4+s3+/ok/1 more were the same loop" "--tandem: two copies of one array unit at phases 3 kb apart get one loop, and both haplotypes take it"
 
 # keep the outputs of a failed run (or with KEEP set) for inspection
 failed=0

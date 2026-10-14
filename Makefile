@@ -110,7 +110,7 @@ gaffilter: gaffilter_main.o gafkluge.hpp paf.hpp IntervalTree.h
 	$(CXX) $(INCLUDE_FLAGS) $(CXXFLAGS) $(CPPFLAGS) -o gaffilter gaffilter_main.cpp $(INC_FLAGS)
 
 # rgfa-zip: its objects build warning-clean with -Wall -Wextra.
-ZIP_OBJS = rgfa-zip_main.o zip_graph.o zip_site.o zip_report.o zip_align.o zip_edit.o zip_alt.o zip_gaf.o
+ZIP_OBJS = rgfa-zip_main.o zip_graph.o zip_site.o zip_report.o zip_align.o zip_edit.o zip_alt.o zip_gaf.o zip_tandem.o
 ZIP_WARN = -Wall -Wextra
 
 rgfa-zip: $(ZIP_OBJS)

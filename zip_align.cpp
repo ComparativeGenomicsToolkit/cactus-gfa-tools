@@ -1203,8 +1203,6 @@ void chain_records(const QueryLayout& ql, int64_t tlo, int64_t thi, const Feasib
 
 // ================================================================ the aligner
 
-namespace {
-
 // fraction of the window's non-N bases covered by a canonical 16-mer occurring at least twice
 double repeat_fraction(const std::string& s) {
     const int k = REPEAT_K;
@@ -1241,6 +1239,9 @@ double repeat_fraction(const std::string& s) {
     return (double)cov / (double)nonN;
 }
 
+namespace {
+
+
 // one unit or job to align
 struct Item {
     std::string key, alt_key;          // injection keys
@@ -1248,6 +1249,7 @@ struct Item {
     AlignTarget target;
     FeasibleFn feasible;
     AlignResult* res = nullptr;
+    bool keep_records = false;         // AlignJob::keep_records
 };
 
 struct WinQuery {
@@ -1567,7 +1569,7 @@ struct Aligner::Impl {
         // after chaining, only the count (the report) and --dump need the records: drop their op
         // vectors (at chr1:2.65, 41,549 records and 99 M ops, 0.9 of rgfa-zip's 1.5 GB)
         r.n_records = (int64_t)r.records.size();
-        if (opt.dump_dir.empty()) std::vector<PafRecord>().swap(r.records);
+        if (opt.dump_dir.empty() && !it.keep_records) std::vector<PafRecord>().swap(r.records);
     }
 
     // ------------------------------------------------------------ injection
@@ -1607,7 +1609,7 @@ struct Aligner::Impl {
             chain_records(ql, tlo, thi, it.feasible, opt, r);
             if (r.chain.truncated) ++n_truncated;   // as finish_item
             if (r.outcome.empty()) ++n_confident;
-            if (opt.dump_dir.empty()) std::vector<PafRecord>().swap(r.records);   // as finish_item
+            if (opt.dump_dir.empty() && !it.keep_records) std::vector<PafRecord>().swap(r.records);   // as finish_item
             return;
         }
         ChainResult& ch = r.chain;
@@ -1626,7 +1628,7 @@ struct Aligner::Impl {
         make_pieces(ql, ch);
         r.outcome = "";
         ++n_confident;
-        if (opt.dump_dir.empty()) std::vector<PafRecord>().swap(r.records);
+        if (opt.dump_dir.empty() && !it.keep_records) std::vector<PafRecord>().swap(r.records);
     }
 
     void read_inject(const std::string& path) {
@@ -2028,6 +2030,7 @@ void Aligner::align_jobs(const Graph& g, const std::vector<AlignJob>& jobs, std:
         items[i].target = jobs[i].target;
         items[i].feasible = jobs[i].feasible;
         items[i].res = &res[i];
+        items[i].keep_records = jobs[i].keep_records;
     }
     I.run_items(g, items, jobs[0].key + ".jobs");
 }
