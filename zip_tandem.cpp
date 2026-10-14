@@ -33,6 +33,10 @@ void TandemStats::add(const TandemStats& o) {
     equivalent += o.equivalent;
     snapped += o.snapped;
     splits += o.splits;
+    foreign_links += o.foreign_links;
+    foreign_existing += o.foreign_existing;
+    foreign_lost += o.foreign_lost;
+    foreign_snapped += o.foreign_snapped;
 }
 
 double global_identity(const std::string& a, const std::string& b) {
@@ -91,6 +95,14 @@ struct Copy {
     std::vector<std::pair<int64_t, int64_t>> skip;   // (p1, p2): the window skip, when the haplotype lacks the window
     std::string extra;                 // the rotation's other block (head or tail), formatted like a chain block
     int64_t extra_q = 0;               // ... and its query bp
+    // where the query lies on the reference (copy_pos): right U = ref[s, d), left U = ref[c, e),
+    // rotated U[0, jq) = ref[s, d) and U[jq, Q) = ref[c, e); one of a rotation's pieces is the chain,
+    // the other the record rest (or, when rest < 0, an unaligned short stretch read base for base)
+    int64_t Q = 0, s = -1, d = -1, c = -1, e = -1, jq = -1;
+    int64_t p1 = 0, p2 = 0;            // the insertion point: the copy is between end(dep) and start(arr)
+    bool chain_head = true;            // rotated: the chain is U[0, jq)
+    int rest = -1;                     // rotated: index of the rest's record
+    size_t res = 0;                    // index of the candidate's AlignResult (set by tandem_site)
 };
 
 bool near(int64_t x, int64_t y, int64_t tol) { return x >= y - tol && x <= y + tol; }
@@ -98,11 +110,11 @@ bool near(int64_t x, int64_t y, int64_t tol) { return x >= y - tol && x <= y + t
 // candidates whose query is more repetitive than this (repeat_fraction) are not aligned
 const double TANDEM_MAX_SELF_REPEAT = 0.5;
 
-// the target position of query position x on a '+' record (left-snap: a D run starting exactly at x
-// is not consumed), qs <= x <= qe
-int64_t project_record(const PafRecord& r, int64_t x) {
-    int64_t q = r.qs, t = r.ts;
-    for (const CigarOp& op : r.ops) {
+// the target position of query position x on a '+' alignment starting at (qs, ts) (left-snap: a D run
+// starting exactly at x is not consumed), x >= qs
+int64_t project_ops(int64_t qs, int64_t ts, const std::vector<CigarOp>& ops, int64_t x) {
+    int64_t q = qs, t = ts;
+    for (const CigarOp& op : ops) {
         if (q >= x) break;
         if (op.op == 'D') { t += op.len; continue; }
         int64_t take = std::min<int64_t>(op.len, x - q);
@@ -111,6 +123,9 @@ int64_t project_record(const PafRecord& r, int64_t x) {
     }
     return t;
 }
+
+// the same on a '+' record, qs <= x <= qe
+int64_t project_record(const PafRecord& r, int64_t x) { return project_ops(r.qs, r.ts, r.ops, x); }
 
 // The '+' record (identity >= -i, aligned query >= --min-piece) that carries the rest of a rotated
 // copy: the tail from about q to the query end, ending at p1 or p2 (tail), or the head from the
@@ -206,6 +221,9 @@ Copy copy_shape(const Graph& g, int32_t sn, const Unit& u, const AlignResult& r,
             s = ps;
             d = t1;
             int k = rest_record(r, opt, true, q1, Q, p1, p2, e);
+            cp.jq = q1;
+            cp.chain_head = true;
+            cp.rest = k;
             if (k >= 0) {
                 const PafRecord& x = r.records[(size_t)k];
                 c = x.qs >= q1 ? x.ts : project_record(x, q1);
@@ -230,6 +248,9 @@ Copy copy_shape(const Graph& g, int32_t sn, const Unit& u, const AlignResult& r,
             e = pe;
             c = t0;
             int k = rest_record(r, opt, false, q0, Q, p1, p2, s);
+            cp.jq = q0;
+            cp.chain_head = false;
+            cp.rest = k;
             if (k >= 0) {
                 const PafRecord& x = r.records[(size_t)k];
                 d = x.qe <= q0 ? x.te : project_record(x, q0);
@@ -263,8 +284,72 @@ Copy copy_shape(const Graph& g, int32_t sn, const Unit& u, const AlignResult& r,
     if (cp.loop < opt.b) { cp.why = "short-loop"; return cp; }
     // the copy is at least half of the loop: a few blocks spread over a long stretch are not a copy
     if (cp.loop > 2 * Q) { cp.why = "sparse"; return cp; }
+    cp.Q = Q;
+    cp.p1 = p1;
+    cp.p2 = p2;
+    cp.s = s;
+    cp.d = d;
+    cp.c = c;
+    cp.e = e;
     cp.ok = true;
     return cp;
+}
+
+// The reference position that offset o of a copy's query lands on, as a side of the reference copy:
+// entry (the walk enters the copy at o: the L side of the reference node starting there) or exit (it
+// leaves at o: the R side of the one ending there).  The ends of the query and a rotation's junction
+// are the shape's own ends (entry at 0: s or c; exit at Q: d or e; at the junction: exit d, entry c),
+// so the creator's walk would get exactly the links the shape adds.  Inside, o projects through the
+// piece's alignment (the chain's parts, or the rest's record); between or beyond its blocks it carries
+// on from the nearest block before (else after) -- an entry from the block after it (else before):
+// in a query insertion the haplotype's next reference base is the next block's -- and stays inside the
+// piece's reference stretch.  A port within G of its stretch's far end would snap onto, or across,
+// the loop's or the skip's own end (apply_tandem snaps moved ends like loop ends): it is the shape's
+// continuation there instead, at the cost of <= G bp of the copy (an entry near the end of a
+// rotation's head is c, else p2: the walk goes on after the copy; an exit near the start of a
+// rotation's tail is d, else p1: the walk came from before the copy).
+int64_t copy_pos(const Copy& cp, const AlignResult& r, int64_t o, bool entry, int64_t G) {
+    const bool rot = cp.shape == "rotated";
+    if (rot && o == cp.jq) return entry ? cp.c : cp.d;
+    const bool A = !rot || o < cp.jq;       // in U[0, jq) (or the whole query)
+    const int64_t qa = A ? 0 : cp.jq, qb = A && rot ? cp.jq : cp.Q;
+    const int64_t ta = cp.shape == "left" || !A ? cp.c : cp.s, tb = cp.shape == "left" || (rot && !A) ? cp.e : cp.d;
+    if (entry && o == qa) return ta;
+    if (!entry && o == qb) return tb;
+    // the piece's blocks: (qs, qe, ts) and how to project inside one
+    struct Blk { int64_t qs, qe, ts, te; const std::vector<CigarOp>* ops; int64_t ops_qs, ops_ts; };
+    std::vector<Blk> blk;
+    if (!rot || A == cp.chain_head) {
+        for (const ChainPart& p : r.chain.parts) blk.push_back(Blk{p.qs, p.qe, p.ts, p.te, &p.ops, p.qs, p.ts});
+    } else if (cp.rest >= 0) {
+        const PafRecord& x = r.records[(size_t)cp.rest];
+        const int64_t bqs = std::max(qa, x.qs), bqe = std::min(qb, x.qe);
+        if (bqs < bqe) blk.push_back(Blk{bqs, bqe, project_record(x, bqs), project_record(x, bqe), &x.ops, x.qs, x.ts});
+    } else {
+        blk.push_back(Blk{qa, qb, ta, ta + (qb - qa), nullptr, 0, 0});
+    }
+    int64_t t = -1;
+    const Blk* before = nullptr;
+    const Blk* after = nullptr;
+    for (const Blk& b : blk) {
+        // an entry at a block's end belongs to the next block (at a.qe == b.qs it is b's first base)
+        if (b.qs <= o && (entry ? o < b.qe : o <= b.qe)) {
+            t = b.ops ? project_ops(b.ops_qs, b.ops_ts, *b.ops, o) : b.ts + (o - b.qs);
+            break;
+        }
+        if (entry ? b.qe <= o : b.qe < o) before = &b;
+        else if (!after) after = &b;
+    }
+    if (t < 0) {
+        const int64_t from_before = before ? before->te + (o - before->qe) : -1;
+        const int64_t from_after = after ? after->ts - (after->qs - o) : -1;
+        if (entry) t = after ? from_after : before ? from_before : ta + (o - qa);
+        else t = before ? from_before : after ? from_after : ta + (o - qa);
+    }
+    t = std::max(ta, std::min(tb, t));
+    if (entry && t >= tb - G) return rot && A ? cp.c : cp.p2;
+    if (!entry && t <= ta + G) return rot && !A ? cp.d : cp.p1;
+    return t;
 }
 
 } // namespace
@@ -327,6 +412,7 @@ void tandem_site(const Graph& g, const SiteData& sd, const SitePlan& plan, Align
     for (size_t k = 0; k < cand.size(); ++k) {
         const Unit& u = sd.units[cand[k]];
         Copy cp = copy_shape(g, s.sn, u, res[k], flank[k].first, flank[k].second, opt);
+        cp.res = k;
         if (!cp.ok) {
             unit_rows[u.id].dropped = "tandem:" + cp.why;
             ++st.why[cp.why];
@@ -439,6 +525,57 @@ void tandem_site(const Graph& g, const SiteData& sd, const SitePlan& plan, Align
             first = false;
             ++st.units;
         }
+        // Links of other haplotypes on the component: a later haplotype can enter or leave a copy
+        // part way (a deletion that reuses the copy's tail), which no unit walks.  Each side of a walked
+        // node is a port: the reference position its offset in the copy lands on (copy_pos).  Every
+        // link on the component that is not a unit's own (its anchors and steps) moves its component
+        // end(s) to their port, so the haplotype is spelled through the reference copy.
+        std::unordered_set<LinkKey, LinkKeyHash> own;
+        std::unordered_map<Side, std::pair<int64_t, bool>> port;   // side -> (position, R side)
+        for (uint32_t id : us) {
+            const Unit& u = sd.units[id];
+            const Copy& cp = copies[id];
+            const std::vector<Handle>& w = u.exc.alts;
+            own.insert(link_key(exit_side(u.exc.dep), entry_side(w.front())));
+            own.insert(link_key(exit_side(w.back()), entry_side(u.exc.arr)));
+            int64_t o = 0;
+            for (size_t i = 0; i < w.size(); ++i) {
+                if (i + 1 < w.size()) own.insert(link_key(exit_side(w[i]), entry_side(w[i + 1])));
+                const int64_t L = g.len(handle_node(w[i]));
+                port.emplace(entry_side(w[i]), std::make_pair(copy_pos(cp, res[cp.res], o, true, opt.G), false));
+                port.emplace(exit_side(w[i]), std::make_pair(copy_pos(cp, res[cp.res], o + L, false, opt.G), true));
+                o += L;
+            }
+        }
+        std::set<uint32_t> incident;
+        for (NodeId n : comp)
+            for (int o = 0; o < 2; ++o)
+                for (const Edge& e : g.out(make_handle(n, o == 1))) incident.insert(e.link);
+        for (uint32_t li : incident) {
+            const Link& l = g.links[li];
+            if (own.count(link_key(l.a, l.b))) continue;
+            TandemLink t;
+            t.sr = l.sr;
+            for (int z = 0; z < 2; ++z) {
+                const Side x = z ? l.b : l.a;
+                const NodeId n = side_node(x);
+                TandemEnd& te = z ? t.b : t.a;
+                auto it = port.find(x);
+                if (it != port.end()) {
+                    te.sn = s.sn;
+                    te.pos = it->second.first;
+                    te.right = it->second.second;
+                } else if (g.nodes[n].sr == 0) {
+                    // a reference side, by position (the plans may split its node)
+                    te.sn = g.nodes[n].sn;
+                    te.pos = side_is_right(x) ? g.end(n) : g.start(n);
+                    te.right = side_is_right(x);
+                } else {
+                    te.side = x;
+                }
+            }
+            ed.foreign.push_back(t);
+        }
         ++st.components;
         st.nodes += comp.size();
         st.bp += bp;
@@ -491,7 +628,7 @@ void apply_tandem(Graph& g, const std::vector<const std::vector<TandemEdit>*>& e
         return k - 1;
     };
     // a reference boundary at pos: snap to one within G (if allowed), or split the node there
-    auto boundary = [&](int32_t sn, int64_t pos, bool snap_ok) -> int64_t {
+    auto boundary = [&](int32_t sn, int64_t pos, bool snap_ok, uint64_t& snaps) -> int64_t {
         std::vector<NodeId>& v = ref_of(sn);
         size_t k = covering(v, pos);
         const NodeId n = v[k];
@@ -499,7 +636,7 @@ void apply_tandem(Graph& g, const std::vector<const std::vector<TandemEdit>*>& e
         const int64_t lo = g.start(n), hi = g.end(n);
         int64_t snap = pos - lo <= hi - pos ? lo : hi;
         if (snap_ok && std::llabs(snap - pos) <= opt.G) {
-            ++st.snapped;
+            ++snaps;
             return snap;
         }
         // split n at pos into two new pieces; the parent is deleted and its links move to the pieces
@@ -557,8 +694,8 @@ void apply_tandem(Graph& g, const std::vector<const std::vector<TandemEdit>*>& e
             fail(EXIT_INVARIANT, strf("tandem: no reference node %s at %lld", right ? "ends" : "starts", (long long)pos));
         return right ? right_side(v[k]) : left_side(v[k]);
     };
-    auto add = [&](Side a, Side b, int32_t sr, uint64_t& counter) {
-        if (keys.count(link_key(a, b))) { ++st.existing; return; }
+    auto add = [&](Side a, Side b, int32_t sr, uint64_t& counter, uint64_t& existing) {
+        if (keys.count(link_key(a, b))) { ++existing; return; }
         Link l;
         l.a = a;
         l.b = b;
@@ -573,11 +710,11 @@ void apply_tandem(Graph& g, const std::vector<const std::vector<TandemEdit>*>& e
     // max(G, 1%)), overlapping it by at least half the period, is the same route when the stretch
     // between their starts matches the stretch one period later (identity >= -i): copies of one array
     // unit placed at different phases.  It is not added, so each copy number keeps one route.
-    struct Back { int32_t sn; int64_t from, to; int32_t sr; };
+    struct Back { int32_t sn; int64_t from, to; int32_t sr; bool moved; };
     std::vector<Back> backs;
     for (const auto* v : edits)
         for (const TandemEdit& ed : *v)
-            for (const auto& bk : ed.back) backs.push_back(Back{ed.sn, bk.first, bk.second, ed.sr});
+            for (const auto& bk : ed.back) backs.push_back(Back{ed.sn, bk.first, bk.second, ed.sr, !ed.foreign.empty()});
     std::stable_sort(backs.begin(), backs.end(), [](const Back& a, const Back& b) {
         if (a.sn != b.sn) return a.sn < b.sn;
         if (a.from - a.to != b.from - b.to) return a.from - a.to < b.from - b.to;
@@ -586,8 +723,11 @@ void apply_tandem(Graph& g, const std::vector<const std::vector<TandemEdit>*>& e
     std::vector<Back> kept;
     for (const Back& bk : backs) {
         const int64_t P = bk.from - bk.to;
+        // a loop whose component carries moved links is kept: their ports are in its own frame, and an
+        // entry past an equivalent loop's end (or an exit before its start) could not reach that loop
         bool same = false;
         for (const Back& o : kept) {
+            if (bk.moved) break;
             const int64_t p = o.from - o.to;
             if (o.sn != bk.sn || std::llabs(P - p) > std::max<int64_t>(opt.G, p / 100)) continue;
             const int64_t ov = std::min(bk.from, o.from) - std::max(bk.to, o.to);
@@ -600,21 +740,54 @@ void apply_tandem(Graph& g, const std::vector<const std::vector<TandemEdit>*>& e
         if (same) { ++st.equivalent; continue; }
         kept.push_back(bk);
         // snapping must not shorten the loop to nothing (possible with a small -b)
-        int64_t d = boundary(bk.sn, bk.from, true), c = boundary(bk.sn, bk.to, true);
+        int64_t d = boundary(bk.sn, bk.from, true, st.snapped), c = boundary(bk.sn, bk.to, true, st.snapped);
         if (d <= c) {
-            d = boundary(bk.sn, bk.from, false);
-            c = boundary(bk.sn, bk.to, false);
+            d = boundary(bk.sn, bk.from, false, st.snapped);
+            c = boundary(bk.sn, bk.to, false, st.snapped);
         }
-        add(side_at(bk.sn, d, true), side_at(bk.sn, c, false), bk.sr, st.back_links);
+        add(side_at(bk.sn, d, true), side_at(bk.sn, c, false), bk.sr, st.back_links, st.existing);
     }
     for (const auto* v : edits)
         for (const TandemEdit& ed : *v)
-            for (const auto& sk : ed.skip) add(side_at(ed.sn, sk.first, true), side_at(ed.sn, sk.second, false), ed.sr, st.skip_links);
+            for (const auto& sk : ed.skip) add(side_at(ed.sn, sk.first, true), side_at(ed.sn, sk.second, false), ed.sr, st.skip_links, st.existing);
+    // links of other haplotypes through the components, moved onto the reference copy: a moved end
+    // snaps or splits like a loop end (copy_pos keeps ports more than G from the shape's own ends), and
+    // both ends are placed before either side is named (a split deletes the node an end was on); a
+    // non-reference end whose node is gone loses the link
+    for (const auto* v : edits)
+        for (const TandemEdit& ed : *v)
+            for (const TandemLink& t : ed.foreign) {
+                int64_t p[2] = {0, 0};
+                bool ok = true;
+                for (int z = 0; z < 2 && ok; ++z) {
+                    const TandemEnd& te = z ? t.b : t.a;
+                    if (te.sn < 0) {
+                        ok = !g.nodes[side_node(te.side)].deleted;
+                        continue;
+                    }
+                    // an L side needs a base at pos, an R side one before it
+                    const std::vector<NodeId>& rv = ref_of(te.sn);
+                    if (rv.empty() || (te.right ? te.pos <= g.start(rv.front()) : te.pos >= g.end(rv.back()))) { ok = false; break; }
+                    const int64_t lo = g.start(rv.front()), hi = g.end(rv.back());
+                    p[z] = boundary(te.sn, te.pos, true, st.foreign_snapped);
+                    if (te.right ? p[z] <= lo : p[z] >= hi) p[z] = boundary(te.sn, te.pos, false, st.foreign_snapped);
+                }
+                if (!ok) { ++st.foreign_lost; continue; }
+                Side x[2];
+                for (int z = 0; z < 2; ++z) {
+                    const TandemEnd& te = z ? t.b : t.a;
+                    x[z] = te.sn < 0 ? te.side : side_at(te.sn, p[z], te.right);
+                }
+                add(x[0], x[1], t.sr >= 0 ? t.sr : ed.sr, st.foreign_links, st.foreign_existing);
+            }
     ZLOG("tandem edit: %zu component(s): %llu alt node(s) and %llu link(s) removed; %llu back link(s) (%llu more were the same loop as one "
-         "of them), %llu skip link(s) added (%llu already there); loop ends: %llu snapped within -G, %llu reference node(s) split%s",
+         "of them), %llu skip link(s) added (%llu already there); loop ends: %llu snapped within -G, %llu reference node(s) split%s; "
+         "%llu link(s) of other haplotypes moved onto the reference copy (%llu already there, %llu lost, %llu end(s) snapped within -G)",
          n_edits, (unsigned long long)st.nodes, (unsigned long long)n_rm, (unsigned long long)st.back_links, (unsigned long long)st.equivalent,
          (unsigned long long)st.skip_links, (unsigned long long)st.existing, (unsigned long long)st.snapped,
-         (unsigned long long)st.splits, st.splits ? strf(" (new pieces s%lld..s%lld)", (long long)base, (long long)(next - 1)).c_str() : "");
+         (unsigned long long)st.splits, st.splits ? strf(" (new pieces s%lld..s%lld)", (long long)base, (long long)(next - 1)).c_str() : "",
+         (unsigned long long)st.foreign_links, (unsigned long long)st.foreign_existing, (unsigned long long)st.foreign_lost,
+         (unsigned long long)st.foreign_snapped);
 }
 
 } // namespace zip

@@ -41,6 +41,20 @@
        member's links); otherwise the component is refused and stays as it is.  Differences between
        the copies and the reference copy (bubbles inside the component) are dropped: the graph keeps
        one copy, and cactus aligns each haplotype's bases to it.
+       A later haplotype can also enter or leave the component part way, by a link of its own (a
+       deletion that reuses a copy's tail: ref[..q) + U[o, Q) + ref[p2..)), which no unit walks.
+       Every link on the component that is not a unit's anchor or step moves its component end to
+       the reference position the side's offset in the copy lands on (entry: the L side of the
+       reference node starting there; exit: the R side of the one ending there).  The ends of the
+       query and a rotation's junction are the shape's own ends (so a unit's own anchor link would
+       move onto exactly the link the shape adds); inside, the offset projects through the copy's
+       alignment.  With the back link, the moved link spells the haplotype through the reference
+       copy: ref[..q) + ref[x..) for a right copy U = ref[s, d) entered at o (x = s + o, then d -> p2).
+       A port within G of its stretch's far end is the shape's continuation instead (an entry near
+       the end of the copy is p2, near the end of a rotation's head c; an exit near the start of the
+       copy is p1, near the start of a rotation's tail d), so a moved end never snaps onto or across
+       the loop's or the skip's own end.  An entry inside a query insertion takes the next block's
+       reference position.
 
   After apply_plans (apply_tandem, serial): delete each accepted component and its links, then add
   the links.  Back links go shortest loop first, and a loop with the period of one already added
@@ -50,7 +64,11 @@
   Loops at separate units of a long array are kept (each is a route for the same copy number).  A loop end that is not a reference node
   boundary snaps to one within G (unless that would close the loop), or splits that reference node
   (new pieces get the next free ids; the parent is deleted, as apply_plans does).  Link SR is the
-  lowest rank in the component.  check_placement runs after.
+  lowest rank in the component.  A loop whose component carries moved links is never dropped as the
+  same loop as another (its moved links are placed in its own frame).  Then the moved links of other
+  haplotypes (their own SR, else the component's; a moved end snaps or splits like a loop end, both
+  ends placed before either side is named; a link whose other end is a non-reference node another
+  edit or a plan deleted is lost, and counted).  check_placement runs after.
 
   Report: the units of an accepted component get outcome "tandem" ("would-tandem" with
   --detect-only), frame "T", label right|left|rotated, the copy blocks in `blocks`, and the
@@ -79,7 +97,27 @@ struct TandemStats {
     std::map<std::string, uint64_t> why;   // candidates that are not copies, by reason
     // apply_tandem
     uint64_t back_links = 0, skip_links = 0, existing = 0, equivalent = 0, snapped = 0, splits = 0;
+    uint64_t foreign_links = 0;        // links of other haplotypes moved onto the reference copy (added)
+    uint64_t foreign_existing = 0;     // ... already in the graph
+    uint64_t foreign_lost = 0;         // ... whose other end is gone (a node another edit or a plan deleted)
+    uint64_t foreign_snapped = 0;      // moved ends snapped within G
     void add(const TandemStats& o);
+};
+
+// One end of a moved link: a reference side by position (sn >= 0: the R side of the node ending at
+// pos, or the L side of the one starting there), or an input side of a non-reference node (sn < 0).
+struct TandemEnd {
+    int32_t sn = -1;
+    int64_t pos = 0;
+    bool right = false;
+    Side side = 0;
+};
+
+// A link of another haplotype on an accepted component, with its component end(s) moved onto the
+// reference copy.
+struct TandemLink {
+    TandemEnd a, b;
+    int32_t sr = -1;                   // the input link's SR
 };
 
 // One accepted component: the alt nodes to delete and the links that replace them.
@@ -88,6 +126,7 @@ struct TandemEdit {
     std::vector<NodeId> remove;        // input alt nodes of the site, sorted
     std::vector<std::pair<int64_t, int64_t>> back;   // (from, to), from > to: R side of the reference ending at from -> L side of the one starting at to
     std::vector<std::pair<int64_t, int64_t>> skip;   // (p1, p2), p1 < p2: R side ending at p1 -> L side starting at p2
+    std::vector<TandemLink> foreign;   // links of other haplotypes on the component, moved
     int32_t sr = -1;                   // SR of the new links
 };
 
