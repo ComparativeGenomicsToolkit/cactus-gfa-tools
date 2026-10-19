@@ -345,6 +345,11 @@ struct Params {
     int64_t guard_chunk = 10000;
     int64_t guard_minchunk = 2000;
     int64_t guard_svlen = 50;
+    // --win-ident: a contested segment goes to a claimant that aligns it clearly better (0 = off)
+    double win_ident = 0;
+    int64_t win_ident_minlen = 1000;
+    int64_t win_ident_svlen = 0;
+    bool win_ident_contest = false;
 };
 
 // hard-coded, as in the emulator
@@ -1047,10 +1052,37 @@ vector<IVs> Contig::resolve(bool track_veto) {
             }
             if (!shadowed) C2.push_back(i);
         }
-        for (int r : C2) {
-            bool ok = true;
-            for (int o : C2) {
+        // --win-ident: identity over the segment decides a contest it separates by at least win_ident (pair by
+        // pair, or with --win-ident-contest the whole contest, for a claimant clearly above every compatible
+        // other); dominates() decides the rest.  A long record that runs into a paralogous copy otherwise wins
+        // the copy from the short record placing it orthologously, by length alone
+        bool use_ident = P.win_ident > 0 && e - s >= P.win_ident_minlen && C2.size() > 1;
+        vector<double> idn;
+        int iw = -1;
+        if (use_ident) {
+            idn.resize(C2.size());
+            for (size_t k = 0; k < C2.size(); ++k) idn[k] = local_ident(*E[C2[k]], s, e, P.win_ident_svlen);
+            if (P.win_ident_contest) {
+                size_t best = 0;
+                for (size_t k = 1; k < C2.size(); ++k) if (idn[k] > idn[best]) best = k;
+                bool clear = true;
+                for (size_t k = 0; k < C2.size(); ++k) {
+                    if (k != best && compat(E[C2[best]], E[C2[k]]) && idn[best] < idn[k] + P.win_ident) { clear = false; break; }
+                }
+                if (clear) iw = C2[best];
+            }
+        }
+        for (size_t kr = 0; kr < C2.size(); ++kr) {
+            int r = C2[kr];
+            bool ok = !(iw >= 0 && r != iw && compat(E[r], E[iw]));
+            for (size_t ko = 0; ok && ko < C2.size(); ++ko) {
+                int o = C2[ko];
                 if (o == r || !compat(E[r], E[o])) continue;
+                if (r == iw) continue;
+                if (use_ident && !P.win_ident_contest) {
+                    if (idn[kr] >= idn[ko] + P.win_ident) continue;
+                    if (idn[ko] >= idn[kr] + P.win_ident) { ok = false; break; }
+                }
                 if (!beats(r, o)) { ok = false; break; }
             }
             if (ok && !veto.empty()) {
@@ -2081,6 +2113,11 @@ static void help(char** argv) {
          << "    --guard                         Identity guard: where --exact-ratio < -r decides a contest -r would tie, cancel the win over runs" << endl
          << "                                    where the loser is the more similar (--guard-trip 0.01 --guard-minrun 20000 --guard-chunk 10000" << endl
          << "                                    --guard-minchunk 2000 --guard-svlen 50)" << endl
+         << "    --win-ident D                   A contested segment goes to a record whose identity over it beats another's by at least D," << endl
+         << "                                    before -r is tried (0: off) [0]" << endl
+         << "    --win-ident-minlen N            ...for segments of at least N bp [1000]" << endl
+         << "    --win-ident-svlen N             ...leaving out of the identity indels of at least N bp (0: count all) [0]" << endl
+         << "    --win-ident-contest             ...deciding the whole contest, for a record D above every other, not pair by pair" << endl
          << "    --exact-plan FILE               Write the per-record plan (kept query pieces) to FILE" << endl
          << "    --exact-log FILE                Write every drop, isolation and guard decision to FILE" << endl
          << "    --junctions FILE                Write the junctions between pieces placed apart (review log) to FILE" << endl
@@ -2112,7 +2149,7 @@ int main(int argc, char** argv) {
     enum { X_NODES = 256, X_RATIO, X_REF, X_PAF_RATIO, X_PAF_MIN_OVERLAP, X_RMIN, X_REM_FLOOR, X_ID_FLOOR,
            X_NO_R1REF, X_NO_ONETOONE, X_GATE_CHUNK, X_GATE_MINRUN, X_GAP, X_CLIP, X_R2_TOL, X_R2_SLACK,
            X_LIN_MAXINDEL, X_LIN_OVTOL, X_JUNCTION_MIN, X_GUARD, X_GUARD_TRIP, X_GUARD_MINRUN, X_GUARD_CHUNK,
-           X_GUARD_MINCHUNK, X_GUARD_SVLEN, X_PLAN, X_LOG, X_JUNCTIONS, X_SUMMARY, X_A0_PAF, X_ONLY_CHROM };
+           X_GUARD_MINCHUNK, X_GUARD_SVLEN, X_WIN_IDENT, X_WIN_IDENT_MINLEN, X_WIN_IDENT_SVLEN, X_WIN_IDENT_CONTEST, X_PLAN, X_LOG, X_JUNCTIONS, X_SUMMARY, X_A0_PAF, X_ONLY_CHROM };
 
     int c;
     bool is_paf = false;
@@ -2162,6 +2199,10 @@ int main(int argc, char** argv) {
             {"guard-chunk", required_argument, 0, X_GUARD_CHUNK},
             {"guard-minchunk", required_argument, 0, X_GUARD_MINCHUNK},
             {"guard-svlen", required_argument, 0, X_GUARD_SVLEN},
+            {"win-ident", required_argument, 0, X_WIN_IDENT},
+            {"win-ident-minlen", required_argument, 0, X_WIN_IDENT_MINLEN},
+            {"win-ident-svlen", required_argument, 0, X_WIN_IDENT_SVLEN},
+            {"win-ident-contest", no_argument, 0, X_WIN_IDENT_CONTEST},
             {"exact-plan", required_argument, 0, X_PLAN},
             {"exact-log", required_argument, 0, X_LOG},
             {"junctions", required_argument, 0, X_JUNCTIONS},
@@ -2247,6 +2288,10 @@ int main(int argc, char** argv) {
         case X_GUARD_CHUNK: xp.guard_chunk = stol(optarg); break;
         case X_GUARD_MINCHUNK: xp.guard_minchunk = stol(optarg); break;
         case X_GUARD_SVLEN: xp.guard_svlen = stol(optarg); break;
+        case X_WIN_IDENT: xp.win_ident = stod(optarg); break;
+        case X_WIN_IDENT_MINLEN: xp.win_ident_minlen = stol(optarg); break;
+        case X_WIN_IDENT_SVLEN: xp.win_ident_svlen = stol(optarg); break;
+        case X_WIN_IDENT_CONTEST: xp.win_ident_contest = true; break;
         case X_PLAN: xp.plan_path = optarg; break;
         case X_LOG: xp.log_path = optarg; break;
         case X_JUNCTIONS: xp.junctions_path = optarg; break;
@@ -2304,7 +2349,7 @@ int main(int argc, char** argv) {
             cerr << "[gaffilter] error: -x needs --exact-ratio > 0, --gate-chunk > 0 and --guard-chunk > 0" << endl;
             return 1;
         }
-    } else if (!exact_ratio_arg.empty() || !xp.nodes_path.empty() || xp.guard || !xp.plan_path.empty()) {
+    } else if (!exact_ratio_arg.empty() || !xp.nodes_path.empty() || xp.guard || xp.win_ident > 0 || !xp.plan_path.empty()) {
         cerr << "[gaffilter] error: --exact-* options and --guard need -x" << endl;
         return 1;
     }
