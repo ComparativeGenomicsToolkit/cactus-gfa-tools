@@ -350,6 +350,8 @@ struct Params {
     int64_t win_ident_minlen = 1000;
     int64_t win_ident_svlen = 0;
     bool win_ident_contest = false;
+    double win_ident_floor = 0;     // ...and only to one at least this identical over it
+    bool win_ident_floor_demoted = false;   // ...the floor applying to demoted claimants only
 };
 
 // hard-coded, as in the emulator
@@ -1059,6 +1061,11 @@ vector<IVs> Contig::resolve(bool track_veto) {
         bool use_ident = P.win_ident > 0 && e - s >= P.win_ident_minlen && C2.size() > 1;
         vector<double> idn;
         int iw = -1;
+        // a demoted record's remainder is judged (floor, R1) by its own identity, so a segment it wins
+        // below the floor can cost it the whole remainder
+        auto floor_ok = [&](size_t k) {
+            return idn[k] >= P.win_ident_floor || (P.win_ident_floor_demoted && !dem[C2[k]]);
+        };
         if (use_ident) {
             idn.resize(C2.size());
             for (size_t k = 0; k < C2.size(); ++k) idn[k] = local_ident(*E[C2[k]], s, e, P.win_ident_svlen);
@@ -1069,7 +1076,7 @@ vector<IVs> Contig::resolve(bool track_veto) {
                 for (size_t k = 0; k < C2.size(); ++k) {
                     if (k != best && compat(E[C2[best]], E[C2[k]]) && idn[best] < idn[k] + P.win_ident) { clear = false; break; }
                 }
-                if (clear) iw = C2[best];
+                if (clear && floor_ok(best)) iw = C2[best];
             }
         }
         for (size_t kr = 0; kr < C2.size(); ++kr) {
@@ -1080,8 +1087,8 @@ vector<IVs> Contig::resolve(bool track_veto) {
                 if (o == r || !compat(E[r], E[o])) continue;
                 if (r == iw) continue;
                 if (use_ident && !P.win_ident_contest) {
-                    if (idn[kr] >= idn[ko] + P.win_ident) continue;
-                    if (idn[ko] >= idn[kr] + P.win_ident) { ok = false; break; }
+                    if (idn[kr] >= idn[ko] + P.win_ident && floor_ok(kr)) continue;
+                    if (idn[ko] >= idn[kr] + P.win_ident && floor_ok(ko)) { ok = false; break; }
                 }
                 if (!beats(r, o)) { ok = false; break; }
             }
@@ -2118,6 +2125,8 @@ static void help(char** argv) {
          << "    --win-ident-minlen N            ...for segments of at least N bp [1000]" << endl
          << "    --win-ident-svlen N             ...leaving out of the identity indels of at least N bp (0: count all) [0]" << endl
          << "    --win-ident-contest             ...deciding the whole contest, for a record D above every other, not pair by pair" << endl
+         << "    --win-ident-floor F             ...only for a winner at least F identical over the segment [0]" << endl
+         << "    --win-ident-floor-demoted       ...the floor applying to demoted winners only" << endl
          << "    --exact-plan FILE               Write the per-record plan (kept query pieces) to FILE" << endl
          << "    --exact-log FILE                Write every drop, isolation and guard decision to FILE" << endl
          << "    --junctions FILE                Write the junctions between pieces placed apart (review log) to FILE" << endl
@@ -2149,7 +2158,7 @@ int main(int argc, char** argv) {
     enum { X_NODES = 256, X_RATIO, X_REF, X_PAF_RATIO, X_PAF_MIN_OVERLAP, X_RMIN, X_REM_FLOOR, X_ID_FLOOR,
            X_NO_R1REF, X_NO_ONETOONE, X_GATE_CHUNK, X_GATE_MINRUN, X_GAP, X_CLIP, X_R2_TOL, X_R2_SLACK,
            X_LIN_MAXINDEL, X_LIN_OVTOL, X_JUNCTION_MIN, X_GUARD, X_GUARD_TRIP, X_GUARD_MINRUN, X_GUARD_CHUNK,
-           X_GUARD_MINCHUNK, X_GUARD_SVLEN, X_WIN_IDENT, X_WIN_IDENT_MINLEN, X_WIN_IDENT_SVLEN, X_WIN_IDENT_CONTEST, X_PLAN, X_LOG, X_JUNCTIONS, X_SUMMARY, X_A0_PAF, X_ONLY_CHROM };
+           X_GUARD_MINCHUNK, X_GUARD_SVLEN, X_WIN_IDENT, X_WIN_IDENT_MINLEN, X_WIN_IDENT_SVLEN, X_WIN_IDENT_CONTEST, X_WIN_IDENT_FLOOR, X_WIN_IDENT_FLOOR_DEMOTED, X_PLAN, X_LOG, X_JUNCTIONS, X_SUMMARY, X_A0_PAF, X_ONLY_CHROM };
 
     int c;
     bool is_paf = false;
@@ -2203,6 +2212,8 @@ int main(int argc, char** argv) {
             {"win-ident-minlen", required_argument, 0, X_WIN_IDENT_MINLEN},
             {"win-ident-svlen", required_argument, 0, X_WIN_IDENT_SVLEN},
             {"win-ident-contest", no_argument, 0, X_WIN_IDENT_CONTEST},
+            {"win-ident-floor", required_argument, 0, X_WIN_IDENT_FLOOR},
+            {"win-ident-floor-demoted", no_argument, 0, X_WIN_IDENT_FLOOR_DEMOTED},
             {"exact-plan", required_argument, 0, X_PLAN},
             {"exact-log", required_argument, 0, X_LOG},
             {"junctions", required_argument, 0, X_JUNCTIONS},
@@ -2292,6 +2303,8 @@ int main(int argc, char** argv) {
         case X_WIN_IDENT_MINLEN: xp.win_ident_minlen = stol(optarg); break;
         case X_WIN_IDENT_SVLEN: xp.win_ident_svlen = stol(optarg); break;
         case X_WIN_IDENT_CONTEST: xp.win_ident_contest = true; break;
+        case X_WIN_IDENT_FLOOR: xp.win_ident_floor = stod(optarg); break;
+        case X_WIN_IDENT_FLOOR_DEMOTED: xp.win_ident_floor_demoted = true; break;
         case X_PLAN: xp.plan_path = optarg; break;
         case X_LOG: xp.log_path = optarg; break;
         case X_JUNCTIONS: xp.junctions_path = optarg; break;
