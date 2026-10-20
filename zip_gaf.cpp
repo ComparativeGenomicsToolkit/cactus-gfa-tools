@@ -39,16 +39,26 @@ inline bool unwinding() {
 
 const uint8_t KIND_X = 255;   // anchors on two different SNs (possible only with several rank-0 SNs)
 
-// "id=HG00320.1|JBHIKI010000013.1" -> "HG00320#1#JBHIKI010000013.1"; "id=GRCh38|chr16" ->
+// "id=HG00320#1|JBHIKI010000013.1" -> "HG00320#1#JBHIKI010000013.1"; "id=GRCh38|chr16" ->
 // "GRCh38#0#chr16" (the design prototype's gaf_name_to_sn); "id=X" -> "X"; anything else is unchanged.
+// cactus names a genome SAMPLE#HAP, or SAMPLE for haplotype 0, as PanSN does.  it used to spell that
+// SAMPLE.HAP (HAP all digits), which is still read that way: "id=HG00320.1|c" -> "HG00320#1#c".  any
+// other '.' is part of the sample: "id=KOLF2.1J|c" -> "KOLF2.1J#0#c"
 std::string canon_name(const std::string& x) {
     if (x.compare(0, 3, "id=") != 0) return x;
     std::string y = x.substr(3);
     size_t bar = y.find('|');
     if (bar == std::string::npos) return y;
     std::string samp = y.substr(0, bar), ctg = y.substr(bar + 1);
+    if (samp.find('#') != std::string::npos) return samp + "#" + ctg;
     size_t dot = samp.rfind('.');
-    if (dot != std::string::npos) return samp.substr(0, dot) + "#" + samp.substr(dot + 1) + "#" + ctg;
+    if (dot != std::string::npos && dot > 0 && dot + 1 < samp.size() &&
+        samp.find_first_not_of("0123456789", dot + 1) == std::string::npos) {
+        // as an integer, the way cactus and vg write it (HG00320.01 is HG00320#1)
+        size_t nz = samp.find_first_not_of('0', dot + 1);
+        std::string hap = nz == std::string::npos ? "0" : samp.substr(nz);
+        return samp.substr(0, dot) + "#" + hap + "#" + ctg;
+    }
     return samp + "#0#" + ctg;
 }
 
