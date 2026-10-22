@@ -2350,7 +2350,7 @@ int main(int argc, char** argv) {
             return 1;
         }
     } else if (!exact_ratio_arg.empty() || !xp.nodes_path.empty() || xp.guard || xp.win_ident > 0 || !xp.plan_path.empty()) {
-        cerr << "[gaffilter] error: --exact-* options and --guard need -x" << endl;
+        cerr << "[gaffilter] error: --exact-* options, --guard and --win-ident need -x" << endl;
         return 1;
     }
 
