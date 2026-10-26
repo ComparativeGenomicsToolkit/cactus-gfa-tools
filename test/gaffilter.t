@@ -6,7 +6,7 @@ BASH_TAP_ROOT=./bash-tap
 PATH=../bin:$PATH
 PATH=../:$PATH
 
-plan tests 58
+plan tests 68
 
 mkdir -p stock_tmp
 
@@ -238,5 +238,40 @@ is "$(grep -o 'kq:Z:[^[:space:]]*' exact_tmp/gapped.out | tr '\n' ' ')" "kq:Z:18
 gaffilter exact_tmp/bounded.gaf $XW --junctions exact_tmp/bounded.j 2>/dev/null > exact_tmp/bounded.out
 is $(cmp -s exact_tmp/bounded.out exact_tmp/bounded.gaf && echo same) same "-x keeps a bounded two-sided inversion with a smaller gap inside it whole"
 is $(grep -c 'exempt:bounded-two' exact_tmp/bounded.j) 1 "as exempt"
+
+# --win-ident: l (0-250 kb) and s (210-500 kb) both place the contested 40 kb on chrA 210-250 kb,
+# l at 97% identity and s at 100%.  Neither overlaps -m of the other, so the stock rule keeps both
+# and -x resolves the 40 kb: l takes it on MAPQ (60 vs 10) unless identity decides it first
+gen_l() { printf '210000='; for i in $(seq 1200); do printf '32=1X'; done; printf '400='; }
+{
+    printf "id=S.1|c1\t500000\t0\t250000\t+\t>r1>r2>r3>r4>r5\t250000\t0\t250000\t248800\t250000\t60\tcg:Z:%s\trc:Z:chrA\n" "$(gen_l)"
+    printf "id=S.1|c1\t500000\t210000\t500000\t+\t>r5>r6>r7>r8>r9>r10\t300000\t10000\t300000\t290000\t290000\t10\tcg:Z:290000=\trc:Z:chrA\n"
+} > exact_tmp/wi.gaf
+gaffilter exact_tmp/wi.gaf $XW 2>/dev/null > exact_tmp/wi.off
+gaffilter exact_tmp/wi.gaf $XW --win-ident 0.01 2>/dev/null > exact_tmp/wi.on
+is "$(grep -o 'kq:Z:[^[:space:]]*' exact_tmp/wi.off | tr '\n' ' ')" "kq:Z:250000-500000 " "-x gives a contested segment to the record that dominates on MAPQ, though it aligns it worse"
+is "$(grep -o 'kq:Z:[^[:space:]]*' exact_tmp/wi.on | tr '\n' ' ')" "kq:Z:0-210000 " "--win-ident gives it to the record that aligns it at least D better"
+is "$(awk '$3==210000 {print (/kq:Z/ ? "cut" : "whole")}' exact_tmp/wi.on)" whole "which keeps all of itself"
+gaffilter exact_tmp/wi.gaf $XW --win-ident 0.05 2>/dev/null > exact_tmp/wi.05
+is $(cmp -s exact_tmp/wi.05 exact_tmp/wi.off && echo same) same "--win-ident leaves an identity difference under D to the dominance rule"
+gaffilter exact_tmp/wi.gaf $XW --win-ident 0.01 --win-ident-minlen 50000 2>/dev/null > exact_tmp/wi.minlen
+is $(cmp -s exact_tmp/wi.minlen exact_tmp/wi.off && echo same) same "--win-ident-minlen leaves shorter segments to it too"
+gaffilter exact_tmp/wi.gaf $XW --win-ident 0.01 --win-ident-contest 2>/dev/null > exact_tmp/wi.contest
+is "$(grep -o 'kq:Z:[^[:space:]]*' exact_tmp/wi.contest | tr '\n' ' ')" "kq:Z:0-210000 " "--win-ident-contest decides a two-way contest the same way"
+gaffilter exact_tmp/wi.gaf -r 5 -m 0.25 --win-ident 0.01 > /dev/null 2> exact_tmp/wi.err
+is "$? $(grep -c -- '--win-ident need -x' exact_tmp/wi.err)" "1 1" "--win-ident needs -x"
+
+# a tie (equal MAPQ, lengths within -r) leaves the contested segment to neither, unless identity
+# decides it.  t places it with a 2 kb insertion, which --win-ident-svlen leaves out of its identity
+{
+    printf "id=S.1|c1\t500000\t0\t250000\t+\t>r1>r2>r3>r4>r5\t250000\t0\t250000\t248800\t250000\t60\tcg:Z:%s\trc:Z:chrA\n" "$(gen_l)"
+    printf "id=S.1|c1\t500000\t210000\t500000\t+\t>r5>r6>r7>r8>r9>r10\t300000\t10000\t298000\t288000\t290000\t60\tcg:Z:19000=2000I269000=\trc:Z:chrA\n"
+} > exact_tmp/wit.gaf
+gaffilter exact_tmp/wit.gaf $XW 2>/dev/null > exact_tmp/wit.off
+is "$(grep -o 'kq:Z:[^[:space:]]*' exact_tmp/wit.off | tr '\n' ' ')" "kq:Z:0-210000 kq:Z:250000-500000 " "-x leaves a tied segment to neither record"
+gaffilter exact_tmp/wit.gaf $XW --win-ident 0.01 2>/dev/null > exact_tmp/wit.on
+is "$(grep -o 'kq:Z:[^[:space:]]*' exact_tmp/wit.on | tr '\n' ' ')" "kq:Z:250000-500000 " "--win-ident breaks the tie for the more identical one (97% against 95% with the insertion)"
+gaffilter exact_tmp/wit.gaf $XW --win-ident 0.01 --win-ident-svlen 50 2>/dev/null > exact_tmp/wit.sv
+is "$(grep -o 'kq:Z:[^[:space:]]*' exact_tmp/wit.sv | tr '\n' ' ')" "kq:Z:0-210000 " "--win-ident-svlen leaves the insertion out, which makes the other 100% and the winner"
 
 rm -rf exact_tmp
