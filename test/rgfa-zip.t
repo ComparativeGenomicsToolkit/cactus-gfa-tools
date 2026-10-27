@@ -42,7 +42,7 @@ if [ -z "$MM2" ] || ! "$MM2" --version > /dev/null 2>&1; then
 fi
 MM2=$(cd "$(dirname "$MM2")" && pwd)/$(basename "$MM2")
 
-plan tests 144
+plan tests 145
 
 T=${RGFA_ZIP_TEST_DIR:-.}/rgfa-zip.t.tmp
 rm -rf $T && mkdir -p $T/tmp
@@ -1346,13 +1346,15 @@ zip Z19 gaf --walks gaf:$T/Z19/walks.gaf
 is "$(q row Z19 gaf HG1#1#c1 outcome label)/$(q newL Z19 gaf)/$(q S Z19 gaf)" "zipped INV/s1+s2- s2+s5- s2-s3+/s1 s2 s3 s5 s6" "Z19: GafWalks without the pooled path: a zipped as an inversion (its links translated onto r2-)"
 is "$(q walks Z19 gaf)" "ok" "Z19: GafWalks: walks spell"
 # the same walks with their names, and the stable names of their steps, the way cactus writes them:
-# id=SAMPLE#HAP|CONTIG (or the old id=SAMPLE.HAP|CONTIG), and id=SAMPLE|CONTIG for haplotype 0.  they
-# resolve onto the graph's PanSN names and zip the same
+# id=SAMPLE#HAP|CONTIG, and id=SAMPLE|CONTIG for haplotype 0.  they resolve onto the graph's PanSN names
+# and zip the same.  a '.' is never a haplotype, so the old id=SAMPLE.HAP|CONTIG spelling names a
+# sample of its own (HG1.1#0), which the graph does not have
 sed -e 's/\(HG[0-9]\)#1#/id=\1#1|/g' -e 's/REF#0#/id=REF|/g' $T/Z19/walks.gaf > $T/Z19/walks.cactus.gaf
 sed -e 's/\(HG[0-9]\)#1#/id=\1.1|/g' -e 's/REF#0#/id=REF|/g' $T/Z19/walks.gaf > $T/Z19/walks.legacy.gaf
 zip Z19 cactus --walks gaf:$T/Z19/walks.cactus.gaf
 zip Z19 legacy --walks gaf:$T/Z19/walks.legacy.gaf
-is "$(md5sum < $T/Z19/cactus.gfa) $(md5sum < $T/Z19/legacy.gfa)" "$(md5sum < $T/Z19/gaf.gfa) $(md5sum < $T/Z19/gaf.gfa)" "Z19: GafWalks named id=SAMPLE#HAP|CONTIG (or id=SAMPLE.HAP|CONTIG) zip as the PanSN-named ones do"
+is "$(md5sum < $T/Z19/cactus.gfa)" "$(md5sum < $T/Z19/gaf.gfa)" "Z19: GafWalks named id=SAMPLE#HAP|CONTIG zip as the PanSN-named ones do"
+is "$(ex Z19 legacy)/$(none Z19 legacy)/$(grep -c 'id=HG1.1|c1): unknown sequence' $T/Z19/legacy.err)" "2/nothing/1" "Z19: GafWalks named id=SAMPLE.HAP|CONTIG are not read as haplotypes: unknown sequences, exit 2, nothing written"
 zip Z19 pooled --walks gaf:$T/Z19/pooled.gaf
 is "$(ex Z19 pooled)/$(q same Z19 pooled)" "0/same" "Z19: GafWalks with a haplotype on the pooled path: infeasible again"
 
