@@ -136,7 +136,7 @@ public:
             method_ = "gzip";
         }
         int p[2];
-        if (pipe2(p, O_CLOEXEC) != 0) fail(EXIT_INPUT, strf("pipe: %s", strerror(errno)));
+        if (pipe_cloexec(p) != 0) fail(EXIT_INPUT, strf("pipe: %s", strerror(errno)));
         posix_spawn_file_actions_t fa;
         posix_spawn_file_actions_init(&fa);
         posix_spawn_file_actions_addopen(&fa, 0, "/dev/null", O_RDONLY, 0);

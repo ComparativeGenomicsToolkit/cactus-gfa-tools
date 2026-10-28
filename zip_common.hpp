@@ -529,6 +529,33 @@ struct SpawnAttr {
     SpawnAttr& operator=(const SpawnAttr&) = delete;
 };
 
+#if defined(__APPLE__)
+// Mac has no pipe2, so a new pipe is not close-on-exec until fcntl.  Spawning waits for that: a
+// child started in between by another thread would hold the write end, and its reader never sees EOF.
+inline std::mutex& pipe_spawn_mutex() {
+    static std::mutex m;
+    return m;
+}
+#endif
+
+// pipe2(fds, O_CLOEXEC)
+inline int pipe_cloexec(int fds[2]) {
+#if defined(__APPLE__)
+    std::lock_guard<std::mutex> lock(pipe_spawn_mutex());
+    if (pipe(fds) != 0) return -1;
+    if (fcntl(fds[0], F_SETFD, FD_CLOEXEC) != 0 || fcntl(fds[1], F_SETFD, FD_CLOEXEC) != 0) {
+        int e = errno;
+        close(fds[0]);
+        close(fds[1]);
+        errno = e;
+        return -1;
+    }
+    return 0;
+#else
+    return pipe2(fds, O_CLOEXEC);
+#endif
+}
+
 // posix_spawnp with SpawnAttr; a started child is registered with the Runtime (reap it with
 // reap_child).  Returns 0 or the spawn error.
 inline int spawn_child(pid_t& pid, const std::vector<std::string>& argv, const posix_spawn_file_actions_t* fa) {
@@ -537,6 +564,9 @@ inline int spawn_child(pid_t& pid, const std::vector<std::string>& argv, const p
     cargv.push_back(nullptr);
     SpawnAttr at;
     pid = -1;
+#if defined(__APPLE__)
+    std::lock_guard<std::mutex> lock(pipe_spawn_mutex());
+#endif
     int rc = posix_spawnp(&pid, cargv[0], fa, &at.a, cargv.data(), environ);
     if (rc == 0) Runtime::get().add_child(pid);
     return rc;
@@ -573,8 +603,8 @@ inline ProcResult run_process(const std::vector<std::string>& argv, const std::s
     if (argv.empty()) return r;
     check_abort();
     int outp[2] = {-1, -1}, errp[2] = {-1, -1};
-    if (stdout_path.empty() && pipe2(outp, O_CLOEXEC) != 0) fail(EXIT_IO, strf("pipe: %s", strerror(errno)));
-    if (pipe2(errp, O_CLOEXEC) != 0) {
+    if (stdout_path.empty() && pipe_cloexec(outp) != 0) fail(EXIT_IO, strf("pipe: %s", strerror(errno)));
+    if (pipe_cloexec(errp) != 0) {
         if (outp[0] >= 0) { close(outp[0]); close(outp[1]); }
         fail(EXIT_IO, strf("pipe: %s", strerror(errno)));
     }
@@ -657,7 +687,7 @@ public:
         if (n == 2 && magic[0] == 0x1f && magic[1] == 0x8b) {
             ::close(fd);
             int p[2];
-            if (pipe2(p, O_CLOEXEC) != 0) fail(EXIT_INPUT, strf("pipe: %s", strerror(errno)));
+            if (pipe_cloexec(p) != 0) fail(EXIT_INPUT, strf("pipe: %s", strerror(errno)));
             posix_spawn_file_actions_t fa;
             posix_spawn_file_actions_init(&fa);
             posix_spawn_file_actions_addopen(&fa, 0, "/dev/null", O_RDONLY, 0);
