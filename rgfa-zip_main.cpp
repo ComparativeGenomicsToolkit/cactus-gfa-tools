@@ -889,8 +889,21 @@ void start_signal_thread() {
             Runtime::get().set_signal(sig);
             Runtime::get().request_abort();
             struct timespec t = {0, 100000000};   // 100 ms
+#if defined(__APPLE__)
+            // Mac has no sigtimedwait: sleep the same steps and look for a pending one instead
+            auto second_signal = [&set, &t]() {
+                nanosleep(&t, nullptr);
+                sigset_t pending;
+                if (sigpending(&pending) != 0) return false;
+                for (int s : {SIGTERM, SIGINT, SIGHUP})
+                    if (sigismember(&set, s) == 1 && sigismember(&pending, s) == 1) return true;
+                return false;
+            };
+#else
+            auto second_signal = [&set, &t]() { return sigtimedwait(&set, nullptr, &t) > 0; };
+#endif
             for (int i = 0; i < 100; ++i)
-                if (sigtimedwait(&set, nullptr, &t) > 0) break;   // a second stop signal: do not wait
+                if (second_signal()) break;   // a second stop signal: do not wait
             Runtime::get().remove_paths();
             reraise(sig);
         }).detach();

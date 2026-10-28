@@ -8,7 +8,7 @@ LIBS=-L$(CWD)
 ifeq ($(shell uname -s),Darwin)
     # Our compiler might be clang that lacks -fopenmp support.
     # Sniff that
-    ifeq ($(strip $(shell $(MY_CXX) -fopenmp /dev/null -o/dev/null 2>&1 | grep fopenmp | wc -l)), 1)
+    ifeq ($(strip $(shell $(CXX) -fopenmp /dev/null -o/dev/null 2>&1 | grep fopenmp | wc -l)), 1)
         # The compiler complained about fopenmp instead of its nonsense input file.
         # We need to use the hard way of getting OpenMP not bundled with the compiler.
 
@@ -22,6 +22,15 @@ ifeq ($(shell uname -s),Darwin)
             # And we need to find the includes. Homebrew puts them in the normal place
             # but Macports hides them in "libomp"
             PARALLEL_FLAGS += -I/opt/local/include/libomp
+        endif
+
+        # Homebrew's libomp is keg-only, so it is not on the default paths either
+        HOMEBREW_LIBOMP := $(shell brew --prefix libomp 2>/dev/null)
+        ifneq ($(HOMEBREW_LIBOMP),)
+            ifeq ($(shell if [ -d $(HOMEBREW_LIBOMP)/lib ];then echo 1;else echo 0;fi), 1)
+                LIBS += -L$(HOMEBREW_LIBOMP)/lib
+                PARALLEL_FLAGS += -I$(HOMEBREW_LIBOMP)/include
+            endif
         endif
 
         # We also need to link it
@@ -44,7 +53,7 @@ mzgaf2paf_main.o:$(LIB_DEPS) mzgaf2paf_main.cpp mzgaf2paf.hpp mzgaf.hpp gafkluge
 	$(CXX) $(INCLUDE_FLAGS) $(CXXFLAGS) $(CPPFLAGS) -c mzgaf2paf_main.cpp $(INC_FLAGS)
 
 gaf2paf: gaf2paf_main.o gafkluge.hpp paf.hpp
-	$(CXX) $(INCLUDE_FLAGS) $(CXXFLAGS) $(CPPFLAGS) -o gaf2paf gaf2paf_main.cpp $(INC_FLAGS)
+	$(CXX) $(INCLUDE_FLAGS) $(CXXFLAGS) $(CPPFLAGS) -o gaf2paf gaf2paf_main.cpp $(INC_FLAGS) $(LIB_FLAGS)
 
 mzgaf2paf.o:$(LIB_DEPS) mzgaf2paf.cpp mzgaf2paf.hpp mzgaf.hpp gafkluge.hpp
 	$(CXX) $(INCLUDE_FLAGS) $(CXXFLAGS) $(CPPFLAGS) -c mzgaf2paf.cpp $(INC_FLAGS)
@@ -68,7 +77,7 @@ rgfa-split.o:$(LIB_DEPS) rgfa-split.cpp rgfa-split.hpp gafkluge.hpp gfakluge.hpp
 	$(CXX) $(INCLUDE_FLAGS) $(CXXFLAGS) $(CPPFLAGS) -c rgfa-split.cpp $(INC_FLAGS)
 
 paf2lastz: paf2lastz.o paf2lastz_main.o
-	$(CXX) $(INCLUDE_FLAGS) $(CXXFLAGS) $(CPPFLAGS) -o paf2lastz paf2lastz_main.o paf2lastz.o
+	$(CXX) $(INCLUDE_FLAGS) $(CXXFLAGS) $(CPPFLAGS) -o paf2lastz paf2lastz_main.o paf2lastz.o $(LIB_FLAGS)
 
 paf2lastz_main.o:$(LIB_DEPS) paf2lastz_main.cpp paf2lastz.hpp paf2lastz.hpp
 	$(CXX) $(INCLUDE_FLAGS) $(CXXFLAGS) $(CPPFLAGS) -c paf2lastz_main.cpp $(INC_FLAGS)
@@ -80,7 +89,7 @@ rgfa2paf_main.o: rgfa2paf_main.cpp gfakluge.hpp pafcoverage.hpp paf.hpp
 	$(CXX) $(INCLUDE_FLAGS) $(CXXFLAGS) $(CPPFLAGS) -c rgfa2paf_main.cpp $(INC_FLAGS)
 
 rgfa2paf: rgfa2paf_main.o pafcoverage.o
-	$(CXX) $(INCLUDE_FLAGS) $(CXXFLAGS) $(CPPFLAGS) -o rgfa2paf rgfa2paf_main.o pafcoverage.o
+	$(CXX) $(INCLUDE_FLAGS) $(CXXFLAGS) $(CPPFLAGS) -o rgfa2paf rgfa2paf_main.o pafcoverage.o $(LIB_FLAGS)
 
 pafmask.o: pafmask.cpp rgfa-split.hpp pafcoverage.hpp paf.hpp pafmask.hpp
 	$(CXX) $(INCLUDE_FLAGS) $(CXXFLAGS) $(CPPFLAGS) -c pafmask.cpp $(INC_FLAGS)
@@ -89,10 +98,10 @@ pafmask_main.o: pafmask_main.cpp rgfa-split.hpp pafcoverage.hpp paf.hpp pafmask.
 	$(CXX) $(INCLUDE_FLAGS) $(CXXFLAGS) $(CPPFLAGS) -c pafmask_main.cpp $(INC_FLAGS)
 
 pafmask: pafmask_main.o pafmask.o rgfa-split.o pafcoverage.o
-	$(CXX) $(INCLUDE_FLAGS) $(CXXFLAGS) $(CPPFLAGS) -o pafmask pafmask_main.o pafmask.o pafcoverage.o rgfa-split.o
+	$(CXX) $(INCLUDE_FLAGS) $(CXXFLAGS) $(CPPFLAGS) -o pafmask pafmask_main.o pafmask.o pafcoverage.o rgfa-split.o $(LIB_FLAGS)
 
 paf2stable: paf2stable_main.o pafcoverage.o paf2stable.o
-	$(CXX) $(INCLUDE_FLAGS) $(CXXFLAGS) $(CPPFLAGS) -o paf2stable paf2stable_main.o paf2stable.o pafcoverage.o
+	$(CXX) $(INCLUDE_FLAGS) $(CXXFLAGS) $(CPPFLAGS) -o paf2stable paf2stable_main.o paf2stable.o pafcoverage.o $(LIB_FLAGS)
 
 paf2stable.o:$(LIB_DEPS) paf2stable.cpp paf2stable.hpp pafcoverage.hpp paf.hpp
 	$(CXX) $(INCLUDE_FLAGS) $(CXXFLAGS) $(CPPFLAGS) -c paf2stable.cpp $(INC_FLAGS)
@@ -104,17 +113,17 @@ gaf2unstable_main.o:gaf2unstable_main.cpp gafkluge.hpp gfakluge.hpp paf.hpp rgfa
 	$(CXX) $(INCLUDE_FLAGS) $(CXXFLAGS) $(CPPFLAGS) -c gaf2unstable_main.cpp
 
 gaf2unstable: gaf2unstable_main.o rgfa-split.o pafcoverage.o
-	$(CXX) $(INCLUDE_FLAGS) $(CXXFLAGS) $(CPPFLAGS) -o gaf2unstable gaf2unstable_main.o rgfa-split.o $(INC_FLAGS)
+	$(CXX) $(INCLUDE_FLAGS) $(CXXFLAGS) $(CPPFLAGS) -o gaf2unstable gaf2unstable_main.o rgfa-split.o $(INC_FLAGS) $(LIB_FLAGS)
 
 gaffilter: gaffilter_main.o gafkluge.hpp paf.hpp IntervalTree.h
-	$(CXX) $(INCLUDE_FLAGS) $(CXXFLAGS) $(CPPFLAGS) -o gaffilter gaffilter_main.cpp $(INC_FLAGS)
+	$(CXX) $(INCLUDE_FLAGS) $(CXXFLAGS) $(CPPFLAGS) -o gaffilter gaffilter_main.cpp $(INC_FLAGS) $(LIB_FLAGS)
 
 # rgfa-zip: its objects build warning-clean with -Wall -Wextra.
 ZIP_OBJS = rgfa-zip_main.o zip_graph.o zip_site.o zip_report.o zip_align.o zip_edit.o zip_alt.o zip_gaf.o
 ZIP_WARN = -Wall -Wextra
 
 rgfa-zip: $(ZIP_OBJS)
-	$(CXX) $(CXXFLAGS) -o rgfa-zip $(ZIP_OBJS) $(LDFLAGS)
+	$(CXX) $(CXXFLAGS) -o rgfa-zip $(ZIP_OBJS) $(LDFLAGS) $(LIB_FLAGS)
 
 $(ZIP_OBJS): %.o: %.cpp
 	$(CXX) $(CXXFLAGS) $(ZIP_WARN) $(CPPFLAGS) -c $< -o $@ $(INC_FLAGS)

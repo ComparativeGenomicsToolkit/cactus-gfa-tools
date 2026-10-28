@@ -24,7 +24,7 @@ is $(awk '$3==2500' stock_tmp/out.gaf | wc -l) 1 "the record with no overlap is 
 # says what to use instead
 for opt in -t --trim "-e 5000" "--trim-edge 5000" "-Q 20" "-g 100" "-l x.tsv" -R; do
     gaffilter stock_tmp/in.gaf -r 5 -m 0 $opt > stock_tmp/removed.out 2> stock_tmp/removed.err
-    is "$? $(grep -c 'has been removed. Use -x/--exact' stock_tmp/removed.err) $(wc -l < stock_tmp/removed.out)" "1 1 0" "the removed $opt fails with a pointer to -x"
+    is "$? $(grep -c 'has been removed. Use -x/--exact' stock_tmp/removed.err) $(wc -l < stock_tmp/removed.out | tr -d " ")" "1 1 0" "the removed $opt fails with a pointer to -x"
 done
 
 # getopt_long resolves unique prefixes, so a new long option can silently break an old

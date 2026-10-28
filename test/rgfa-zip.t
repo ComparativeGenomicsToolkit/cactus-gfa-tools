@@ -1430,17 +1430,22 @@ FAKE_MODE=kill-once zip Z28 killonce -m $T/fake_mm2.sh
 is "$(ex Z28 killonce)/$(cmp -s $T/Z28/killonce.gfa $T/Z28/clean.gfa && cmp -s $T/Z28/killonce.tsv $T/Z28/clean.tsv && echo same)/$(grep -c 'retrying it alone' $T/Z28/killonce.err)" "0/same/1" "Z28: SIGKILL once: the window is retried alone; output identical to the clean run"
 FAKE_MODE=kill-always zip Z28 killalways -m $T/fake_mm2.sh
 is "$(ex Z28 killalways)/$(none Z28 killalways)" "4/nothing" "Z28: SIGKILL always: exit 4, nothing written"
-is "$(ls $T/tmp | wc -l)" "0" "Z28: no temporary files left behind, even after exit 4"
+is "$(ls $T/tmp | wc -l | tr -d ' ')" "0" "Z28: no temporary files left behind, even after exit 4"
 # review fixes (robustness): resource and I/O failures never become quiet outcomes
 FAKE_MODE=empty-index zip Z28 emptyidx -m $T/fake_mm2.sh
 is "$(ex Z28 emptyidx)/$(cmp -s $T/Z28/emptyidx.gfa $T/Z28/clean.gfa && cmp -s $T/Z28/emptyidx.tsv $T/Z28/clean.tsv && echo same)/$([ -e $T/Z28/indexed ] && echo indexed || echo no-index)" "0/same/no-index" "RD-1: no index file is written (minimap2 -d does not check its writes; an empty index made every query 'prefiltered'): output identical to the clean run"
-FAKE_MODE=enospc zip Z28 enospc -m $T/fake_mm2.sh
-is "$(ex Z28 enospc)/$(none Z28 enospc)/$(grep -c 'could not write or read its files in --tmpdir' $T/Z28/enospc.err)/$(ls $T/tmp | wc -l)" "5/nothing/1/0" "RD-4: minimap2 cannot write its PAF (full disk): exit 5, nothing written, not an aligner-failed row"
+# fakes a full disk with /dev/full, which Mac does not have
+if [ -e /dev/full ]; then
+    FAKE_MODE=enospc zip Z28 enospc -m $T/fake_mm2.sh
+    is "$(ex Z28 enospc)/$(none Z28 enospc)/$(grep -c 'could not write or read its files in --tmpdir' $T/Z28/enospc.err)/$(ls $T/tmp | wc -l | tr -d ' ')" "5/nothing/1/0" "RD-4: minimap2 cannot write its PAF (full disk): exit 5, nothing written, not an aligner-failed row"
+else
+    ok 1 "RD-4: not run, no /dev/full to fake a full disk with"
+fi
 win0=$(awk '$1 == "S" && $2 == "s2" {print substr($3, 5001, 40)}' $T/Z28/in.gfa)
 t0=$(date +%s%N)
 FAKE_MODE=kill-slow FAKE_MARK=$win0 zip Z28 killslow -m $T/fake_mm2.sh -t 3 -j 3
 t1=$(date +%s%N)
-is "$(ex Z28 killslow)/$(none Z28 killslow)/$(ls $T/tmp | wc -l)" "4/nothing/0" "RD-7: the first window is killed twice while the others align slowly: exit 4, nothing written"
+is "$(ex Z28 killslow)/$(none Z28 killslow)/$(ls $T/tmp | wc -l | tr -d ' ')" "4/nothing/0" "RD-7: the first window is killed twice while the others align slowly: exit 4, nothing written"
 ok $(( (t1 - t0) / 1000000 < 12000 )) "RD-7: the failure stops the other sites and their aligners at once ($(( (t1 - t0) / 1000000 )) ms; 16 s when the sites in flight ran on)"
 FAKE_MODE=mkdir-report FAKE_REPORT=$T/Z28/mkrep.tsv zip Z28 mkrep -m $T/fake_mm2.sh
 is "$(ex Z28 mkrep)/$([ -e $T/Z28/mkrep.gfa ] && echo graph || echo no-graph)/$(grep -c 'rename' $T/Z28/mkrep.err)" "5/no-graph/1" "RD-10: the report cannot be renamed into place after the graph was: the graph is removed again, exit 5"
@@ -1452,7 +1457,7 @@ kill -TERM $hpid
 wait $hpid
 echo $? > $T/Z28/hang.exit
 sleep 0.3
-is "$(ex Z28 hang)/$(none Z28 hang)/$(ls $T/tmp | wc -l)/$(pgrep -f "rgfa-zip-test-hang-$$" | wc -l)/$(grep -c 'stopped by signal 15' $T/Z28/hang.err)" "143/nothing/0/0/1" "RD-8: SIGTERM: the aligners are stopped, the temporary directory removed, nothing written; the exit status is the signal's"
+is "$(ex Z28 hang)/$(none Z28 hang)/$(ls $T/tmp | wc -l | tr -d ' ')/$(pgrep -f "rgfa-zip-test-hang-$$" | wc -l | tr -d ' ')/$(grep -c 'stopped by signal 15' $T/Z28/hang.err)" "143/nothing/0/0/1" "RD-8: SIGTERM: the aligners are stopped, the temporary directory removed, nothing written; the exit status is the signal's"
 
 # ---- Z29: a debug flag drops one translated link of the second of two chains
 zip Z29 clean
@@ -1587,7 +1592,7 @@ zip Z1 hdr --stage detect -i 0.95004 --delta 0.00004 --prefilter 2000,0.2004
 is "$(grep '^#options' $T/Z1/hdr.tsv | grep -o -- '-i [^ ]*\|--delta [^ ]*\|--prefilter [^ ]*' | tr '\n' ' ')" "-i 0.95004 --delta 4e-05 --prefilter 2000,0.2004 " "RD-16: the report header prints option values exactly"
 a10() { rgfa-zip -m $MM2 "$@" $T/Z1/in.gfa $T/Z1/snarls.json > /dev/null 2>&1; echo $?; }
 mkdir -p $T/Z1/al_dump $T/Z1/al_dir
-is "$(a10 -o $T/Z1/al.tsv.tmp -r $T/Z1/al.tsv)/$(a10 -o $T/Z1/al_dump/units.tsv -r $T/Z1/al2.tsv --dump $T/Z1/al_dump)/$(a10 -o $T/Z1/al3.gfa -r $T/Z1/al_dir)/$(a10 -o $T/Z1/in.gfa -r $T/Z1/al4.tsv)/$(ls $T/Z1/al.tsv* $T/Z1/al2.tsv* $T/Z1/al3.gfa* $T/Z1/al4.tsv* 2>/dev/null | wc -l)$(ls -A $T/Z1/al_dump | wc -l)" "2/2/2/2/00" "RD-10: outputs that alias one another (-o is -r's .tmp; -o is a --dump file), a directory, or an input: exit 2 before anything runs"
+is "$(a10 -o $T/Z1/al.tsv.tmp -r $T/Z1/al.tsv)/$(a10 -o $T/Z1/al_dump/units.tsv -r $T/Z1/al2.tsv --dump $T/Z1/al_dump)/$(a10 -o $T/Z1/al3.gfa -r $T/Z1/al_dir)/$(a10 -o $T/Z1/in.gfa -r $T/Z1/al4.tsv)/$(ls $T/Z1/al.tsv* $T/Z1/al2.tsv* $T/Z1/al3.gfa* $T/Z1/al4.tsv* 2>/dev/null | wc -l | tr -d ' ')$(ls -A $T/Z1/al_dump | wc -l | tr -d ' ')" "2/2/2/2/00" "RD-10: outputs that alias one another (-o is -r's .tmp; -o is a --dump file), a directory, or an input: exit 2 before anything runs"
 
 # ---- regressions from the genome-wide sweep
 # paf-inconsistent: ambiguous bases in I and D runs are not in PAF column 11 (minimap2 2.30)
