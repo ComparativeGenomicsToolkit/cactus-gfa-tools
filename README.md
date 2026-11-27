@@ -26,6 +26,7 @@ make test
 * [gaf2paf](#gaf2paf)
 * [gaf2unstable](#gaf2unstable)
 * [gaffilter](#gaffilter)
+* [paf-one-to-one](#paf-one-to-one)
 * [paf2lastz](#paf2lastz)
 * [mzgaf2paf](#mzgaf2paf)
 * [rgfa-split](#rgfa-split)
@@ -112,6 +113,37 @@ haplotypes as one.  That only costs recovered sequence, never sequence the stock
 
 `-x` replaces the trim mode (`-t`, with `-e`, `-g`, `-l`, `-Q` and `-R`), which cut the whole contested
 span, widened, out of every record that lost an overlap.  Those options are no longer accepted.
+
+### paf-one-to-one
+
+[gaffilter](#gaffilter) resolves alignments that claim the same stretch of a *query*.  `paf-one-to-one` does the
+same for the *target*, one haplotype at a time: a haplotype (a query name up to its first `|`, so the event name of
+`id=EVENT|CONTIG`) should not be aligned to one stretch of a target twice, unless it really has two copies of it.
+
+Wherever two or more lines of one haplotype cover the same position of the same target:
+
+* the lines whose local mismatch rate there (`X / (= + X)`) is less than `--margin` (0.01) above the best one's are
+  kept, so two copies about as close to the target as each other both stay;
+* the stretch is cut out of the others, exactly, by CIGAR.  The rest of each line is kept, with its coordinates and
+  columns 10 and 11 updated, and any indel left dangling at a cut stripped, as `gaf2paf` does.
+
+The local mismatch rate of a line over a contested stretch is taken from the line's own CIGAR over the stretch and
+`--pad` (25 kb) of target either side, in whole `--bin` (1 kb) columns.  Where that holds fewer than `--min-aligned`
+(5 kb) aligned bases, it is that of the line's parent record (the lines with the same query, `gm:i:` and `gl:i:`, as
+`gaf2paf` writes them) over the lines that start in the same `--window` (50 kb) of the query, or else of the whole record.
+The CIGARs must therefore tell matches from mismatches (`=` and `X`, as `minigraph -c` writes them): `M` counts as a match.
+
+`-r NAME` leaves the lines of queries `NAME|*` and `id=NAME|*` alone (the reference).  `-t PREFIX` limits the lines
+that take part to those on targets whose names start with it, and `-q`, `-b` and `-i` to those the line filter that
+follows in cactus (`minMAPQ`, `minGAFBlockLength`, `minIdentity`) will keep; a line that does not take part is written
+as it is, and neither cuts nor is cut.  `-l FILE` logs every stretch cut, with the line it was cut from, its rate, the
+best rate and the line that had it.
+
+The input is read twice, so it must be a file.  Lines come out in input order.
+
+```
+paf-one-to-one graphmap.paf -r CHM13 -t 'id=_MINIGRAPH_|' -l cut.tsv > one-to-one.paf
+```
 
 ### paf2lastz
 
